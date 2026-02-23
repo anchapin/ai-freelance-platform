@@ -1,0 +1,21 @@
+[project]
+name = "ai-freelance-platform"
+version = "0.1.0"
+description = "AI Freelance Platform Backend"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "stripe>=7.0.0",
+    "openai>=1.0.0",
+    "e2b-code-interpreter>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "git+https://github.com/HKUDS/ClawWork.git",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
