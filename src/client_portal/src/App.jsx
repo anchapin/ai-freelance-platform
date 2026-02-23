@@ -1,4 +1,6 @@
+import { Routes, Route } from 'react-router-dom'
 import TaskSubmissionForm from './components/TaskSubmissionForm'
+import TaskStatus from './components/TaskStatus'
 import './App.css'
 
 function App() {
@@ -8,7 +10,10 @@ function App() {
         <h1>AI Freelance Platform</h1>
       </header>
       <main>
-        <TaskSubmissionForm />
+        <Routes>
+          <Route path="/" element={<TaskSubmissionForm />} />
+          <Route path="/task-status" element={<TaskStatus />} />
+        </Routes>
       </main>
     </div>
   )

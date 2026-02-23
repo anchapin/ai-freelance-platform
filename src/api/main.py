@@ -2,18 +2,98 @@
 FastAPI backend for the AI Freelance Platform.
 Provides endpoints for creating checkout sessions and processing task submissions.
 """
+import os
 import uuid
-from fastapi import FastAPI, HTTPException
+import json
+import hmac
+import hashlib
+from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 import stripe
-from typing import Optional
+
+from .database import get_db, init_db
+from .models import Task, TaskStatus
+from ..agent_execution.executor import execute_data_visualization
+
+
+def process_task_async(task_id: str):
+    """
+    Process a task asynchronously after payment is confirmed.
+    
+    This function is called as a background task when a task is marked as PAID.
+    It retrieves the task from the database, executes the data visualization,
+    and updates the database with the result.
+    
+    Args:
+        task_id: The ID of the task to process
+    """
+    # Create a new database session for this background task
+    from .database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Retrieve the task from the database
+        task = db.query(Task).filter(Task.id == task_id).first()
+        
+        if not task:
+            print(f"Task {task_id} not found for processing")
+            return
+        
+        if task.status != TaskStatus.PAID:
+            print(f"Task {task_id} is not in PAID status, current status: {task.status}")
+            return
+        
+        # Execute the data visualization
+        # Note: In a real implementation, you might want to get the CSV data 
+        # from somewhere (e.g., user upload, task description, etc.)
+        # For now, we use a sample CSV for demonstration
+        sample_csv = """category,value
+Sales,150
+Marketing,200
+Engineering,300
+Operations,120
+Support,180"""
+        
+        result = execute_data_visualization(
+            csv_data=sample_csv,
+            user_request=f"Create a {task.domain} visualization for {task.title}"
+        )
+        
+        # Update the task with the result
+        if result.get("success"):
+            task.result_image_url = result.get("image_url", "")
+            task.status = TaskStatus.COMPLETED
+        else:
+            task.status = TaskStatus.FAILED
+        
+        db.commit()
+        print(f"Task {task_id} processed successfully, status: {task.status}")
+        
+    except Exception as e:
+        print(f"Error processing task {task_id}: {str(e)}")
+        # Mark as failed on error
+        try:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                task.status = TaskStatus.FAILED
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
 
 # Initialize FastAPI app
 app = FastAPI(title="AI Freelance Platform API")
 
-# Configure Stripe (use test key for development)
-# In production, use environment variable: os.environ.get('STRIPE_SECRET_KEY')
-stripe.api_key = "sk_test_placeholder"
+# Configure Stripe (use environment variable in production)
+# In production, use: os.environ.get('STRIPE_SECRET_KEY')
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_placeholder")
+
+# Stripe webhook secret (use environment variable in production)
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_placeholder")
 
 # Domain pricing configuration
 DOMAIN_PRICES = {
@@ -21,6 +101,9 @@ DOMAIN_PRICES = {
     "legal": 250,
     "data_analysis": 200,
 }
+
+# Base URL for success/cancel pages (configure in production)
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:5173")
 
 
 class TaskSubmission(BaseModel):
@@ -38,6 +121,12 @@ class CheckoutResponse(BaseModel):
     title: str
 
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup."""
+    init_db()
+
+
 @app.get("/")
 async def root():
     """Health check endpoint."""
@@ -45,11 +134,12 @@ async def root():
 
 
 @app.post("/api/create-checkout-session", response_model=CheckoutResponse)
-async def create_checkout_session(task: TaskSubmission):
+async def create_checkout_session(task: TaskSubmission, db: Session = Depends(get_db)):
     """
     Create a Stripe checkout session based on task submission.
     
-    Calculates price based on domain and returns a mock Stripe checkout session.
+    Calculates price based on domain and creates a real Stripe checkout session.
+    Stores the task in the database with PENDING status.
     """
     # Validate domain
     if task.domain not in DOMAIN_PRICES:
@@ -62,13 +152,20 @@ async def create_checkout_session(task: TaskSubmission):
     amount = DOMAIN_PRICES[task.domain]
     
     try:
-        # Create Stripe checkout session
-        # In production, this would create a real Stripe session
-        # For now, we create a mock session ID for demonstration
-        session_id = f"cs_test_{uuid.uuid4().hex[:24]}"
+        # Create a task in the database with PENDING status
+        new_task = Task(
+            id=str(uuid.uuid4()),
+            title=task.title,
+            description=task.description,
+            domain=task.domain,
+            status=TaskStatus.PENDING,
+            stripe_session_id=None  # Will be updated after Stripe session is created
+        )
+        db.add(new_task)
+        db.commit()
+        db.refresh(new_task)
         
-        # In a real implementation, you would create a Stripe session like this:
-        """
+        # Create Stripe checkout session
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[{
@@ -76,25 +173,28 @@ async def create_checkout_session(task: TaskSubmission):
                     'currency': 'usd',
                     'product_data': {
                         'name': f'{task.domain.title()} Task: {task.title}',
-                        'description': task.description[:500],
+                        'description': task.description[:500] if task.description else '',
                     },
                     'unit_amount': amount * 100,  # Stripe uses cents
                 },
                 'quantity': 1,
             }],
             mode='payment',
-            success_url='https://your-domain.com/success?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url='https://your-domain.com/cancel',
+            success_url=f'{BASE_URL}/success?session_id={{CHECKOUT_SESSION_ID}}',
+            cancel_url=f'{BASE_URL}/cancel',
             metadata={
+                'task_id': new_task.id,
                 'domain': task.domain,
                 'title': task.title,
             }
         )
-        session_id = checkout_session.id
-        """
+        
+        # Update task with Stripe session ID
+        new_task.stripe_session_id = checkout_session.id
+        db.commit()
         
         return CheckoutResponse(
-            session_id=session_id,
+            session_id=checkout_session.id,
             amount=amount,
             domain=task.domain,
             title=task.title
@@ -115,6 +215,96 @@ async def get_domains():
             for domain, price in DOMAIN_PRICES.items()
         ]
     }
+
+
+@app.post("/api/webhook")
+async def stripe_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    stripe_signature: str = Header(None)
+):
+    """
+    Stripe webhook endpoint to handle checkout events.
+    
+    Listens for checkout.session.completed events and updates task status to PAID.
+    When a task is marked as PAID, a background task is added to process the task asynchronously.
+    """
+    payload = await request.body()
+    
+    try:
+        # Verify webhook signature if secret is configured
+        if STRIPE_WEBHOOK_SECRET != "whsec_placeholder":
+            try:
+                event = stripe.Webhook.construct_event(
+                    payload, stripe_signature, STRIPE_WEBHOOK_SECRET
+                )
+            except stripe.error.SignatureVerificationError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Invalid signature"}
+                )
+        else:
+            # For development/testing without webhook secret
+            event = json.loads(payload)
+        
+        # Handle the checkout.session.completed event
+        if event['type'] == 'checkout.session.completed':
+            session = event['data']['object']
+            session_id = session.get('id')
+            
+            # Look up task by stripe_session_id
+            task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
+            
+            if task:
+                # Update task status to PAID
+                task.status = TaskStatus.PAID
+                db.commit()
+                
+                # Add background task to process the visualization asynchronously
+                background_tasks.add_task(process_task_async, task.id)
+                
+                return {"status": "success", "message": f"Task {task.id} marked as PAID, processing started"}
+            else:
+                return {"status": "warning", "message": f"No task found for session {session_id}"}
+        
+        # Handle other event types if needed
+        elif event['type'] == 'checkout.session.expired':
+            session = event['data']['object']
+            session_id = session.get('id')
+            
+            task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
+            
+            if task:
+                task.status = TaskStatus.FAILED
+                db.commit()
+                
+                return {"status": "success", "message": f"Task {task.id} marked as FAILED (expired)"}
+        
+        # Return 200 for events we don't handle
+        return {"status": "received"}
+        
+    except json.JSONDecodeError:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid JSON payload"}
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Internal error: {str(e)}"}
+        )
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task(task_id: str, db: Session = Depends(get_db)):
+    """Get task by ID."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    return task.to_dict()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,151 @@
+.task-status {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.task-status-card {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  padding: 2rem;
+}
+
+/* Loading and Error Containers */
+.loading-container,
+.error-container {
+  text-align: center;
+  padding: 2rem;
+}
+
+.error-message {
+  color: #c62828;
+  padding: 1rem;
+  background: #ffebee;
+  border: 1px solid #f44336;
+  border-radius: 4px;
+}
+
+/* Spinner Styles */
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #4a90e2;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto;
+}
+
+.spinner-container {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Status Containers */
+.status-container {
+  text-align: center;
+  padding: 1rem;
+}
+
+.status-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.status-container h2 {
+  color: #333;
+  margin-bottom: 0.5rem;
+}
+
+.status-container p {
+  color: #666;
+  margin-bottom: 0.5rem;
+}
+
+.task-id {
+  font-size: 0.85rem;
+  color: #999;
+  margin-top: 1rem;
+}
+
+/* Pending Status */
+.status-container.pending .status-icon {
+  color: #f57c00;
+}
+
+/* Paid Status (Processing) */
+.status-container.paid {
+  background: #e3f2fd;
+  border-radius: 8px;
+  padding: 2rem;
+}
+
+.status-container.paid h2 {
+  color: #1976d2;
+}
+
+/* Completed Status */
+.status-container.completed .status-icon {
+  color: #4caf50;
+}
+
+.result-image-container {
+  margin: 1.5rem 0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.result-image {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.no-result {
+  color: #999;
+  font-style: italic;
+}
+
+/* Failed Status */
+.status-container.failed .status-icon {
+  color: #f44336;
+}
+
+.status-container.failed h2 {
+  color: #c62828;
+}
+
+/* Unknown Status */
+.status-container.unknown {
+  color: #666;
+}
+
+/* Task Details */
+.task-details {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #eee;
+}
+
+.task-details h3 {
+  color: #333;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+}
+
+.task-details p {
+  margin-bottom: 0.5rem;
+  color: #555;
+}
+
+.task-details strong {
+  color: #333;
+}
