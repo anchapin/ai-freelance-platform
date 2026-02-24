@@ -240,7 +240,7 @@ class TestMarketplaceDiscovery:
         )
         
         # Add marketplaces
-        mp1 = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
+        mp1 = _ = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
         mp2 = discovery.add_marketplace("Market2", "https://market2.com", "remote")
         mp3 = discovery.add_marketplace("Market3", "https://market3.com", "gig")
         
@@ -268,7 +268,7 @@ class TestMarketplaceDiscovery:
             rescore_interval_hours=24
         )
         
-        mp1 = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
+        mp1 = _ = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
         mp2 = discovery.add_marketplace("Market2", "https://market2.com", "remote")
         mp2.is_active = False
         
@@ -354,7 +354,7 @@ class TestMarketplaceDiscovery:
             rescore_interval_hours=24
         )
         
-        mp1 = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
+        mp1 = _ = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
         mp2 = discovery.add_marketplace("Market2", "https://market2.com", "remote")
         
         # Market 1: high success rate, high revenue
@@ -384,7 +384,7 @@ class TestMarketplaceDiscovery:
             rescore_interval_hours=24
         )
         
-        mp1 = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
+        mp1 = _ = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
         mp2 = discovery.add_marketplace("Market2", "https://market2.com", "remote")
         
         # Set initial scores
