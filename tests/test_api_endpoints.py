@@ -61,7 +61,7 @@ class TestStripeCheckoutEndpoint:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
         try:
-            _response = client.post(
+            response = client.post(
                 "/api/create-checkout-session",
                 json={
                     "domain": "data_analysis",
@@ -88,7 +88,7 @@ class TestStripeCheckoutEndpoint:
         
         client = TestClient(app)
         
-        _response = client.post(
+        response = client.post(
             "/api/create-checkout-session",
             json={
                 "domain": "invalid_domain",
@@ -224,7 +224,7 @@ class TestPricingEndpoint:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
         try:
-            _response = client.post(
+            response = client.post(
                 "/api/client/calculate-price-with-discount",
                 params={
                     "domain": "accounting",
