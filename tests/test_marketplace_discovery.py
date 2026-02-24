@@ -268,7 +268,7 @@ class TestMarketplaceDiscovery:
             rescore_interval_hours=24
         )
         
-        _ = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
+        mp1 = discovery.add_marketplace("Market1", "https://market1.com", "freelance")
         mp2 = discovery.add_marketplace("Market2", "https://market2.com", "remote")
         mp2.is_active = False
         
