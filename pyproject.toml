@@ -19,6 +19,21 @@ dependencies = [
     # Experience Vector Database (RAG for Few-Shot Learning)
     "chromadb>=0.4.0",
     "sentence-transformers>=2.2.0",
+    # Observability and Tracing
+    "traceloop-sdk>=0.15.0",
+    "arize-phoenix>=4.0.0",
+    "opentelemetry-api>=1.24.0",
+    "opentelemetry-sdk>=1.24.0",
+    # Docker Sandbox (replaces E2B for cost savings)
+    "docker>=7.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+    "httpx>=0.24.0",
 ]
 
 [build-system]

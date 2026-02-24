@@ -21,11 +21,27 @@ import re
 from typing import Optional
 from datetime import datetime
 
-# E2B Code Interpreter SDK
+# E2B Code Interpreter SDK (fallback)
 from e2b_code_interpreter import Sandbox
+
+# Docker Sandbox (primary - for cost savings)
+try:
+    from src.agent_execution.docker_sandbox import LocalDockerSandbox, SandboxResult, SandboxArtifact, SandboxLog
+    DOCKER_SANDBOX_AVAILABLE = True
+except ImportError:
+    DOCKER_SANDBOX_AVAILABLE = False
+    print("Warning: Docker Sandbox not available, using E2B")
+
+# Configuration: Use Docker sandbox by default if available
+USE_DOCKER_SANDBOX = os.environ.get("USE_DOCKER_SANDBOX", "true").lower() == "true"
+DOCKER_SANDBOX_IMAGE = os.environ.get("DOCKER_SANDBOX_IMAGE", "ai-sandbox-base")
+DOCKER_SANDBOX_TIMEOUT = int(os.environ.get("DOCKER_SANDBOX_TIMEOUT", "120"))
 
 # Import LLM Service for AI-powered code generation
 from src.llm_service import LLMService, TASK_TYPE_BASIC_ADMIN, TASK_TYPE_COMPLEX
+
+# Import Traceloop for OpenTelemetry observability
+from traceloop.sdk.decorators import task
 
 # Import file parser for different file types
 from src.agent_execution.file_parser import parse_file, FileType, detect_file_type
@@ -2620,6 +2636,7 @@ SANDBOX_TIMEOUT_SECONDS = 600  # 10 minutes max for complex tasks
 DEFAULT_SANDBOX_TIMEOUT = 120  # 2 minutes default for simple tasks
 
 
+@task(name="sandbox_execution")
 def _execute_code_in_sandbox(
     code: str,
     e2b_api_key: Optional[str],
@@ -2628,11 +2645,14 @@ def _execute_code_in_sandbox(
     is_complex_task: bool = False
 ) -> tuple:
     """
-    Execute Python code in the E2B sandbox and return the result.
+    Execute Python code in a sandbox (Docker or E2B) and return the result.
+    
+    Uses Docker sandbox by default if available (for cost savings).
+    Falls back to E2B if Docker is not available or disabled.
     
     Args:
         code: The Python code to execute
-        e2b_api_key: E2B API key
+        e2b_api_key: E2B API key (used for fallback)
         sandbox_timeout: Timeout in seconds
         output_format: The required output format (image, docx, pdf, xlsx)
         is_complex_task: Whether this is a complex task that may need longer timeout
@@ -2646,6 +2666,98 @@ def _execute_code_in_sandbox(
         effective_timeout = min(sandbox_timeout * 5, SANDBOX_TIMEOUT_SECONDS)  # Up to 10 minutes
         print(f"Complex task detected, using extended timeout: {effective_timeout}s")
     
+    # Try Docker sandbox first (for cost savings)
+    if USE_DOCKER_SANDBOX and DOCKER_SANDBOX_AVAILABLE:
+        print("Using Docker Sandbox for execution (cost: $0)")
+        return _execute_code_in_docker(code, effective_timeout, output_format)
+    
+    # Fall back to E2B
+    print("Using E2B Sandbox for execution")
+    return _execute_code_in_e2b(code, e2b_api_key, effective_timeout, output_format)
+
+
+def _execute_code_in_docker(
+    code: str,
+    timeout: int,
+    output_format: str = "image"
+) -> tuple:
+    """
+    Execute Python code in Docker sandbox.
+    
+    Args:
+        code: The Python code to execute
+        timeout: Timeout in seconds
+        output_format: The required output format (image, docx, pdf, xlsx)
+        
+    Returns:
+        Tuple of (success, result/error_message, logs, artifacts)
+    """
+    try:
+        # Use LocalDockerSandbox to execute code
+        result: SandboxResult = LocalDockerSandbox.execute(
+            code=code,
+            image=DOCKER_SANDBOX_IMAGE,
+            timeout=timeout,
+            output_format=output_format
+        )
+        
+        # Convert Docker result to E2B-compatible format
+        # Create a mock result object with logs and artifacts
+        docker_logs = result.logs if hasattr(result, 'logs') else []
+        docker_artifacts = result.artifacts if hasattr(result, 'artifacts') else []
+        
+        # Create an object that mimics E2B result
+        class MockE2BResult:
+            def __init__(self, logs, artifacts):
+                self.logs = logs
+                self.artifacts = artifacts
+        
+        mock_result = MockE2BResult(docker_logs, docker_artifacts)
+        
+        if result.success:
+            return (True, mock_result, None, docker_artifacts)
+        else:
+            error_msg = result.error or "Unknown Docker error"
+            
+            # Detect timeout
+            if result.timed_out:
+                error_type = "TimeoutError"
+                error_msg = f"SANDBOX_TIMEOUT: Execution timed out after {timeout}s. Task escalated to human review."
+            else:
+                error_type = "ExecutionError"
+            
+            return (False, f"{error_type}: {error_msg}", None, None)
+            
+    except Exception as e:
+        error_msg = str(e)
+        
+        # If Docker fails, try to fall back to E2B
+        print(f"Docker execution failed: {error_msg}")
+        print("Falling back to E2B...")
+        
+        # Get E2B API key from environment
+        e2b_api_key = os.environ.get("E2B_API_KEY")
+        return _execute_code_in_e2b(code, e2b_api_key, timeout, output_format)
+
+
+def _execute_code_in_e2b(
+    code: str,
+    e2b_api_key: Optional[str],
+    sandbox_timeout: int,
+    output_format: str = "image"
+) -> tuple:
+    """
+    Execute Python code in E2B sandbox (fallback).
+    
+    Args:
+        code: The Python code to execute
+        e2b_api_key: E2B API key
+        sandbox_timeout: Timeout in seconds
+        output_format: The required output format (image, docx, pdf, xlsx)
+        
+    Returns:
+        Tuple of (success, result/error_message, logs, artifacts)
+    """
     try:
         with Sandbox(api_key=e2b_api_key) as sandbox:
             # Pre-install dependencies based on the required output format
@@ -2656,7 +2768,7 @@ def _execute_code_in_sandbox(
             elif output_format == "xlsx":
                 sandbox.commands.run("pip install openpyxl pandas")
             
-            result = sandbox.run_code(code, timeout=effective_timeout)
+            result = sandbox.run_code(code, timeout=sandbox_timeout)
             # Extract artifacts from the result
             artifacts = result.artifacts if hasattr(result, 'artifacts') else None
             return (True, result, None, artifacts)
@@ -2664,12 +2776,11 @@ def _execute_code_in_sandbox(
         error_msg = str(e)
         
         # Detect timeout errors specifically for human escalation (Pillar 1.7)
-        # Sandbox execution can exceed 2 minutes for complex data analysis with cloud models and retries
         is_timeout = False
         if "Timeout" in error_msg or "timeout" in error_msg.lower():
             is_timeout = True
             error_type = "TimeoutError"
-            error_msg = f"SANDBOX_TIMEOUT: Execution timed out after {effective_timeout}s. Complex data analysis with cloud models and retries may exceed 2 minutes. Task escalated to human review (Pillar 1.7)."
+            error_msg = f"SANDBOX_TIMEOUT: Execution timed out after {sandbox_timeout}s. Complex data analysis with cloud models and retries may exceed 2 minutes. Task escalated to human review (Pillar 1.7)."
         elif "SyntaxError" in error_msg:
             error_type = "SyntaxError"
         elif "NameError" in error_msg:
@@ -2686,7 +2797,6 @@ def _execute_code_in_sandbox(
             error_type = "ExecutionError"
         
         # Return error message with timeout indicator embedded (for escalation handling)
-        # Format: "TimeoutError: SANDBOX_TIMEOUT: ..." to allow callers to detect timeout
         return (False, f"{error_type}: {error_msg}", None, None)
 
 

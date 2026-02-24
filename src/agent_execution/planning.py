@@ -27,6 +27,9 @@ from datetime import datetime
 from src.llm_service import LLMService, TASK_TYPE_BASIC_ADMIN, TASK_TYPE_COMPLEX
 from src.agent_execution.file_parser import parse_file, FileType, detect_file_type
 
+# Import Traceloop decorators for OpenTelemetry observability
+from traceloop.sdk.decorators import workflow, task
+
 
 # =============================================================================
 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap)
@@ -556,6 +559,7 @@ class WorkPlanGenerator:
         """
         self.llm = llm_service or LLMService()
     
+    @task(name="generate_work_plan")
     def create_work_plan(
         self,
         user_request: str,
@@ -1118,6 +1122,7 @@ class ResearchAndPlanOrchestrator:
         self.plan_executor = PlanExecutor(self.llm)
         self.plan_reviewer = PlanReviewer(self.llm)
     
+    @workflow(name="research_and_plan_workflow")
     def execute_workflow(
         self,
         user_request: str,

@@ -22,6 +22,9 @@ from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 from enum import Enum
 
+# Import logging module
+from src.utils.logger import get_logger
+
 from src.llm_service import LLMService
 from src.agent_execution.planning import (
     ResearchAndPlanOrchestrator,
@@ -30,6 +33,9 @@ from src.agent_execution.planning import (
     PlanExecutor,
     PlanReviewer
 )
+
+# Import Traceloop decorators for OpenTelemetry observability
+from traceloop.sdk.decorators import workflow, task
 
 
 # =============================================================================
@@ -358,6 +364,7 @@ class ArenaRouter:
                 planning_time_multiplier=2.0
             )
     
+    @task(name="arena_competition")
     async def run_arena(
         self,
         user_request: str,
@@ -389,6 +396,9 @@ class ArenaRouter:
         Returns:
             Arena result with winner and detailed metrics
         """
+        # Get logger for this class
+        logger = get_logger(__name__)
+        
         task_revenue = task_revenue or self.cost_config.DEFAULT_TASK_REVENUE
         
         # Create arena agents
@@ -405,9 +415,9 @@ class ArenaRouter:
         )
         
         # Run both agents in parallel
-        print(f"🏟️ Starting Arena Competition: {self.competition_type.value}")
-        print(f"   Agent A: {self.agent_a.name} ({self.agent_a.llm_service.get_model()})")
-        print(f"   Agent B: {self.agent_b.name} ({self.agent_b.llm_service.get_model()})")
+        logger.info(f"Starting Arena Competition: {self.competition_type.value}")
+        logger.info(f"Agent A: {self.agent_a.name} ({self.agent_a.llm_service.get_model()})")
+        logger.info(f"Agent B: {self.agent_b.name} ({self.agent_b.llm_service.get_model()})")
         
         # Execute both agents concurrently
         task_a = arena_agent_a.execute(
@@ -434,8 +444,8 @@ class ArenaRouter:
         
         result_a, result_b = await asyncio.gather(task_a, task_b)
         
-        print(f"   Agent A completed in {result_a.get('execution_time_seconds', 0):.1f}s")
-        print(f"   Agent B completed in {result_b.get('execution_time_seconds', 0):.1f}s")
+        logger.info(f"Agent A completed in {result_a.get('execution_time_seconds', 0):.1f}s")
+        logger.info(f"Agent B completed in {result_b.get('execution_time_seconds', 0):.1f}s")
         
         # Calculate profit scores
         profit_a = self.profit_calculator.calculate_profit_score(
@@ -473,8 +483,7 @@ class ArenaRouter:
             "completed_at": datetime.utcnow().isoformat()
         }
         
-        print(f"   🏆 Winner: {winner}")
-        print(f"   Reason: {win_reason}")
+        logger.info(f"Winner: {winner} | Reason: {win_reason}")
         
         return arena_result
     
@@ -534,6 +543,7 @@ class ArenaLearningLogger:
     
     def __init__(self):
         self.dpo_dataset_path = "data/dpo_dataset.jsonl"
+        self.logger = get_logger(__name__)
     
     def log_winner(
         self,
@@ -558,9 +568,9 @@ class ArenaLearningLogger:
                 successful_output=json.dumps(winner_result),
                 task_id=task_data.get("id")
             )
-            print(f"   ✓ Logged winner to ExperienceVectorDB")
+            self.logger.info(f"Logged winner to ExperienceVectorDB")
         except Exception as e:
-            print(f"   ✗ Failed to log to ExperienceVectorDB: {e}")
+            self.logger.warning(f"Failed to log to ExperienceVectorDB: {e}")
         
         try:
             # Store for distillation training
@@ -572,9 +582,9 @@ class ArenaLearningLogger:
                 llm_output=json.dumps(winner_result),
                 model_used=winner_data["config"]["model"]
             )
-            print(f"   ✓ Logged winner to DistillationDataCollector")
+            self.logger.info(f"Logged winner to DistillationDataCollector")
         except Exception as e:
-            print(f"   ✗ Failed to log to DistillationDataCollector: {e}")
+            self.logger.warning(f"Failed to log to DistillationDataCollector: {e}")
     
     def log_loser(
         self,
@@ -629,9 +639,9 @@ class ArenaLearningLogger:
             os.makedirs(os.path.dirname(self.dpo_dataset_path), exist_ok=True)
             with open(self.dpo_dataset_path, "a") as f:
                 f.write(json.dumps(dpo_example) + "\n")
-            print(f"   ✓ Logged loser to DPO dataset")
+            self.logger.info(f"Logged loser to DPO dataset")
         except Exception as e:
-            print(f"   ✗ Failed to log to DPO dataset: {e}")
+            self.logger.warning(f"Failed to log to DPO dataset: {e}")
     
     def _extract_code(self, result: Dict[str, Any]) -> str:
         """Extract generated code from agent result."""
@@ -656,6 +666,7 @@ class ArenaLearningLogger:
 # CONVENIENCE FUNCTIONS
 # =============================================================================
 
+@workflow(name="agent_arena_workflow")
 async def run_agent_arena(
     user_request: str,
     domain: str,
@@ -716,6 +727,9 @@ async def run_agent_arena(
 # =============================================================================
 
 if __name__ == "__main__":
+    # Get logger for example code
+    logger = get_logger("arena_example")
+    
     async def example():
         # Run a model competition
         result = await run_agent_arena(
@@ -726,20 +740,16 @@ if __name__ == "__main__":
             task_revenue=500  # $5.00
         )
         
-        print("\n🏆 Arena Result:")
-        print(f"Winner: {result['winner']}")
-        print(f"Reason: {result['win_reason']}")
-        print(f"Winning Artifact: {result['winning_artifact_url']}")
+        logger.info(f"Arena Result - Winner: {result['winner']}, Reason: {result['win_reason']}")
         
         # Profit breakdown
         winner_key = result["winner"]
         profit = result[winner_key]["profit"]
-        print(f"\n💰 Profit Breakdown:")
-        print(f"   Revenue: ${profit['revenue']/100:.2f}")
-        print(f"   LLM Cost: ${profit['llm_cost']/100:.2f}")
-        print(f"   E2B Cost: ${profit['e2b_cost']/100:.2f}")
-        print(f"   Total Cost: ${profit['total_cost']/100:.2f}")
-        print(f"   Profit: ${profit['profit']/100:.2f}")
+        logger.info(f"Profit Breakdown - Revenue: ${profit['revenue']/100:.2f}, "
+                   f"LLM Cost: ${profit['llm_cost']/100:.2f}, "
+                   f"E2B Cost: ${profit['e2b_cost']/100:.2f}, "
+                   f"Total Cost: ${profit['total_cost']/100:.2f}, "
+                   f"Profit: ${profit['profit']/100:.2f}")
     
     # Run example
     asyncio.run(example())

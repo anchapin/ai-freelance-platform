@@ -19,6 +19,15 @@ from .models import Task, TaskStatus, PlanStatus, ReviewStatus, ArenaCompetition
 from ..agent_execution.executor import execute_task, execute_data_visualization, TaskType, OutputFormat
 from .experience_logger import experience_logger
 
+# Import logging module
+from ..utils.logger import get_logger, TaskLogger
+
+# Import telemetry for observability
+from ..utils.telemetry import init_observability
+
+# Import contextlib for lifespan
+from contextlib import asynccontextmanager
+
 
 # =============================================================================
 # ESCALATION & HUMAN-IN-THE-LOOP (HITL) CONFIGURATION (Pillar 1.7)
@@ -55,7 +64,9 @@ try:
     EXPERIENCE_DB_AVAILABLE = True
 except ImportError:
     EXPERIENCE_DB_AVAILABLE = False
-    print("Warning: Experience Vector Database not available, few-shot learning disabled")
+    # Use basic logging for import errors before app logger is ready
+    import logging
+    logging.warning("Experience Vector Database not available, few-shot learning disabled")
 
 
 def _should_escalate_task(task, retry_count: int, error_message: str = None) -> tuple:
@@ -103,6 +114,9 @@ def _escalate_task(db, task, reason: str, error_message: str = None):
         reason: Reason for escalation
         error_message: Optional error details
     """
+    # Get logger instance
+    logger = get_logger(__name__)
+    
     task.status = TaskStatus.ESCALATION
     task.escalation_reason = reason
     task.escalated_at = datetime.utcnow()
@@ -113,12 +127,12 @@ def _escalate_task(db, task, reason: str, error_message: str = None):
     amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
     is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
     
-    print(f"[ESCALATION] Task {task.id} escalated: {reason}")
-    print(f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}")
-    print(f"[ESCALATION] Human reviewer notification required to prevent refund")
+    logger.warning(f"[ESCALATION] Task {task.id} escalated: {reason}")
+    logger.warning(f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}")
+    logger.warning(f"[ESCALATION] Human reviewer notification required to prevent refund")
     
     if error_message:
-        print(f"[ESCALATION] Error: {error_message[:200]}...")
+        logger.warning(f"[ESCALATION] Error: {error_message[:200]}...")
     
     db.commit()
 
@@ -149,17 +163,21 @@ async def process_task_async(task_id: str, use_planning_workflow: bool = True):
     from .database import SessionLocal
     import os
     
+    # Initialize logger
+    logger = get_logger(__name__)
+    task_logger = TaskLogger(task_id)
+    
     db = SessionLocal()
     try:
         # Retrieve the task from the database
         task = db.query(Task).filter(Task.id == task_id).first()
         
         if not task:
-            print(f"Task {task_id} not found for processing")
+            logger.error(f"Task {task_id} not found for processing")
             return
         
         if task.status != TaskStatus.PAID:
-            print(f"Task {task_id} is not in PAID status, current status: {task.status}")
+            logger.warning(f"Task {task_id} is not in PAID status, current status: {task.status}")
             return
         
         # Get API key from environment
@@ -171,7 +189,7 @@ async def process_task_async(task_id: str, use_planning_workflow: bool = True):
         # Use the CSV data stored in the task, or fall back to sample data if not provided
         csv_data = task.csv_data
         if not csv_data and not task.file_content:
-            print(f"Warning: No data found for task {task_id}, using sample data")
+            logger.warning(f"No data found for task {task_id}, using sample data")
             csv_data = """category,value
 Sales,150
 Marketing,200
@@ -184,7 +202,7 @@ Support,180"""
         # This ensures faster completion and higher success rate for paying clients
         # =====================================================
         if task.is_high_value:
-            print(f"Task {task_id}: HIGH-VALUE TASK - Routing to Agent Arena")
+            logger.info(f"HIGH-VALUE TASK - Routing to Agent Arena")
             
             # Update status to indicate arena processing
             task.status = TaskStatus.PROCESSING
@@ -256,7 +274,7 @@ Support,180"""
             
             if review_approved:
                 task.status = TaskStatus.COMPLETED
-                print(f"Task {task_id}: COMPLETED via Agent Arena (winner: {winner})")
+                logger.info(f"COMPLETED via Agent Arena (winner: {winner})")
                 
                 # Log success to learning systems
                 experience_logger.log_success(task)
@@ -271,16 +289,16 @@ Support,180"""
                         "description": user_request
                     })
                 except Exception as e:
-                    print(f"Task {task_id}: Error logging arena learning: {e}")
+                    logger.error(f"Error logging arena learning: {e}")
             else:
                 # Arena failed - escalate for human review
                 error_message = f"Arena competition failed. Winner feedback: {review_feedback}"
                 task.last_error = error_message
                 _escalate_task(db, task, "arena_failed", error_message)
-                print(f"Task {task_id}: Arena FAILED - ESCALATED for human review")
+                logger.warning(f"Arena FAILED - ESCALATED for human review")
             
             db.commit()
-            print(f"Task {task_id} processed via Arena, final status: {task.status}")
+            logger.info(f"processed via Arena, final status: {task.status}")
             return
         
         # Update task status to PLANNING if using planning workflow
@@ -292,7 +310,7 @@ Support,180"""
             # =====================================================
             # RESEARCH & PLAN WORKFLOW (NEW AUTONOMY CORE)
             # =====================================================
-            print(f"Task {task_id}: Using Research & Plan workflow")
+            logger.info(f"Using Research & Plan workflow")
             
             # Step 1 & 2: Extract context and generate work plan
             if use_planning_workflow:
@@ -302,12 +320,12 @@ Support,180"""
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Get preferences BEFORE generating work plan
                 client_preferences = None
                 if task.client_email:
-                    print(f"Task {task_id}: Loading client preferences for {task.client_email}")
+                    logger.info(f"Loading client preferences for {task.client_email}")
                     client_preferences = get_client_preferences_from_tasks(task.client_email)
                     if client_preferences.get("has_history"):
-                        print(f"Task {task_id}: Found {client_preferences['total_previous_tasks']} previous tasks with preferences")
+                        logger.info(f"Found {client_preferences['total_previous_tasks']} previous tasks with preferences")
                     else:
-                        print(f"Task {task_id}: No previous task history found")
+                        logger.info(f"No previous task history found")
                 
                 # Extract context from files
                 context_extractor = ContextExtractor()
@@ -336,10 +354,10 @@ Support,180"""
                     task.work_plan = json.dumps(work_plan)
                     task.plan_status = "APPROVED"
                     task.plan_generated_at = datetime.utcnow()
-                    print(f"Task {task_id}: Work plan generated - {work_plan.get('title', 'Untitled')}")
+                    logger.info(f"Work plan generated - {work_plan.get('title', 'Untitled')}")
                 else:
                     task.plan_status = "REJECTED"
-                    print(f"Task {task_id}: Plan generation failed - {plan_result.get('error')}")
+                    logger.warning(f"Plan generation failed - {plan_result.get('error')}")
                 
                 db.commit()
             
@@ -394,7 +412,7 @@ Support,180"""
                     task.result_image_url = artifact_url
                 
                 task.status = TaskStatus.COMPLETED
-                print(f"Task {task_id}: Completed successfully with Research & Plan workflow (output: {output_format})")
+                logger.info(f"Completed successfully with Research & Plan workflow (output: {output_format})")
                 
                 # ==========================================================
                 # NEW: Log this success to our continuous learning dataset!
@@ -427,11 +445,11 @@ Support,180"""
                             output_format=output_format,
                             csv_headers=csv_headers
                         )
-                        print(f"Task {task_id}: Stored experience for few-shot learning")
+                        logger.info(f"Stored experience for few-shot learning")
                 
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences after task completion
                 if task.client_email and task.review_feedback:
-                    print(f"Task {task_id}: Saving client preferences for future tasks")
+                    logger.info(f"Saving client preferences for future tasks")
                     save_client_preferences(
                         client_email=task.client_email,
                         task_id=task_id,
@@ -441,7 +459,7 @@ Support,180"""
                         db_session=db
                     )
                 else:
-                    print(f"Task {task_id}: No client email or feedback to save preferences")
+                    logger.info(f"No client email or feedback to save preferences")
             else:
                 # Workflow failed - check if should escalate instead of marking as FAILED
                 error_message = workflow_result.get("message", "Workflow failed")
@@ -457,16 +475,16 @@ Support,180"""
                 if should_escalate:
                     # ESCALATE to human review (Pillar 1.7)
                     _escalate_task(db, task, escalation_reason, error_message)
-                    print(f"Task {task_id}: ESCALATED for human review - {escalation_reason}")
+                    logger.warning(f"ESCALATED for human review - {escalation_reason}")
                 else:
                     # Mark as FAILED for non-high-value tasks that exhausted retries
                     task.status = TaskStatus.FAILED
                     task.review_feedback = error_message
-                    print(f"Task {task_id}: Failed - {error_message}")
+                    logger.error(f"Failed - {error_message}")
                 
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences even on failure
                 if task.client_email and task.review_feedback:
-                    print(f"Task {task_id}: Saving client preferences (from failed task)")
+                    logger.info(f"Saving client preferences (from failed task)")
                     save_client_preferences(
                         client_email=task.client_email,
                         task_id=task_id,
@@ -480,7 +498,7 @@ Support,180"""
             # =====================================================
             # LEGACY WORKFLOW (Original TaskRouter)
             # =====================================================
-            print(f"Task {task_id}: Using legacy TaskRouter workflow")
+            logger.info(f"Using legacy TaskRouter workflow")
             
             result = execute_task(
                 domain=task.domain,
@@ -510,7 +528,7 @@ Support,180"""
                     task.result_image_url = result.get("image_url", "")
                 
                 task.status = TaskStatus.COMPLETED
-                print(f"Task {task_id} completed successfully with format: {output_format}")
+                logger.info(f"completed successfully with format: {output_format}")
                 
                 # ==========================================================
                 # NEW: Log this success to our continuous learning dataset!
@@ -534,18 +552,18 @@ Support,180"""
                 if should_escalate:
                     # ESCALATE to human review (Pillar 1.7)
                     _escalate_task(db, task, escalation_reason, error_message)
-                    print(f"Task {task_id}: ESCALATED for human review - {escalation_reason}")
+                    logger.warning(f"ESCALATED for human review - {escalation_reason}")
                 else:
                     # Mark as FAILED
                     task.status = TaskStatus.FAILED
                     task.review_feedback = error_message
-                    print(f"Task {task_id} failed: {error_message}")
+                    logger.error(f"failed: {error_message}")
         
         db.commit()
-        print(f"Task {task_id} processed, final status: {task.status}")
+        logger.info(f"processed, final status: {task.status}")
         
     except Exception as e:
-        print(f"Error processing task {task_id}: {str(e)}")
+        logger.error(f"Error processing task: {str(e)}")
         # Check if should escalate instead of marking as failed
         try:
             task = db.query(Task).filter(Task.id == task_id).first()
@@ -563,7 +581,7 @@ Support,180"""
                 if should_escalate:
                     # ESCALATE to human review (Pillar 1.7)
                     _escalate_task(db, task, escalation_reason, error_message)
-                    print(f"Task {task_id}: ESCALATED for human review - {escalation_reason}")
+                    logger.warning(f"ESCALATED for human review - {escalation_reason}")
                 else:
                     # Mark as FAILED
                     task.status = TaskStatus.FAILED
@@ -575,9 +593,6 @@ Support,180"""
         db.close()
 
 
-
-# Initialize FastAPI app
-app = FastAPI(title="AI Freelance Platform API")
 
 # Configure Stripe (use environment variable in production)
 # In production, use: os.environ.get('STRIPE_SECRET_KEY')
@@ -694,10 +709,18 @@ class CheckoutResponse(BaseModel):
     title: str
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database on startup."""
+# Lifespan context manager for startup/shutdown
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize DB and Observability
     init_db()
+    init_observability()
+    yield
+    # Shutdown logic goes here
+
+
+# Update your FastAPI initialization to use the lifespan
+app = FastAPI(title="AI Freelance Platform API", lifespan=lifespan)
 
 
 @app.get("/")
@@ -1498,8 +1521,11 @@ async def _log_arena_learning(
     user_request: str
 ):
     """Log arena results to learning systems."""
+    # Get logger for this function
+    logger = get_logger(__name__)
+    
     try:
-        logger = ArenaLearningLogger()
+        arena_logger = ArenaLearningLogger()
         
         # Create task data for logging
         task_data = {
@@ -1509,12 +1535,12 @@ async def _log_arena_learning(
         }
         
         # Log winner and loser
-        logger.log_winner(arena_result, task_data)
-        logger.log_loser(arena_result, task_data)
+        arena_logger.log_winner(arena_result, task_data)
+        arena_logger.log_loser(arena_result, task_data)
         
-        print(f"[ARENA] Learning data logged for task {task_id}")
+        logger.info(f"Learning data logged for task {task_id}")
     except Exception as e:
-        print(f"[ARENA] Error logging learning data: {e}")
+        logger.error(f"Error logging learning data: {e}")
 
 
 @app.get("/api/arena/history")

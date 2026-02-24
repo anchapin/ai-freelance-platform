@@ -1,0 +1,43 @@
+# =============================================================================
+# AI Freelance Platform - Sandbox Base Image
+# =============================================================================
+# This image provides a pre-built environment with all common libraries
+# pre-installed, avoiding the need for pip install on every execution.
+#
+# Build this image:
+#   docker build -t ai-sandbox-base -f Dockerfile.sandbox .
+#
+# Usage:
+#   docker run --rm ai-sandbox-base python --version
+# =============================================================================
+
+FROM python:3.10-slim
+
+# Install system dependencies needed for common Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies commonly used by AI agents
+# Pre-installing these avoids LLM needing to run pip install every time
+# Note: io, base64, json, re are built-in Python modules - no need to install
+RUN pip install --no-cache-dir \
+    pandas>=2.0.0 \
+    matplotlib>=3.7.0 \
+    numpy>=1.24.0 \
+    seaborn>=0.12.0 \
+    python-docx>=0.8.11 \
+    reportlab>=4.0.0 \
+    openpyxl>=3.1.0 \
+    Pillow>=10.0.0
+
+# Set working directory
+WORKDIR /workspace
+
+# Create a non-root user for security (optional but recommended)
+# RUN useradd -m -s /bin/bash sandboxuser
+# USER sandboxuser
+
+# Default command
+CMD ["python", "--version"]
