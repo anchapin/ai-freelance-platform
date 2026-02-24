@@ -275,7 +275,7 @@ class TestMarketplaceDiscovery:
         active = discovery.get_active_marketplaces()
         
         assert len(active) == 1
-        assert active[0].name == "Market1"
+        assert active[0].name == mp1.name
     
     def test_get_marketplace_by_url(self, temp_marketplaces_file):
         """Test retrieving a marketplace by URL."""
