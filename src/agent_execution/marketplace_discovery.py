@@ -23,8 +23,6 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # Import logger
 from src.utils.logger import get_logger
 
@@ -42,6 +40,10 @@ try:
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
 
+# Load environment variables
+load_dotenv()
+
+# Initialize logger after all imports
 logger = get_logger(__name__)
 
 if not LLM_SERVICE_AVAILABLE:

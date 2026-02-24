@@ -208,7 +208,6 @@ def parse_pdf(content: bytes) -> dict:
         reader = PyPDF2.PdfReader(pdf_file)
         
         all_text = []
-        all_tables = []
         
         # Extract text from each page
         for page in reader.pages:

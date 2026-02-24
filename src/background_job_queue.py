@@ -168,7 +168,7 @@ class BackgroundJobQueue:
                 logger.debug(f"Worker {worker_id}: executing {job.job_id}")
                 
                 # Execute the task
-                result = await job.task_func(*job.task_args, **job.task_kwargs)
+                await job.task_func(*job.task_args, **job.task_kwargs)
                 
                 # Mark as succeeded
                 job.status = JobStatus.SUCCEEDED

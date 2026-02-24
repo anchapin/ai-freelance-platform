@@ -18,7 +18,7 @@ from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
 
 # Import logging module
-from ..utils.logger import get_logger, TaskLogger
+from ..utils.logger import get_logger
 
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
@@ -196,7 +196,6 @@ async def process_task_async(task_id: str, use_planning_workflow: bool = True):
     
     # Initialize logger
     logger = get_logger(__name__)
-    task_logger = TaskLogger(task_id)
     
     db = SessionLocal()
     try:
