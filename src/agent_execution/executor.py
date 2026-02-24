@@ -65,7 +65,7 @@ try:
     DISTILLATION_AVAILABLE = True
 except ImportError:
     DISTILLATION_AVAILABLE = False
-    print("Warning: Distillation module not available, skipping model output capture")
+    logger.warning("Distillation module not available, skipping model output capture")
     
 # Flag to enable/disable distillation capture (can be disabled to save storage)
 ENABLE_DISTILLATION_CAPTURE = os.environ.get("ENABLE_DISTILLATION_CAPTURE", "true").lower() == "true"
@@ -272,7 +272,7 @@ class TaskRouter:
         # Detect output format
         detected_format = self.detect_output_format(domain, detected_task_type, output_format)
         
-        print(f"TaskRouter: domain={domain}, task_type={detected_task_type}, output_format={detected_format}")
+        logger.info(f"TaskRouter: domain={domain}, task_type={detected_task_type}, output_format={detected_format}")
         
         # Route to appropriate handler
         if detected_format == OutputFormat.DOCX:
@@ -943,7 +943,7 @@ Return ONLY valid JSON, no markdown formatting, no explanations."""
         
         if not json_result.get("success"):
             # Fall back to legacy code generation if JSON fails
-            print(f"JSON generation failed: {json_result.get('message')}, falling back to legacy code generation")
+            logger.warning(f"JSON generation failed: {json_result.get('message')}, falling back to legacy code generation")
             return self._handle_document_generation(
                 domain=domain,
                 user_request=user_request,
@@ -953,7 +953,7 @@ Return ONLY valid JSON, no markdown formatting, no explanations."""
             )
         
         content_json = json_result.get("content_json", {})
-        print(f"Generated JSON content with {len(content_json)} keys for template: {template_type}")
+        logger.info(f"Generated JSON content with {len(content_json)} keys for template: {template_type}")
         
         # Step 2: Get template code with injected JSON
         try:
@@ -967,7 +967,7 @@ Return ONLY valid JSON, no markdown formatting, no explanations."""
                 from src.templates.base_document import get_template_code
                 code = get_template_code(content_json, csv_data, output_format)
         except ImportError as e:
-            print(f"Template import failed: {str(e)}, falling back to legacy code generation")
+            logger.warning(f"Template import failed: {str(e)}, falling back to legacy code generation")
             return self._handle_document_generation(
                 domain=domain,
                 user_request=user_request,
@@ -2396,7 +2396,7 @@ class AIResponseGenerator:
             return enhanced_prompt
         except Exception as e:
             # If few-shot fails, fall back to base prompt
-            print(f"Few-shot prompt generation failed: {e}")
+            logger.warning(f"Few-shot prompt generation failed: {e}")
             return base_system_prompt
     
     def generate_visualization_code(
@@ -2669,15 +2669,15 @@ def _execute_code_in_sandbox(
     effective_timeout = sandbox_timeout
     if is_complex_task:
         effective_timeout = min(sandbox_timeout * 5, SANDBOX_TIMEOUT_SECONDS)  # Up to 10 minutes
-        print(f"Complex task detected, using extended timeout: {effective_timeout}s")
+        logger.info(f"Complex task detected, using extended timeout: {effective_timeout}s")
     
     # Try Docker sandbox first (for cost savings)
     if USE_DOCKER_SANDBOX and DOCKER_SANDBOX_AVAILABLE:
-        print("Using Docker Sandbox for execution (cost: $0)")
+        logger.info("Using Docker Sandbox for execution (cost: $0)")
         return _execute_code_in_docker(code, effective_timeout, output_format)
     
     # Fall back to E2B
-    print("Using E2B Sandbox for execution")
+    logger.info("Using E2B Sandbox for execution")
     return _execute_code_in_e2b(code, e2b_api_key, effective_timeout, output_format)
 
 
@@ -2925,12 +2925,12 @@ def _get_llm_for_task(domain: Optional[str]) -> LLMService:
     
     # Legal and Accounting require high accuracy - use cloud models
     if domain_lower in ["legal", "accounting"]:
-        print(f"Using cloud model for {domain} task (high accuracy required)")
+        logger.info(f"Using cloud model for {domain} task (high accuracy required)")
         return LLMService.for_complex_task()
     
     # Data analysis - use local models for cost savings
     # This covers basic admin tasks like simple data cleaning, formatting
-    print("Using local model for data analysis task (cost optimization)")
+    logger.info("Using local model for data analysis task (cost optimization)")
     return LLMService.for_basic_admin()
 
 
