@@ -19,8 +19,7 @@ import json
 import asyncio
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, asdict, field
-from datetime import datetime, timedelta
-import logging
+from datetime import datetime
 
 from dotenv import load_dotenv
 
@@ -611,7 +610,6 @@ async def discover_new_marketplaces(
 # =============================================================================
 
 if __name__ == "__main__":
-    import sys
     
     async def main():
         """Main entry point for testing."""
@@ -622,7 +620,7 @@ if __name__ == "__main__":
         # Initialize discovery
         discovery = MarketplaceDiscovery()
         
-        print(f"\nCurrent Configuration:")
+        print("\nCurrent Configuration:")
         if discovery.config:
             print(f"  Keywords: {discovery.config.search_keywords}")
             print(f"  Min Success Rate: {discovery.config.min_success_rate}")

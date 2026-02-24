@@ -18,7 +18,6 @@ Usage:
 """
 
 import os
-import json
 import tempfile
 from typing import Optional, List
 from dataclasses import dataclass

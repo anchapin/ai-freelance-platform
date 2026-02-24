@@ -14,7 +14,6 @@ Features:
 """
 
 import os
-import io
 import base64
 import json
 import re
@@ -43,7 +42,7 @@ DOCKER_SANDBOX_IMAGE = os.environ.get("DOCKER_SANDBOX_IMAGE", "ai-sandbox-base")
 DOCKER_SANDBOX_TIMEOUT = int(os.environ.get("DOCKER_SANDBOX_TIMEOUT", "120"))
 
 # Import LLM Service for AI-powered code generation
-from src.llm_service import LLMService, TASK_TYPE_BASIC_ADMIN, TASK_TYPE_COMPLEX
+from src.llm_service import LLMService
 
 # Import Traceloop for OpenTelemetry observability
 from traceloop.sdk.decorators import task
@@ -2478,7 +2477,7 @@ Generate the Python code now. Return only the code, no markdown formatting."""
                 "few_shot_used": use_few_shot
             }
             
-        except Exception as e:
+        except Exception:
             # Fallback to basic code generation if LLM fails
             return self._generate_fallback_code(csv_headers, user_request)
     

@@ -10,7 +10,7 @@ Issue #6: Decouple Experience Vector Database from task execution flow
 import asyncio
 import time
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 
@@ -65,7 +65,7 @@ class AsyncRAGCircuitBreaker:
                 if elapsed > self.config.timeout_seconds:
                     self.state = CircuitBreakerState.HALF_OPEN
                     self.success_count = 0
-                    logger.info(f"Circuit breaker: transitioning to HALF_OPEN")
+                    logger.info("Circuit breaker: transitioning to HALF_OPEN")
                     return True
             return False
         
@@ -79,7 +79,7 @@ class AsyncRAGCircuitBreaker:
             if self.success_count >= self.config.success_threshold:
                 self.state = CircuitBreakerState.CLOSED
                 self.failure_count = 0
-                logger.info(f"Circuit breaker: transitioning to CLOSED")
+                logger.info("Circuit breaker: transitioning to CLOSED")
         
         self.failure_count = 0
     
@@ -92,7 +92,7 @@ class AsyncRAGCircuitBreaker:
             # Failure in half-open state reopens the circuit
             self.state = CircuitBreakerState.OPEN
             self.open_at = time.time()
-            logger.warning(f"Circuit breaker: transitioning to OPEN (half-open test failed)")
+            logger.warning("Circuit breaker: transitioning to OPEN (half-open test failed)")
         elif self.failure_count >= self.config.failure_threshold:
             self.state = CircuitBreakerState.OPEN
             self.open_at = time.time()

@@ -18,16 +18,11 @@ import io
 import json
 import base64
 import pandas as pd
-from datetime import datetime
 from typing import Dict, Any, Optional
 
 # python-docx imports
 from docx import Document
-from docx.shared import Inches, Pt, RGBColor, Cm
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.style import WD_STYLE_TYPE
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
+from docx.shared import Inches, Pt
 
 
 class BaseDocumentTemplate:
