@@ -25,7 +25,7 @@ from datetime import datetime
 from e2b_code_interpreter import Sandbox
 
 # Import LLM Service for AI-powered code generation
-from src.llm_service import LLMService
+from src.llm_service import LLMService, TASK_TYPE_BASIC_ADMIN, TASK_TYPE_COMPLEX
 
 # Import file parser for different file types
 from src.agent_execution.file_parser import parse_file, FileType, detect_file_type
@@ -45,10 +45,1447 @@ MAX_REVIEW_ATTEMPTS = 2
 
 
 # =============================================================================
+# TASK TYPES AND OUTPUT FORMATS
+# =============================================================================
+
+class TaskType:
+    """Task type classifications."""
+    VISUALIZATION = "visualization"
+    DOCUMENT = "document"
+    SPREADSHEET = "spreadsheet"
+    AUTO = "auto"  # Auto-detect based on domain
+
+
+class OutputFormat:
+    """Output format types."""
+    IMAGE = "image"  # PNG/JPEG charts
+    DOCX = "docx"   # Word documents
+    XLSX = "xlsx"   # Excel spreadsheets
+    PDF = "pdf"     # PDF documents
+
+
+# =============================================================================
+# TASK ROUTER - Domain and Task Type Detection
+# =============================================================================
+
+class TaskRouter:
+    """
+    Routes tasks to appropriate handlers based on domain and task type.
+    
+    This router detects:
+    - Domain: legal, accounting, data_analysis
+    - Task type: visualization, document, spreadsheet
+    - Output format: image, docx, xlsx, pdf
+    
+    It then routes to the appropriate execution handler.
+    """
+    
+    # Default output formats by domain
+    DOMAIN_DEFAULT_FORMAT = {
+        "legal": OutputFormat.DOCX,
+        "accounting": OutputFormat.XLSX,
+        "data_analysis": OutputFormat.IMAGE,
+    }
+    
+    # Keywords to detect task type from user request
+    DOCUMENT_KEYWORDS = [
+        "document", "report", "brief", "memo", "summary", "analysis report",
+        "contract", "agreement", "proposal", "letter", "write", "generate document"
+    ]
+    
+    SPREADSHEET_KEYWORDS = [
+        "spreadsheet", "excel", "workbook", "sheet", "table", "data table",
+        "generate excel", "generate spreadsheet", "xlsx"
+    ]
+    
+    VISUALIZATION_KEYWORDS = [
+        "chart", "graph", "visualize", "plot", "bar", "line", "pie", "scatter",
+        "histogram", "dashboard", "visualization", "visual"
+    ]
+    
+    def __init__(self, llm_service: Optional[LLMService] = None):
+        """
+        Initialize the TaskRouter.
+        
+        Args:
+            llm_service: Optional LLMService instance for LLM-based detection
+        """
+        self.llm = llm_service
+    
+    def detect_task_type(self, user_request: str, explicit_task_type: Optional[str] = None) -> str:
+        """
+        Detect the task type from user request.
+        
+        Args:
+            user_request: The user's request text
+            explicit_task_type: Explicitly specified task type (overrides detection)
+            
+        Returns:
+            Task type string (visualization, document, spreadsheet)
+        """
+        # Use explicit type if provided
+        if explicit_task_type and explicit_task_type != TaskType.AUTO:
+            return explicit_task_type
+        
+        request_lower = user_request.lower()
+        
+        # Check for document keywords
+        for keyword in self.DOCUMENT_KEYWORDS:
+            if keyword in request_lower:
+                return TaskType.DOCUMENT
+        
+        # Check for spreadsheet keywords
+        for keyword in self.SPREADSHEET_KEYWORDS:
+            if keyword in request_lower:
+                return TaskType.SPREADSHEET
+        
+        # Check for visualization keywords
+        for keyword in self.VISUALIZATION_KEYWORDS:
+            if keyword in request_lower:
+                return TaskType.VISUALIZATION
+        
+        # Default to visualization
+        return TaskType.VISUALIZATION
+    
+    def detect_output_format(
+        self,
+        domain: str,
+        task_type: str,
+        explicit_format: Optional[str] = None
+    ) -> str:
+        """
+        Detect the output format based on domain and task type.
+        
+        Args:
+            domain: The domain (legal, accounting, data_analysis)
+            task_type: The task type (visualization, document, spreadsheet)
+            explicit_format: Explicitly specified output format
+            
+        Returns:
+            Output format string (image, docx, xlsx, pdf)
+        """
+        # Use explicit format if provided
+        if explicit_format:
+            return explicit_format
+        
+        domain_lower = domain.lower().strip()
+        
+        # Domain-specific defaults
+        if domain_lower == "legal":
+            if task_type == TaskType.DOCUMENT:
+                return OutputFormat.DOCX
+            elif task_type == TaskType.SPREADSHEET:
+                return OutputFormat.XLSX
+            else:
+                return OutputFormat.IMAGE  # Legal can also have visualizations
+        
+        elif domain_lower == "accounting":
+            if task_type == TaskType.SPREADSHEET:
+                return OutputFormat.XLSX
+            elif task_type == TaskType.DOCUMENT:
+                return OutputFormat.PDF  # Accounting reports often as PDF
+            else:
+                return OutputFormat.IMAGE  # Accounting visualizations
+        
+        # Default for data_analysis
+        return OutputFormat.IMAGE
+    
+    def route(
+        self,
+        domain: str,
+        user_request: str,
+        csv_data: str,
+        task_type: Optional[str] = None,
+        output_format: Optional[str] = None,
+        **kwargs
+    ) -> dict:
+        """
+        Route the task to the appropriate handler.
+        
+        Args:
+            domain: The domain (legal, accounting, data_analysis)
+            user_request: The user's request text
+            csv_data: CSV data as string
+            task_type: Optional explicit task type
+            output_format: Optional explicit output format
+            **kwargs: Additional arguments passed to handler
+            
+        Returns:
+            Dictionary with execution results
+        """
+        # Detect task type if not specified
+        detected_task_type = self.detect_task_type(user_request, task_type)
+        
+        # Detect output format
+        detected_format = self.detect_output_format(domain, detected_task_type, output_format)
+        
+        print(f"TaskRouter: domain={domain}, task_type={detected_task_type}, output_format={detected_format}")
+        
+        # Route to appropriate handler
+        if detected_format == OutputFormat.DOCX:
+            return self._handle_document_generation(
+                domain=domain,
+                user_request=user_request,
+                csv_data=csv_data,
+                output_format=OutputFormat.DOCX,
+                **kwargs
+            )
+        elif detected_format == OutputFormat.XLSX:
+            return self._handle_spreadsheet_generation(
+                domain=domain,
+                user_request=user_request,
+                csv_data=csv_data,
+                output_format=OutputFormat.XLSX,
+                **kwargs
+            )
+        elif detected_format == OutputFormat.PDF:
+            return self._handle_document_generation(
+                domain=domain,
+                user_request=user_request,
+                csv_data=csv_data,
+                output_format=OutputFormat.PDF,
+                **kwargs
+            )
+        else:
+            # Default to visualization (image)
+            return self._handle_visualization(
+                domain=domain,
+                user_request=user_request,
+                csv_data=csv_data,
+                **kwargs
+            )
+    
+    def _handle_visualization(
+        self,
+        domain: str,
+        user_request: str,
+        csv_data: str,
+        **kwargs
+    ) -> dict:
+        """
+        Handle visualization tasks (default behavior).
+        
+        Args:
+            domain: The domain
+            user_request: The user's request
+            csv_data: CSV data
+            **kwargs: Additional arguments
+            
+        Returns:
+            Dictionary with visualization results
+        """
+        # Delegate to existing execute_data_visualization function
+        return execute_data_visualization(
+            csv_data=csv_data,
+            user_request=user_request,
+            domain=domain,
+            **kwargs
+        )
+    
+    def _handle_document_generation(
+        self,
+        domain: str,
+        user_request: str,
+        csv_data: str,
+        output_format: str = OutputFormat.DOCX,
+        **kwargs
+    ) -> dict:
+        """
+        Handle document generation tasks (docx/pdf).
+        
+        Args:
+            domain: The domain
+            user_request: The user's request
+            csv_data: CSV data
+            output_format: Output format (docx or pdf)
+            **kwargs: Additional arguments
+            
+        Returns:
+            Dictionary with document generation results
+        """
+        # Extract headers
+        first_line = csv_data.strip().split('\n')[0]
+        csv_headers = [h.strip() for h in first_line.split(',')]
+        
+        # Generate code for document creation using LLM
+        llm = self.llm or LLMService()
+        
+        system_prompt = self._get_document_system_prompt(domain, output_format)
+        
+        prompt = f"""CSV Headers: {csv_headers}
+User Request: {user_request}
+Domain: {domain}
+Output Format: {output_format}
+
+Generate Python code to create a {output_format} document from the data.
+The code should:
+1. Read the CSV data using pandas
+2. Create a properly formatted document
+3. Save it to a file named 'output.{output_format}'
+4. Print a JSON result with keys: file_path, success
+
+Return ONLY the Python code, no markdown."""
+
+        try:
+            result = llm.complete(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=2000,
+                system_prompt=system_prompt
+            )
+            
+            code = result["content"].strip()
+            # Extract code from markdown if present
+            code_match = re.search(r'```python\s*([\s\S]*?)\s*```', code)
+            if code_match:
+                code = code_match.group(1).strip()
+            
+            # Wrap with CSV data
+            code_with_csv = f'csv_data = """{csv_data}"""\n\n' + code
+            
+            # Execute in sandbox
+            e2b_api_key = kwargs.get("api_key") or os.environ.get("E2B_API_KEY")
+            sandbox_timeout = kwargs.get("sandbox_timeout", 120)
+            
+            success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
+                code_with_csv, e2b_api_key, sandbox_timeout
+            )
+            
+            if success and artifacts:
+                # Return the generated document
+                for artifact in artifacts:
+                    if hasattr(artifact, 'data') and hasattr(artifact, 'name'):
+                        if artifact.name.endswith(f'.{output_format}'):
+                            return {
+                                "success": True,
+                                "file_url": f"data:application/{output_format};base64,{base64.b64encode(artifact.data).decode('utf-8')}",
+                                "file_name": artifact.name,
+                                "output_format": output_format,
+                                "message": f"{output_format.upper()} document generated successfully"
+                            }
+            
+            # Check logs for result
+            if success and sandbox_result and sandbox_result.logs:
+                for log in sandbox_result.logs:
+                    if hasattr(log, 'text') and log.text and "{" in log.text:
+                        try:
+                            json_start = log.text.find("{")
+                            json_end = log.text.rfind("}") + 1
+                            result_data = eval(log.text[json_start:json_end])
+                            if result_data.get("success"):
+                                return {
+                                    "success": True,
+                                    "file_url": result_data.get("file_path", ""),
+                                    "output_format": output_format,
+                                    "message": f"{output_format.upper()} document generated"
+                                }
+                        except:
+                            pass
+            
+            return {
+                "success": False,
+                "message": f"Failed to generate {output_format} document",
+                "output_format": output_format
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Document generation error: {str(e)}",
+                "output_format": output_format
+            }
+    
+    def _handle_spreadsheet_generation(
+        self,
+        domain: str,
+        user_request: str,
+        csv_data: str,
+        output_format: str = OutputFormat.XLSX,
+        **kwargs
+    ) -> dict:
+        """
+        Handle spreadsheet generation tasks (xlsx).
+        
+        Args:
+            domain: The domain
+            user_request: The user's request
+            csv_data: CSV data
+            output_format: Output format (xlsx)
+            **kwargs: Additional arguments
+            
+        Returns:
+            Dictionary with spreadsheet generation results
+        """
+        # Extract headers
+        first_line = csv_data.strip().split('\n')[0]
+        csv_headers = [h.strip() for h in first_line.split(',')]
+        
+        # Generate code for spreadsheet creation using LLM
+        llm = self.llm or LLMService()
+        
+        system_prompt = self._get_spreadsheet_system_prompt(domain)
+        
+        prompt = f"""CSV Headers: {csv_headers}
+User Request: {user_request}
+Domain: {domain}
+
+Generate Python code to create an Excel spreadsheet from the data.
+The code should:
+1. Read the CSV data using pandas
+2. Create a properly formatted Excel workbook with multiple sheets if appropriate
+3. Add formatting (headers bold, column widths, etc.)
+4. Save it to 'output.xlsx'
+5. Print a JSON result with keys: file_path, success
+
+Return ONLY the Python code, no markdown."""
+
+        try:
+            result = llm.complete(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=2000,
+                system_prompt=system_prompt
+            )
+            
+            code = result["content"].strip()
+            # Extract code from markdown if present
+            code_match = re.search(r'```python\s*([\s\S]*?)\s*```', code)
+            if code_match:
+                code = code_match.group(1).strip()
+            
+            # Wrap with CSV data
+            code_with_csv = f'csv_data = """{csv_data}"""\n\n' + code
+            
+            # Execute in sandbox
+            e2b_api_key = kwargs.get("api_key") or os.environ.get("E2B_API_KEY")
+            sandbox_timeout = kwargs.get("sandbox_timeout", 120)
+            
+            success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
+                code_with_csv, e2b_api_key, sandbox_timeout
+            )
+            
+            if success and artifacts:
+                # Return the generated spreadsheet
+                for artifact in artifacts:
+                    if hasattr(artifact, 'data') and hasattr(artifact, 'name'):
+                        if artifact.name.endswith('.xlsx'):
+                            return {
+                                "success": True,
+                                "file_url": f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64.b64encode(artifact.data).decode('utf-8')}",
+                                "file_name": artifact.name,
+                                "output_format": OutputFormat.XLSX,
+                                "message": "Excel spreadsheet generated successfully"
+                            }
+            
+            # Check logs for result
+            if success and sandbox_result and sandbox_result.logs:
+                for log in sandbox_result.logs:
+                    if hasattr(log, 'text') and log.text and "{" in log.text:
+                        try:
+                            json_start = log.text.find("{")
+                            json_end = log.text.rfind("}") + 1
+                            result_data = eval(log.text[json_start:json_end])
+                            if result_data.get("success"):
+                                return {
+                                    "success": True,
+                                    "file_url": result_data.get("file_path", ""),
+                                    "output_format": OutputFormat.XLSX,
+                                    "message": "Excel spreadsheet generated"
+                                }
+                        except:
+                            pass
+            
+            return {
+                "success": False,
+                "message": "Failed to generate Excel spreadsheet",
+                "output_format": OutputFormat.XLSX
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Spreadsheet generation error: {str(e)}",
+                "output_format": OutputFormat.XLSX
+            }
+    
+    def _get_document_system_prompt(self, domain: str, output_format: str) -> str:
+        """
+        Get system prompt for document generation.
+        
+        Args:
+            domain: The domain
+            output_format: Output format (docx or pdf)
+            
+        Returns:
+            System prompt string
+        """
+        format_ext = output_format.lower()
+        
+        if domain.lower() == "legal":
+            return f"""You are an expert legal document generator. Create a professional {format_ext} document
+from the provided data. The document should be suitable for legal use.
+
+Requirements:
+- Use python-docx library for .docx files
+- Use reportlab for .pdf files
+- Professional formatting with proper headings, sections, and styling
+- Include all relevant data from the CSV in an organized manner
+- Add appropriate legal disclaimers or headers if needed
+
+The code must:
+1. Read CSV data using pandas
+2. Create a properly formatted {format_ext} document
+3. Save to 'output.{format_ext}'
+4. Print JSON: {{'file_path': 'output.{format_ext}', 'success': True}}
+
+Return ONLY Python code, no markdown."""
+        
+        elif domain.lower() == "accounting":
+            return f"""You are an expert accounting document generator. Create a professional {format_ext} document
+from the financial data. The document should be suitable for stakeholders.
+
+Requirements:
+- Use python-docx library for .docx files
+- Use reportlab for .pdf files
+- Professional financial reporting format
+- Include tables, summaries, and analysis where appropriate
+- Format numbers properly (currency, percentages)
+
+The code must:
+1. Read CSV data using pandas
+2. Create a properly formatted {format_ext} document
+3. Save to 'output.{format_ext}'
+4. Print JSON: {{'file_path': 'output.{format_ext}', 'success': True}}
+
+Return ONLY Python code, no markdown."""
+        
+        # Default document prompt
+        return f"""You are an expert document generator. Create a professional {format_ext} document
+from the provided data.
+
+Requirements:
+- Use python-docx library for .docx files
+- Use reportlab for .pdf files
+- Professional formatting with headings and sections
+- Include all relevant data organized properly
+
+The code must:
+1. Read CSV data using pandas
+2. Create a properly formatted {format_ext} document
+3. Save to 'output.{format_ext}'
+4. Print JSON: {{'file_path': 'output.{format_ext}', 'success': True}}
+
+Return ONLY Python code, no markdown."""
+    
+    def _get_spreadsheet_system_prompt(self, domain: str) -> str:
+        """
+        Get system prompt for spreadsheet generation.
+        
+        Args:
+            domain: The domain
+            
+        Returns:
+            System prompt string
+        """
+        if domain.lower() == "legal":
+            return """You are an expert legal spreadsheet generator. Create a professional Excel spreadsheet
+from the provided legal data.
+
+Requirements:
+- Use openpyxl for Excel file creation
+- Format headers with bold styling
+- Set appropriate column widths
+- Add multiple sheets if data is complex (e.g., summary sheet + detail sheet)
+- Include only relevant columns
+- Add date formatting if applicable
+
+The code must:
+1. Read CSV data using pandas
+2. Create Excel workbook with openpyxl
+3. Add formatting (bold headers, column widths)
+4. Save to 'output.xlsx'
+5. Print JSON: {'file_path': 'output.xlsx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+        
+        elif domain.lower() == "accounting":
+            return """You are an expert accounting spreadsheet generator. Create a professional Excel spreadsheet
+from the financial data with proper accounting formatting.
+
+Requirements:
+- Use openpyxl for Excel file creation
+- Format headers with bold styling
+- Set appropriate column widths
+- Add number formatting (currency, percentages)
+- Create multiple sheets: Summary + Detailed Data
+- Include calculations if appropriate (totals, averages)
+- Professional accounting presentation
+
+The code must:
+1. Read CSV data using pandas
+2. Create Excel workbook with openpyxl
+3. Add formatting (bold headers, column widths, number formats)
+4. Add multiple sheets if needed
+5. Save to 'output.xlsx'
+6. Print JSON: {'file_path': 'output.xlsx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+        
+        # Default spreadsheet prompt
+        return """You are an expert spreadsheet generator. Create a professional Excel spreadsheet
+from the provided data.
+
+Requirements:
+- Use openpyxl for Excel file creation
+- Format headers with bold styling
+- Set appropriate column widths
+- Add basic formatting
+- Create multiple sheets if data is complex
+
+The code must:
+1. Read CSV data using pandas
+2. Create Excel workbook with openpyxl
+3. Add formatting
+4. Save to 'output.xlsx'
+5. Print JSON: {'file_path': 'output.xlsx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+
+
+def execute_task(
+    domain: str,
+    user_request: str,
+    csv_data: str,
+    task_type: Optional[str] = None,
+    output_format: Optional[str] = None,
+    **kwargs
+) -> dict:
+    """
+    Main entry point for executing tasks with the TaskRouter.
+    
+    This function routes tasks to the appropriate handler based on
+    domain, task type, and output format.
+    
+    Args:
+        domain: The domain (legal, accounting, data_analysis)
+        user_request: The user's request text
+        csv_data: CSV data as string
+        task_type: Optional explicit task type (visualization, document, spreadsheet)
+        output_format: Optional explicit output format (image, docx, xlsx, pdf)
+        **kwargs: Additional arguments passed to handler
+        
+    Returns:
+        Dictionary with execution results
+    """
+    router = TaskRouter(llm_service=kwargs.get("llm_service"))
+    return router.route(
+        domain=domain,
+        user_request=user_request,
+        csv_data=csv_data,
+        task_type=task_type,
+        output_format=output_format,
+        **kwargs
+    )
+
+
+# =============================================================================
+# DOCUMENT GENERATOR - Domain-specific document generation
+# =============================================================================
+
+
+class DocumentGenerator:
+    """
+    Dedicated class for document generation tasks.
+    
+    Handles DOCX and PDF document generation from CSV data with
+    domain-specific formatting and content.
+    """
+    
+    def __init__(
+        self,
+        domain: str = "data_analysis",
+        llm_service: Optional[LLMService] = None,
+        output_format: str = OutputFormat.DOCX
+    ):
+        """
+        Initialize the DocumentGenerator.
+        
+        Args:
+            domain: The domain (legal, accounting, data_analysis)
+            llm_service: Optional LLMService instance
+            output_format: Output format (docx or pdf)
+        """
+        self.domain = domain
+        self.llm = llm_service or LLMService()
+        self.output_format = output_format.lower()
+    
+    def generate_document(
+        self,
+        user_request: str,
+        csv_data: str,
+        **kwargs
+    ) -> dict:
+        """
+        Generate a document based on user request and CSV data.
+        
+        Args:
+            user_request: The user's document request
+            csv_data: CSV data as string
+            **kwargs: Additional arguments (api_key, sandbox_timeout, etc.)
+            
+        Returns:
+            Dictionary with generation results
+        """
+        # Extract headers from CSV
+        first_line = csv_data.strip().split('\n')[0]
+        csv_headers = [h.strip() for h in first_line.split(',')]
+        
+        # Build system prompt
+        system_prompt = self._build_system_prompt()
+        
+        # Build user prompt
+        prompt = f"""CSV Headers: {csv_headers}
+User Request: {user_request}
+Domain: {self.domain}
+Output Format: {self.output_format}
+
+Generate Python code to create a {self.output_format} document from the data.
+The code should:
+1. Read the CSV data using pandas
+2. Create a properly formatted document with appropriate styling
+3. Include relevant sections based on the user request
+4. Save it to a file named 'output.{self.output_format}'
+5. Print a JSON result with keys: file_path, success
+
+Return ONLY the Python code, no markdown."""
+        
+        try:
+            # Generate code using LLM
+            result = self.llm.complete(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=2000,
+                system_prompt=system_prompt
+            )
+            
+            code = result["content"].strip()
+            # Extract code from markdown if present
+            code_match = re.search(r'```python\s*([\s\S]*?)\s*```', code)
+            if code_match:
+                code = code_match.group(1).strip()
+            
+            # Execute the generation
+            return self._execute_generation(code, csv_data, **kwargs)
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Document generation error: {str(e)}",
+                "output_format": self.output_format,
+                "document_type": "document"
+            }
+    
+    def _build_system_prompt(self) -> str:
+        """
+        Build domain-specific system prompt for document generation.
+        
+        Returns:
+            System prompt string
+        """
+        if self.domain.lower() == "legal":
+            return f"""You are an expert legal document generator. Create a professional {self.output_format} document
+from the provided legal data. The document should be suitable for legal use.
+
+Requirements:
+- Use python-docx library for .docx files
+- Use reportlab for .pdf files
+- Professional formatting with proper headings, sections, and styling
+- Include all relevant data from the CSV in an organized manner
+- Add appropriate legal disclaimers or headers if needed
+- Use legal-standard formatting and language
+
+The code must:
+1. Read CSV data using pandas
+2. Create a properly formatted {self.output_format} document
+3. Save to 'output.{self.output_format}'
+4. Print JSON: {{'file_path': 'output.{self.output_format}', 'success': True}}
+
+Return ONLY Python code, no markdown."""
+        
+        elif self.domain.lower() == "accounting":
+            return f"""You are an expert accounting document generator. Create a professional {self.output_format} document
+from the financial data. The document should be suitable for stakeholders.
+
+Requirements:
+- Use python-docx library for .docx files
+- Use reportlab for .pdf files
+- Professional financial reporting format
+- Include tables, summaries, and analysis where appropriate
+- Format numbers properly (currency, percentages)
+- Include appropriate financial disclaimers
+
+The code must:
+1. Read CSV data using pandas
+2. Create a properly formatted {self.output_format} document
+3. Save to 'output.{self.output_format}'
+4. Print JSON: {{'file_path': 'output.{self.output_format}', 'success': True}}
+
+Return ONLY Python code, no markdown."""
+        
+        # Default document prompt
+        return f"""You are an expert document generator. Create a professional {self.output_format} document
+from the provided data.
+
+Requirements:
+- Use python-docx library for .docx files
+- Use reportlab for .pdf files
+- Professional formatting with headings and sections
+- Include all relevant data organized properly
+- Add appropriate summaries and analysis
+
+The code must:
+1. Read CSV data using pandas
+2. Create a properly formatted {self.output_format} document
+3. Save to 'output.{self.output_format}'
+4. Print JSON: {{'file_path': 'output.{self.output_format}', 'success': True}}
+
+Return ONLY Python code, no markdown."""
+    
+    def _execute_generation(
+        self,
+        code: str,
+        csv_data: str,
+        **kwargs
+    ) -> dict:
+        """
+        Execute document generation code in sandbox.
+        
+        Args:
+            code: Python code to execute
+            csv_data: CSV data string
+            **kwargs: Additional execution arguments
+            
+        Returns:
+            Dictionary with execution results
+        """
+        # Wrap with CSV data
+        code_with_csv = f'csv_data = """{csv_data}"""\n\n' + code
+        
+        # Get execution parameters
+        e2b_api_key = kwargs.get("api_key") or os.environ.get("E2B_API_KEY")
+        sandbox_timeout = kwargs.get("sandbox_timeout", 120)
+        
+        # Execute in sandbox
+        success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
+            code_with_csv, e2b_api_key, sandbox_timeout
+        )
+        
+        # Parse result
+        return self._parse_result(success, sandbox_result, artifacts)
+    
+    def _parse_result(
+        self,
+        success: bool,
+        sandbox_result,
+        artifacts: list
+    ) -> dict:
+        """
+        Parse and return the generated document.
+        
+        Args:
+            success: Whether execution was successful
+            sandbox_result: The sandbox result object
+            artifacts: List of artifacts from execution
+            
+        Returns:
+            Dictionary with parsed results
+        """
+        if success and artifacts:
+            # Return the generated document from artifacts
+            for artifact in artifacts:
+                if hasattr(artifact, 'data') and hasattr(artifact, 'name'):
+                    if artifact.name.endswith(f'.{self.output_format}'):
+                        mime_type = "pdf" if self.output_format == "pdf" else "vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        return {
+                            "success": True,
+                            "file_url": f"data:application/{mime_type};base64,{base64.b64encode(artifact.data).decode('utf-8')}",
+                            "file_name": artifact.name,
+                            "output_format": self.output_format,
+                            "document_type": "document",
+                            "message": f"{self.output_format.upper()} document generated successfully"
+                        }
+        
+        # Check logs for result
+        if success and sandbox_result and sandbox_result.logs:
+            for log in sandbox_result.logs:
+                if hasattr(log, 'text') and log.text and "{" in log.text:
+                    try:
+                        json_start = log.text.find("{")
+                        json_end = log.text.rfind("}") + 1
+                        result_data = eval(log.text[json_start:json_end])
+                        if result_data.get("success"):
+                            return {
+                                "success": True,
+                                "file_url": result_data.get("file_path", ""),
+                                "output_format": self.output_format,
+                                "document_type": "document",
+                                "message": f"{self.output_format.upper()} document generated"
+                            }
+                    except:
+                        pass
+        
+        return {
+            "success": False,
+            "message": f"Failed to generate {self.output_format} document",
+            "output_format": self.output_format,
+            "document_type": "document"
+        }
+
+
+# =============================================================================
+# REPORT GENERATOR - Comprehensive report generation
+# =============================================================================
+
+
+class ReportGenerator:
+    """
+    Dedicated class for comprehensive report generation.
+    
+    Handles executive summaries, detailed analysis, and integrates
+    visualizations into reports.
+    """
+    
+    # Report types
+    REPORT_TYPE_SUMMARY = "summary"
+    REPORT_TYPE_DETAILED = "detailed"
+    REPORT_TYPE_COMBINED = "combined"
+    
+    def __init__(
+        self,
+        domain: str = "data_analysis",
+        llm_service: Optional[LLMService] = None,
+        report_type: str = "detailed"
+    ):
+        """
+        Initialize the ReportGenerator.
+        
+        Args:
+            domain: The domain (legal, accounting, data_analysis)
+            llm_service: Optional LLMService instance
+            report_type: Type of report (summary, detailed, combined)
+        """
+        self.domain = domain
+        self.llm = llm_service or LLMService()
+        self.report_type = report_type
+    
+    def generate_report(
+        self,
+        user_request: str,
+        csv_data: str,
+        **kwargs
+    ) -> dict:
+        """
+        Generate a report based on user request and CSV data.
+        
+        Args:
+            user_request: The user's report request
+            csv_data: CSV data as string
+            **kwargs: Additional arguments
+            
+        Returns:
+            Dictionary with generation results
+        """
+        if self.report_type == self.REPORT_TYPE_SUMMARY:
+            return self.create_summary_report(user_request, csv_data, **kwargs)
+        elif self.report_type == self.REPORT_TYPE_COMBINED:
+            return self._create_combined_report(user_request, csv_data, **kwargs)
+        else:
+            return self.create_detailed_report(user_request, csv_data, **kwargs)
+    
+    def create_summary_report(
+        self,
+        user_request: str,
+        csv_data: str,
+        **kwargs
+    ) -> dict:
+        """
+        Generate an executive summary report.
+        
+        Args:
+            user_request: The user's request
+            csv_data: CSV data as string
+            **kwargs: Additional arguments
+            
+        Returns:
+            Dictionary with summary report results
+        """
+        # Extract headers
+        first_line = csv_data.strip().split('\n')[0]
+        csv_headers = [h.strip() for h in first_line.split(',')]
+        
+        # Build system prompt for summary
+        system_prompt = self._build_summary_system_prompt()
+        
+        prompt = f"""CSV Headers: {csv_headers}
+User Request: {user_request}
+Domain: {self.domain}
+
+Generate Python code to create an executive summary document.
+The code should:
+1. Read the CSV data using pandas
+2. Calculate key metrics and statistics
+3. Create a concise summary document with key findings
+4. Save it to 'output.docx'
+5. Print a JSON result with keys: file_path, success
+
+Return ONLY the Python code, no markdown."""
+        
+        try:
+            result = self.llm.complete(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=2000,
+                system_prompt=system_prompt
+            )
+            
+            code = result["content"].strip()
+            code_match = re.search(r'```python\s*([\s\S]*?)\s*```', code)
+            if code_match:
+                code = code_match.group(1).strip()
+            
+            code_with_csv = f'csv_data = """{csv_data}"""\n\n' + code
+            
+            e2b_api_key = kwargs.get("api_key") or os.environ.get("E2B_API_KEY")
+            sandbox_timeout = kwargs.get("sandbox_timeout", 120)
+            
+            success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
+                code_with_csv, e2b_api_key, sandbox_timeout
+            )
+            
+            return self._parse_result(success, sandbox_result, artifacts, "summary")
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Summary report generation error: {str(e)}",
+                "output_format": "docx",
+                "document_type": "report",
+                "report_type": "summary"
+            }
+    
+    def create_detailed_report(
+        self,
+        user_request: str,
+        csv_data: str,
+        **kwargs
+    ) -> dict:
+        """
+        Generate a detailed analysis report.
+        
+        Args:
+            user_request: The user's request
+            csv_data: CSV data as string
+            **kwargs: Additional arguments
+            
+        Returns:
+            Dictionary with detailed report results
+        """
+        # Extract headers
+        first_line = csv_data.strip().split('\n')[0]
+        csv_headers = [h.strip() for h in first_line.split(',')]
+        
+        # Build system prompt for detailed report
+        system_prompt = self._build_detailed_system_prompt()
+        
+        prompt = f"""CSV Headers: {csv_headers}
+User Request: {user_request}
+Domain: {self.domain}
+
+Generate Python code to create a detailed analysis report.
+The code should:
+1. Read the CSV data using pandas
+2. Perform comprehensive analysis with multiple sections
+3. Include data tables, statistics, and insights
+4. Create a well-structured document
+5. Save it to 'output.docx'
+6. Print a JSON result with keys: file_path, success
+
+Return ONLY the Python code, no markdown."""
+        
+        try:
+            result = self.llm.complete(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=2500,
+                system_prompt=system_prompt
+            )
+            
+            code = result["content"].strip()
+            code_match = re.search(r'```python\s*([\s\S]*?)\s*```', code)
+            if code_match:
+                code = code_match.group(1).strip()
+            
+            code_with_csv = f'csv_data = """{csv_data}"""\n\n' + code
+            
+            e2b_api_key = kwargs.get("api_key") or os.environ.get("E2B_API_KEY")
+            sandbox_timeout = kwargs.get("sandbox_timeout", 120)
+            
+            success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
+                code_with_csv, e2b_api_key, sandbox_timeout
+            )
+            
+            return self._parse_result(success, sandbox_result, artifacts, "detailed")
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Detailed report generation error: {str(e)}",
+                "output_format": "docx",
+                "document_type": "report",
+                "report_type": "detailed"
+            }
+    
+    def combine_with_visualizations(
+        self,
+        user_request: str,
+        csv_data: str,
+        visualizations: list,
+        **kwargs
+    ) -> dict:
+        """
+        Combine data visualizations into a comprehensive report.
+        
+        Args:
+            user_request: The user's request
+            csv_data: CSV data as string
+            visualizations: List of visualization base64 data URLs
+            **kwargs: Additional arguments
+            
+        Returns:
+            Dictionary with combined report results
+        """
+        # Extract headers
+        first_line = csv_data.strip().split('\n')[0]
+        csv_headers = [h.strip() for h in first_line.split(',')]
+        
+        # Build system prompt for combined report
+        system_prompt = """You are an expert report generator. Create a comprehensive report
+that combines text analysis with embedded visualizations.
+
+Requirements:
+- Use python-docx for document creation
+- Embed the provided visualizations into the document
+- Include executive summary and detailed analysis
+- Professional formatting with proper headings
+
+The code must:
+1. Read CSV data using pandas
+2. Create a document with text content
+3. Embed visualization images from base64 data
+4. Save to 'output.docx'
+5. Print JSON: {'file_path': 'output.docx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+        
+        # Prepare visualization data for the prompt
+        viz_info = []
+        for i, viz in enumerate(visualizations):
+            viz_info.append(f"Visualization {i+1}: {viz[:100]}...")  # Truncate for prompt
+        
+        prompt = f"""CSV Headers: {csv_headers}
+User Request: {user_request}
+Domain: {self.domain}
+Visualizations to include: {len(visualizations)} charts
+
+Generate Python code to create a comprehensive report with visualizations.
+The code should:
+1. Read the CSV data using pandas
+2. Create sections with analysis text
+3. Embed the provided visualizations (base64 encoded images)
+4. Save it to 'output.docx'
+5. Print a JSON result with keys: file_path, success
+
+Return ONLY the Python code, no markdown."""
+        
+        try:
+            result = self.llm.complete(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=2500,
+                system_prompt=system_prompt
+            )
+            
+            code = result["content"].strip()
+            code_match = re.search(r'```python\s*([\s\S]*?)\s*```', code)
+            if code_match:
+                code = code_match.group(1).strip()
+            
+            # Add visualization data to code
+            viz_code = f"visualizations = {visualizations}\n\n"
+            code_with_csv = f'csv_data = """{csv_data}"""\n\n' + viz_code + code
+            
+            e2b_api_key = kwargs.get("api_key") or os.environ.get("E2B_API_KEY")
+            sandbox_timeout = kwargs.get("sandbox_timeout", 120)
+            
+            success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
+                code_with_csv, e2b_api_key, sandbox_timeout
+            )
+            
+            return self._parse_result(success, sandbox_result, artifacts, "combined")
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Combined report generation error: {str(e)}",
+                "output_format": "docx",
+                "document_type": "report",
+                "report_type": "combined"
+            }
+    
+    def _create_combined_report(
+        self,
+        user_request: str,
+        csv_data: str,
+        **kwargs
+    ) -> dict:
+        """
+        Internal method to create a combined report with visualizations.
+        
+        Args:
+            user_request: The user's request
+            csv_data: CSV data as string
+            **kwargs: Additional arguments
+            
+        Returns:
+            Dictionary with combined report results
+        """
+        # First generate visualizations
+        viz_result = execute_data_visualization(
+            csv_data=csv_data,
+            user_request=user_request,
+            llm_service=self.llm,
+            **kwargs
+        )
+        
+        visualizations = []
+        if viz_result.get("success") and viz_result.get("image_url"):
+            visualizations.append(viz_result["image_url"])
+        
+        # Then combine with report
+        return self.combine_with_visualizations(
+            user_request=user_request,
+            csv_data=csv_data,
+            visualizations=visualizations,
+            **kwargs
+        )
+    
+    def _build_summary_system_prompt(self) -> str:
+        """
+        Build system prompt for summary reports.
+        
+        Returns:
+            System prompt string
+        """
+        if self.domain.lower() == "legal":
+            return """You are an expert legal document generator. Create a concise executive summary
+from the provided legal data.
+
+Requirements:
+- Use python-docx for document creation
+- Focus on key findings and critical information
+- Include bullet points for easy scanning
+- Professional legal formatting
+- Maximum 1-2 pages
+
+The code must:
+1. Read CSV data using pandas
+2. Calculate key metrics (totals, averages, counts)
+3. Create a summary document with key findings
+4. Save to 'output.docx'
+5. Print JSON: {'file_path': 'output.docx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+        
+        elif self.domain.lower() == "accounting":
+            return """You are an expert accounting document generator. Create a concise executive summary
+from the financial data.
+
+Requirements:
+- Use python-docx for document creation
+- Focus on key financial metrics and KPIs
+- Include totals, averages, and percentages
+- Professional financial formatting
+- Maximum 1-2 pages
+
+The code must:
+1. Read CSV data using pandas
+2. Calculate key financial metrics
+3. Create a summary document with financial highlights
+4. Save to 'output.docx'
+5. Print JSON: {'file_path': 'output.docx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+        
+        # Default summary prompt
+        return """You are an expert document generator. Create a concise executive summary
+from the provided data.
+
+Requirements:
+- Use python-docx for document creation
+- Focus on key findings and insights
+- Include relevant statistics
+- Professional formatting
+- Maximum 1-2 pages
+
+The code must:
+1. Read CSV data using pandas
+2. Calculate key metrics
+3. Create a summary document
+4. Save to 'output.docx'
+5. Print JSON: {'file_path': 'output.docx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+    
+    def _build_detailed_system_prompt(self) -> str:
+        """
+        Build system prompt for detailed reports.
+        
+        Returns:
+            System prompt string
+        """
+        if self.domain.lower() == "legal":
+            return """You are an expert legal document generator. Create a comprehensive detailed analysis report
+from the provided legal data.
+
+Requirements:
+- Use python-docx for document creation
+- Multiple sections: Introduction, Data Overview, Analysis, Conclusions
+- Include data tables with proper formatting
+- Detailed legal analysis and insights
+- Professional legal document formatting
+
+The code must:
+1. Read CSV data using pandas
+2. Perform comprehensive analysis
+3. Create a detailed document with multiple sections
+4. Include data tables
+5. Save to 'output.docx'
+6. Print JSON: {'file_path': 'output.docx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+        
+        elif self.domain.lower() == "accounting":
+            return """You are an expert accounting document generator. Create a comprehensive detailed analysis report
+from the financial data.
+
+Requirements:
+- Use python-docx for document creation
+- Multiple sections: Executive Summary, Financial Overview, Detailed Analysis, Conclusions
+- Include formatted data tables
+- Detailed financial analysis with ratios and metrics
+- Professional financial reporting format
+
+The code must:
+1. Read CSV data using pandas
+2. Perform comprehensive financial analysis
+3. Create a detailed report with multiple sections
+4. Include formatted data tables
+5. Save to 'output.docx'
+6. Print JSON: {'file_path': 'output.docx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+        
+        # Default detailed prompt
+        return """You are an expert document generator. Create a comprehensive detailed analysis report
+from the provided data.
+
+Requirements:
+- Use python-docx for document creation
+- Multiple sections: Introduction, Data Overview, Analysis, Conclusions
+- Include data tables and statistics
+- Detailed analysis and insights
+- Professional formatting
+
+The code must:
+1. Read CSV data using pandas
+2. Perform comprehensive analysis
+3. Create a detailed document with multiple sections
+4. Include data tables
+5. Save to 'output.docx'
+6. Print JSON: {'file_path': 'output.docx', 'success': True}
+
+Return ONLY Python code, no markdown."""
+    
+    def _parse_result(
+        self,
+        success: bool,
+        sandbox_result,
+        artifacts: list,
+        report_type: str
+    ) -> dict:
+        """
+        Parse and return the generated report.
+        
+        Args:
+            success: Whether execution was successful
+            sandbox_result: The sandbox result object
+            artifacts: List of artifacts from execution
+            report_type: Type of report
+            
+        Returns:
+            Dictionary with parsed results
+        """
+        if success and artifacts:
+            for artifact in artifacts:
+                if hasattr(artifact, 'data') and hasattr(artifact, 'name'):
+                    if artifact.name.endswith('.docx'):
+                        return {
+                            "success": True,
+                            "file_url": f"data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,{base64.b64encode(artifact.data).decode('utf-8')}",
+                            "file_name": artifact.name,
+                            "output_format": "docx",
+                            "document_type": "report",
+                            "report_type": report_type,
+                            "message": "Report generated successfully"
+                        }
+        
+        # Check logs for result
+        if success and sandbox_result and sandbox_result.logs:
+            for log in sandbox_result.logs:
+                if hasattr(log, 'text') and log.text and "{" in log.text:
+                    try:
+                        json_start = log.text.find("{")
+                        json_end = log.text.rfind("}") + 1
+                        result_data = eval(log.text[json_start:json_end])
+                        if result_data.get("success"):
+                            return {
+                                "success": True,
+                                "file_url": result_data.get("file_path", ""),
+                                "output_format": "docx",
+                                "document_type": "report",
+                                "report_type": report_type,
+                                "message": "Report generated"
+                            }
+                    except:
+                        pass
+        
+        return {
+            "success": False,
+            "message": f"Failed to generate {report_type} report",
+            "output_format": "docx",
+            "document_type": "report",
+            "report_type": report_type
+        }
+
+
+# =============================================================================
 # DOMAIN-SPECIFIC SYSTEM PROMPTS
 # =============================================================================
 
+
+
 def get_domain_system_prompt(domain: str, file_type: str = "csv") -> str:
+
     """
     Get the appropriate system prompt based on the task domain and file type.
     
@@ -908,6 +2345,33 @@ def _perform_pre_submission_review(
     )
 
 
+def _get_llm_for_task(domain: Optional[str]) -> LLMService:
+    """
+    Get the appropriate LLMService based on task domain for cost optimization.
+    
+    Strategy:
+    - Legal & Accounting domains: Use cloud models (GPT-4o) for high accuracy
+    - Data analysis (basic admin): Use local models (Llama 3.2) to eliminate API costs
+    
+    Args:
+        domain: The task domain (legal, accounting, data_analysis)
+        
+    Returns:
+        Configured LLMService instance
+    """
+    domain_lower = (domain or "").lower().strip()
+    
+    # Legal and Accounting require high accuracy - use cloud models
+    if domain_lower in ["legal", "accounting"]:
+        print(f"Using cloud model for {domain} task (high accuracy required)")
+        return LLMService.for_complex_task()
+    
+    # Data analysis - use local models for cost savings
+    # This covers basic admin tasks like simple data cleaning, formatting
+    print("Using local model for data analysis task (cost optimization)")
+    return LLMService.for_basic_admin()
+
+
 def execute_data_visualization(
     csv_data: str,
     user_request: str,
@@ -920,7 +2384,8 @@ def execute_data_visualization(
     domain: Optional[str] = None,
     file_type: Optional[str] = None,
     file_content: Optional[str] = None,
-    filename: Optional[str] = None
+    filename: Optional[str] = None,
+    force_cloud: bool = False
 ) -> dict:
     """
     Execute data visualization in a secure E2B sandbox with retry logic
@@ -949,6 +2414,7 @@ def execute_data_visualization(
         file_type: Type of file being processed (csv, excel, pdf)
         file_content: Base64-encoded file content (alternative to csv_data)
         filename: Original filename for detecting file type
+        force_cloud: Force using cloud model even for basic tasks (default: False)
         
     Returns:
         Dictionary containing:
@@ -1001,9 +2467,24 @@ def execute_data_visualization(
     first_line = csv_data.strip().split('\n')[0]
     csv_headers = [h.strip() for h in first_line.split(',')]
     
+    # Get appropriate LLM based on domain (cost optimization)
+    # Use provided llm_service or select based on domain
+    effective_llm = llm_service
+    if effective_llm is None:
+        if force_cloud:
+            # Force cloud model for this task
+            effective_llm = LLMService.for_complex_task()
+        else:
+            # Auto-select based on domain
+            effective_llm = _get_llm_for_task(domain)
+    
+    # Log which model is being used
+    model_info = effective_llm.get_config()
+    print(f"LLM Config: model={model_info.get('model')}, is_local={model_info.get('is_local')}")
+    
     # Generate visualization code using LLM with domain-specific prompts
     # Now includes file_type information
-    ai_generator = AIResponseGenerator(llm_service, domain=domain)
+    ai_generator = AIResponseGenerator(effective_llm, domain=domain)
     llm_result = ai_generator.generate_visualization_code(
         csv_headers, user_request, domain=domain, file_type=effective_file_type
     )

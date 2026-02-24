@@ -15,23 +15,117 @@ import stripe
 
 from datetime import datetime
 from .database import get_db, init_db
-from .models import Task, TaskStatus
-from ..agent_execution.executor import execute_data_visualization
+from .models import Task, TaskStatus, PlanStatus, ReviewStatus
+from ..agent_execution.executor import execute_task, execute_data_visualization, TaskType, OutputFormat
 
 
-def process_task_async(task_id: str):
+# =============================================================================
+# ESCALATION & HUMAN-IN-THE-LOOP (HITL) CONFIGURATION (Pillar 1.7)
+# =============================================================================
+
+# High-value threshold for profit protection (in dollars)
+# Tasks with amount_paid >= HIGH_VALUE_THRESHOLD will always be escalated on failure
+HIGH_VALUE_THRESHOLD = 200
+
+# Maximum number of retry attempts before escalation (matches executor.py)
+MAX_RETRY_ATTEMPTS = 3
+
+
+from ..agent_execution.planning import (
+    ResearchAndPlanOrchestrator,
+    create_research_plan_workflow,
+    ContextExtractor,
+    WorkPlanGenerator
+)
+
+
+def _should_escalate_task(task, retry_count: int, error_message: str = None) -> tuple:
+    """
+    Determine if a task should be escalated to human review.
+    
+    Escalation criteria (Pillar 1.7):
+    1. Agent failed after MAX_RETRY_ATTEMPTS (3 retries)
+    2. High-value task ($200+) failed (profit protection)
+    
+    Args:
+        task: The Task object
+        retry_count: Number of retry attempts made
+        error_message: Optional error message from the failure
+        
+    Returns:
+        Tuple of (should_escalate: bool, reason: str or None)
+    """
+    # Check if this is a high-value task
+    amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
+    is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
+    
+    # Check if retries were exhausted
+    if retry_count >= MAX_RETRY_ATTEMPTS:
+        reason = "max_retries_exceeded"
+        if is_high_value:
+            reason = "max_retries_exceeded_high_value"
+        return True, reason
+    
+    # High-value task failed - always escalate for profit protection
+    if is_high_value and error_message:
+        reason = "high_value_task_failed"
+        return True, reason
+    
+    return False, None
+
+
+def _escalate_task(db, task, reason: str, error_message: str = None):
+    """
+    Escalate a task to human review.
+    
+    Args:
+        db: Database session
+        task: The Task object to escalate
+        reason: Reason for escalation
+        error_message: Optional error details
+    """
+    task.status = TaskStatus.ESCALATION
+    task.escalation_reason = reason
+    task.escalated_at = datetime.utcnow()
+    task.last_error = error_message
+    task.review_status = ReviewStatus.PENDING
+    
+    # Log the escalation for profit protection
+    amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
+    is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
+    
+    print(f"[ESCALATION] Task {task.id} escalated: {reason}")
+    print(f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}")
+    print(f"[ESCALATION] Human reviewer notification required to prevent refund")
+    
+    if error_message:
+        print(f"[ESCALATION] Error: {error_message[:200]}...")
+    
+    db.commit()
+
+
+def process_task_async(task_id: str, use_planning_workflow: bool = True):
     """
     Process a task asynchronously after payment is confirmed.
     
     This function is called as a background task when a task is marked as PAID.
-    It retrieves the task from the database, executes the data visualization,
-    and updates the database with the result.
+    It retrieves the task from the database, executes the appropriate task
+    using the Research & Plan workflow (or TaskRouter as fallback), and updates
+    the database with the result.
+    
+    The Research & Plan workflow includes:
+    1. Context Extraction: Agent analyzes uploaded files (PDF/Excel) to extract context
+    2. Work Plan Generation: Agent creates a detailed work plan
+    3. Plan Execution: Agent executes the plan in the E2B sandbox
+    4. Artifact Review: ArtifactReviewer checks the final document against the plan
     
     Args:
         task_id: The ID of the task to process
+        use_planning_workflow: Whether to use the Research & Plan workflow (default: True)
     """
     # Create a new database session for this background task
     from .database import SessionLocal
+    import os
     
     db = SessionLocal()
     try:
@@ -46,6 +140,12 @@ def process_task_async(task_id: str):
             print(f"Task {task_id} is not in PAID status, current status: {task.status}")
             return
         
+        # Get API key from environment
+        e2b_api_key = os.environ.get("E2B_API_KEY")
+        
+        # Build the user request - include title and description for better routing
+        user_request = task.description or f"Create a {task.domain} visualization for {task.title}"
+        
         # Use the CSV data stored in the task, or fall back to sample data if not provided
         csv_data = task.csv_data
         if not csv_data and not task.file_content:
@@ -57,39 +157,222 @@ Engineering,300
 Operations,120
 Support,180"""
         
-        # Execute the data visualization with the user's data
-        # Pass the domain and file parameters to use domain-specific system prompts
-        result = execute_data_visualization(
-            csv_data=csv_data or "",  # Pass empty string if no CSV data
-            user_request=f"Create a {task.domain} visualization for {task.title}",
-            domain=task.domain,
-            file_type=task.file_type,  # Pass file type (csv, excel, pdf)
-            file_content=task.file_content,  # Pass base64-encoded file content
-            filename=task.filename  # Pass original filename
-        )
+        # Update task status to PLANNING if using planning workflow
+        if use_planning_workflow:
+            task.status = TaskStatus.PLANNING
+            db.commit()
         
-        # Update the task with the result
-        if result.get("success"):
-            task.result_image_url = result.get("image_url", "")
-            task.status = TaskStatus.COMPLETED
+        if use_planning_workflow:
+            # =====================================================
+            # RESEARCH & PLAN WORKFLOW (NEW AUTONOMY CORE)
+            # =====================================================
+            print(f"Task {task_id}: Using Research & Plan workflow")
+            
+            # Step 1 & 2: Extract context and generate work plan
+            if use_planning_workflow:
+                task.plan_status = "GENERATING"  # Update plan status
+                db.commit()
+                
+                # Extract context from files
+                context_extractor = ContextExtractor()
+                extracted_context = context_extractor.extract_context(
+                    file_content=task.file_content,
+                    csv_data=csv_data,
+                    filename=task.filename,
+                    file_type=task.file_type,
+                    domain=task.domain
+                )
+                
+                # Store extracted context in task
+                task.extracted_context = extracted_context
+                
+                # Generate work plan
+                plan_generator = WorkPlanGenerator()
+                plan_result = plan_generator.create_work_plan(
+                    user_request=user_request,
+                    domain=task.domain,
+                    extracted_context=extracted_context
+                )
+                
+                if plan_result.get("success"):
+                    work_plan = plan_result["plan"]
+                    task.work_plan = json.dumps(work_plan)
+                    task.plan_status = "APPROVED"
+                    task.plan_generated_at = datetime.utcnow()
+                    print(f"Task {task_id}: Work plan generated - {work_plan.get('title', 'Untitled')}")
+                else:
+                    task.plan_status = "REJECTED"
+                    print(f"Task {task_id}: Plan generation failed - {plan_result.get('error')}")
+                
+                db.commit()
+            
+            # Step 3: Execute the plan in E2B sandbox
+            task.status = TaskStatus.PROCESSING
+            db.commit()
+            
+            # Execute the workflow
+            orchestrator = ResearchAndPlanOrchestrator()
+            workflow_result = orchestrator.execute_workflow(
+                user_request=user_request,
+                domain=task.domain,
+                csv_data=csv_data,
+                file_content=task.file_content,
+                filename=task.filename,
+                file_type=task.file_type,
+                api_key=e2b_api_key
+            )
+            
+            # Store execution log
+            task.execution_log = workflow_result.get("steps", {})
+            task.retry_count = workflow_result.get("steps", {}).get("plan_execution", {}).get("result", {}).get("retry_count", 0)
+            
+            # Step 4: Get review results
+            review_result = workflow_result.get("steps", {}).get("artifact_review", {})
+            task.review_approved = review_result.get("approved", False)
+            task.review_feedback = review_result.get("feedback", "")
+            task.review_attempts = review_result.get("attempts", 0)
+            
+            if workflow_result.get("success"):
+                # Get the artifact URL
+                artifact_url = workflow_result.get("artifact_url", "")
+                
+                # Determine output format from work plan
+                try:
+                    plan_data = json.loads(task.work_plan) if task.work_plan else {}
+                    output_format = plan_data.get("output_format", "image")
+                except:
+                    output_format = "image"
+                
+                # Store result based on output format (diverse output types)
+                task.result_type = output_format
+                
+                if output_format in ["docx", "pdf"]:
+                    # For documents
+                    task.result_document_url = artifact_url
+                elif output_format == "xlsx":
+                    # For spreadsheets
+                    task.result_spreadsheet_url = artifact_url
+                else:
+                    # For images/visualizations (default)
+                    task.result_image_url = artifact_url
+                
+                task.status = TaskStatus.COMPLETED
+                print(f"Task {task_id}: Completed successfully with Research & Plan workflow (output: {output_format})")
+            else:
+                # Workflow failed - check if should escalate instead of marking as FAILED
+                error_message = workflow_result.get("message", "Workflow failed")
+                task.last_error = error_message
+                
+                # Check if should escalate based on retry count and high-value status
+                should_escalate, escalation_reason = _should_escalate_task(
+                    task, 
+                    task.retry_count or 0, 
+                    error_message
+                )
+                
+                if should_escalate:
+                    # ESCALATE to human review (Pillar 1.7)
+                    _escalate_task(db, task, escalation_reason, error_message)
+                    print(f"Task {task_id}: ESCALATED for human review - {escalation_reason}")
+                else:
+                    # Mark as FAILED for non-high-value tasks that exhausted retries
+                    task.status = TaskStatus.FAILED
+                    task.review_feedback = error_message
+                    print(f"Task {task_id}: Failed - {error_message}")
+        
         else:
-            task.status = TaskStatus.FAILED
+            # =====================================================
+            # LEGACY WORKFLOW (Original TaskRouter)
+            # =====================================================
+            print(f"Task {task_id}: Using legacy TaskRouter workflow")
+            
+            result = execute_task(
+                domain=task.domain,
+                user_request=user_request,
+                csv_data=csv_data or "",
+                file_type=task.file_type,
+                file_content=task.file_content,
+                filename=task.filename
+            )
+            
+            # Update the task with the result based on output format (diverse output types)
+            if result.get("success"):
+                # Check if this is a document/spreadsheet (non-image) result
+                output_format = result.get("output_format", "image")
+                
+                # Store result_type for tracking
+                task.result_type = output_format
+                
+                if output_format in [OutputFormat.DOCX, OutputFormat.PDF]:
+                    # For documents, store in result_document_url
+                    task.result_document_url = result.get("file_url", result.get("image_url", ""))
+                elif output_format == OutputFormat.XLSX:
+                    # For spreadsheets, store in result_spreadsheet_url
+                    task.result_spreadsheet_url = result.get("file_url", result.get("image_url", ""))
+                else:
+                    # For images/visualizations, store in result_image_url
+                    task.result_image_url = result.get("image_url", "")
+                
+                task.status = TaskStatus.COMPLETED
+                print(f"Task {task_id} completed successfully with format: {output_format}")
+            else:
+                # Legacy workflow failed - check if should escalate
+                error_message = result.get('message', 'Unknown error')
+                task.last_error = error_message
+                
+                # Get retry count from result if available
+                retry_count = result.get("retry_count", 0)
+                
+                # Check if should escalate based on retry count and high-value status
+                should_escalate, escalation_reason = _should_escalate_task(
+                    task, 
+                    retry_count, 
+                    error_message
+                )
+                
+                if should_escalate:
+                    # ESCALATE to human review (Pillar 1.7)
+                    _escalate_task(db, task, escalation_reason, error_message)
+                    print(f"Task {task_id}: ESCALATED for human review - {escalation_reason}")
+                else:
+                    # Mark as FAILED
+                    task.status = TaskStatus.FAILED
+                    task.review_feedback = error_message
+                    print(f"Task {task_id} failed: {error_message}")
         
         db.commit()
-        print(f"Task {task_id} processed successfully, status: {task.status}")
+        print(f"Task {task_id} processed, final status: {task.status}")
         
     except Exception as e:
         print(f"Error processing task {task_id}: {str(e)}")
-        # Mark as failed on error
+        # Check if should escalate instead of marking as failed
         try:
             task = db.query(Task).filter(Task.id == task_id).first()
             if task:
-                task.status = TaskStatus.FAILED
-                db.commit()
+                error_message = str(e)
+                task.last_error = error_message
+                
+                # Check if should escalate based on high-value status
+                should_escalate, escalation_reason = _should_escalate_task(
+                    task, 
+                    task.retry_count or 0, 
+                    error_message
+                )
+                
+                if should_escalate:
+                    # ESCALATE to human review (Pillar 1.7)
+                    _escalate_task(db, task, escalation_reason, error_message)
+                    print(f"Task {task_id}: ESCALATED for human review - {escalation_reason}")
+                else:
+                    # Mark as FAILED
+                    task.status = TaskStatus.FAILED
+                    task.review_feedback = error_message
+                    db.commit()
         except Exception:
             pass
     finally:
         db.close()
+
 
 
 # Initialize FastAPI app
@@ -244,6 +527,9 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
         raise HTTPException(status_code=400, detail=str(e))
     
     try:
+        # Determine if this is a high-value task (Pillar 1.7 - Profit Protection)
+        is_high_value = amount >= HIGH_VALUE_THRESHOLD
+        
         # Create a task in the database with PENDING status
         new_task = Task(
             id=str(uuid.uuid4()),
@@ -258,7 +544,8 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
             filename=task.filename,  # Store original filename
             client_email=task.client_email,  # Store client email for history tracking
             amount_paid=amount * 100,  # Store amount in cents
-            delivery_token=str(uuid.uuid4())  # Generate secure delivery token
+            delivery_token=str(uuid.uuid4()),  # Generate secure delivery token
+            is_high_value=is_high_value  # Mark as high-value for profit protection
         )
         db.add(new_task)
         db.commit()
@@ -679,12 +966,25 @@ async def get_secure_delivery(
             detail=f"Task is not ready for delivery. Current status: {task.status.value}"
         )
     
-    # Return the delivery data
+    # Return the delivery data with diverse output types
+    result_url = None
+    if task.result_type in ["docx", "pdf"]:
+        result_url = task.result_document_url
+    elif task.result_type == "xlsx":
+        result_url = task.result_spreadsheet_url
+    else:
+        # Default to image/visualization
+        result_url = task.result_image_url
+    
     return {
         "task_id": task.id,
         "title": task.title,
         "domain": task.domain,
+        "result_type": task.result_type,
+        "result_url": result_url,
         "result_image_url": task.result_image_url,
+        "result_document_url": task.result_document_url,
+        "result_spreadsheet_url": task.result_spreadsheet_url,
         "delivery_token": task.delivery_token,
         "delivered_at": task.updated_at.isoformat() if hasattr(task, 'updated_at') else None
     }
