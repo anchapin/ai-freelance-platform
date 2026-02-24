@@ -13,9 +13,8 @@ Coverage:
 import pytest
 import asyncio
 import time
-from unittest.mock import MagicMock, AsyncMock, patch
 
-from src.agent_execution.browser_pool import BrowserPool, PooledBrowser
+from src.agent_execution.browser_pool import BrowserPool
 from src.agent_execution.url_circuit_breaker import (
     URLCircuitBreaker,
     URLCircuitBreakerConfig,

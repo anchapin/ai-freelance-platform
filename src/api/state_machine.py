@@ -6,8 +6,7 @@ Prevents invalid state transitions in the refactored Task model.
 Issue #5: Refactor overloaded Task model using composition pattern
 """
 
-from typing import Set, Dict, Optional
-from enum import Enum
+from typing import Set, Dict
 
 from src.api.models_composition import (
     TaskStatus,

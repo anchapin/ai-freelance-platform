@@ -13,7 +13,7 @@ import pytest
 import json
 import sys
 import os
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 # Add src to path
@@ -44,9 +44,8 @@ class TestStripeCheckoutEndpoint:
         mock_stripe_create.return_value = mock_session
         
         # Import and test
-        from src.api.main import app, TaskSubmission
-        from src.api.database import get_db, SessionLocal
-        from src.api.models import Task, TaskStatus
+        from src.api.main import app
+        from src.api.database import get_db
         
         # Create test client
         client = TestClient(app)
@@ -86,7 +85,6 @@ class TestStripeCheckoutEndpoint:
     def test_create_checkout_session_invalid_domain(self, mock_stripe_create):
         """Test checkout session with invalid domain."""
         from src.api.main import app
-        from src.api.models import Task, TaskStatus
         
         client = TestClient(app)
         
@@ -124,7 +122,7 @@ class TestStripeWebhookEndpoint:
         
         from src.api.main import app
         from src.api.database import get_db
-        from src.api.models import Task, TaskStatus
+        from src.api.models import TaskStatus
         
         client = TestClient(app)
         
@@ -164,7 +162,6 @@ class TestPricingEndpoint:
     def test_get_domains(self):
         """Test get domains endpoint."""
         from src.api.main import app
-        from src.api.models import Task, TaskStatus
         
         client = TestClient(app)
         response = client.get("/api/domains")
@@ -178,7 +175,6 @@ class TestPricingEndpoint:
     def test_calculate_price_estimate(self):
         """Test price estimate calculation."""
         from src.api.main import app
-        from src.api.models import Task, TaskStatus
         
         client = TestClient(app)
         response = client.get(
@@ -200,7 +196,6 @@ class TestPricingEndpoint:
     def test_calculate_price_invalid_domain(self):
         """Test price estimate with invalid domain."""
         from src.api.main import app
-        from src.api.models import Task, TaskStatus
         
         client = TestClient(app)
         response = client.get(

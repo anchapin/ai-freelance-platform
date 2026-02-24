@@ -8,7 +8,6 @@ Issue #8: Implement distributed lock and deduplication for marketplace bids
 """
 
 from datetime import datetime, timedelta
-from typing import Optional
 from sqlalchemy.orm import Session
 
 from src.api.models import Bid, BidStatus

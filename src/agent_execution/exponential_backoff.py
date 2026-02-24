@@ -8,7 +8,7 @@ Issue #4: Fix async Playwright resource leaks in market scanner
 
 import asyncio
 import random
-from typing import Optional, TypeVar, Callable, Any
+from typing import TypeVar, Callable, Any
 
 from src.utils.logger import get_logger
 

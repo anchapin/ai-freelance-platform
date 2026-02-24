@@ -2,7 +2,6 @@ import os
 import json
 import logging
 from datetime import datetime
-from typing import Optional
 
 # Setup basic logging for the logger itself
 logging.basicConfig(level=logging.INFO)
