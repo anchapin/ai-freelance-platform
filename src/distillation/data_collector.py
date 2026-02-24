@@ -17,7 +17,6 @@ import json
 import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from pathlib import Path
 
 
 # =============================================================================
@@ -72,11 +71,11 @@ class DistillationDataCollector:
         
         # Ensure files exist (create if not)
         if not os.path.exists(self.teacher_file):
-            with open(self.teacher_file, 'w') as f:
+            with open(self.teacher_file, 'w'):
                 pass  # Create empty file
         
         if not os.path.exists(self.curated_file):
-            with open(self.curated_file, 'w') as f:
+            with open(self.curated_file, 'w'):
                 pass  # Create empty file
     
     def capture_success(

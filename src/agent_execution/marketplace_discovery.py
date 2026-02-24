@@ -19,17 +19,12 @@ import json
 import asyncio
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, asdict, field
-from datetime import datetime, timedelta
-import logging
+from datetime import datetime
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # Import logger
 from src.utils.logger import get_logger
-
-logger = get_logger(__name__)
 
 # Try to import web search capability
 try:
@@ -37,7 +32,6 @@ try:
     LLM_SERVICE_AVAILABLE = True
 except ImportError:
     LLM_SERVICE_AVAILABLE = False
-    logger.warning("LLMService not available for marketplace discovery")
 
 # Try to import Playwright
 try:
@@ -45,6 +39,17 @@ try:
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
+
+# Load environment variables
+load_dotenv()
+
+# Initialize logger after all imports
+logger = get_logger(__name__)
+
+if not LLM_SERVICE_AVAILABLE:
+    logger.warning("LLMService not available for marketplace discovery")
+
+if not PLAYWRIGHT_AVAILABLE:
     logger.warning("Playwright not available for marketplace evaluation")
 
 
@@ -611,7 +616,6 @@ async def discover_new_marketplaces(
 # =============================================================================
 
 if __name__ == "__main__":
-    import sys
     
     async def main():
         """Main entry point for testing."""
@@ -622,7 +626,7 @@ if __name__ == "__main__":
         # Initialize discovery
         discovery = MarketplaceDiscovery()
         
-        print(f"\nCurrent Configuration:")
+        print("\nCurrent Configuration:")
         if discovery.config:
             print(f"  Keywords: {discovery.config.search_keywords}")
             print(f"  Min Success Rate: {discovery.config.min_success_rate}")

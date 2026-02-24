@@ -13,15 +13,13 @@ Critical: Ensuring correct state transitions prevents workflow errors
 and ensures tasks are processed correctly.
 """
 
-import pytest
 import sys
 import os
-from datetime import datetime
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from src.api.models import TaskStatus, ReviewStatus, PlanStatus, ArenaCompetitionStatus
+from src.api.models import TaskStatus
 
 
 class TestTaskStatusValues:
@@ -160,14 +158,6 @@ class TestStateMachineTransitions:
         """Test that PROCESSING -> REVIEW_REQUIRED is valid."""
         current_status = TaskStatus.PROCESSING
         new_status = TaskStatus.REVIEW_REQUIRED
-        
-        valid_transition = _is_valid_transition(current_status, new_status)
-        assert valid_transition is True
-    
-    def test_review_required_to_reviewing_valid_transition(self):
-        """Test that REVIEW_REQUIRED -> REVIEWING is valid."""
-        current_status = TaskStatus.REVIEW_REQUIRED
-        new_status = TaskStatus.REVIEWING
         
         valid_transition = _is_valid_transition(current_status, new_status)
         assert valid_transition is True

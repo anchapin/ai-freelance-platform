@@ -5,8 +5,6 @@ Provides endpoints for creating checkout sessions and processing task submission
 import os
 import uuid
 import json
-import hmac
-import hashlib
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -15,12 +13,12 @@ import stripe
 
 from datetime import datetime
 from .database import get_db, init_db
-from .models import Task, TaskStatus, PlanStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus
-from ..agent_execution.executor import execute_task, execute_data_visualization, TaskType, OutputFormat
+from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus
+from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
 
 # Import logging module
-from ..utils.logger import get_logger, TaskLogger
+from ..utils.logger import get_logger
 
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
@@ -29,7 +27,7 @@ from ..utils.telemetry import init_observability
 from ..utils.notifications import TelegramNotifier
 
 # Import Market Scanner for autonomous job scanning
-from ..agent_execution.market_scanner import MarketScanner, run_single_scan
+from ..agent_execution.market_scanner import run_single_scan
 
 # Import LLM Service for proposal generation
 from ..llm_service import LLMService
@@ -43,23 +41,11 @@ from contextlib import asynccontextmanager
 # Import asyncio and random for autonomous loop
 import asyncio
 import random
+import logging
 
-
-# =============================================================================
-# ESCALATION & HUMAN-IN-THE-LOOP (HITL) CONFIGURATION (Pillar 1.7)
-# =============================================================================
-
-# High-value threshold for profit protection (in dollars)
-# Tasks with amount_paid >= HIGH_VALUE_THRESHOLD will always be escalated on failure
-HIGH_VALUE_THRESHOLD = 200
-
-# Maximum number of retry attempts before escalation (matches executor.py)
-MAX_RETRY_ATTEMPTS = 3
-
-
+# Import Agent execution modules
 from ..agent_execution.planning import (
     ResearchAndPlanOrchestrator,
-    create_research_plan_workflow,
     ContextExtractor,
     WorkPlanGenerator,
     get_client_preferences_from_tasks,
@@ -81,8 +67,18 @@ try:
 except ImportError:
     EXPERIENCE_DB_AVAILABLE = False
     # Use basic logging for import errors before app logger is ready
-    import logging
     logging.warning("Experience Vector Database not available, few-shot learning disabled")
+
+# =============================================================================
+# ESCALATION & HUMAN-IN-THE-LOOP (HITL) CONFIGURATION (Pillar 1.7)
+# =============================================================================
+
+# High-value threshold for profit protection (in dollars)
+# Tasks with amount_paid >= HIGH_VALUE_THRESHOLD will always be escalated on failure
+HIGH_VALUE_THRESHOLD = 200
+
+# Maximum number of retry attempts before escalation (matches executor.py)
+MAX_RETRY_ATTEMPTS = 3
 
 
 def _should_escalate_task(task, retry_count: int, error_message: str = None) -> tuple:
@@ -145,7 +141,7 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
     
     logger.warning(f"[ESCALATION] Task {task.id} escalated: {reason}")
     logger.warning(f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}")
-    logger.warning(f"[ESCALATION] Human reviewer notification required to prevent refund")
+    logger.warning("[ESCALATION] Human reviewer notification required to prevent refund")
     
     if error_message:
         logger.warning(f"[ESCALATION] Error: {error_message[:200]}...")
@@ -200,7 +196,6 @@ async def process_task_async(task_id: str, use_planning_workflow: bool = True):
     
     # Initialize logger
     logger = get_logger(__name__)
-    task_logger = TaskLogger(task_id)
     
     db = SessionLocal()
     try:
@@ -237,14 +232,13 @@ Support,180"""
         # This ensures faster completion and higher success rate for paying clients
         # =====================================================
         if task.is_high_value:
-            logger.info(f"HIGH-VALUE TASK - Routing to Agent Arena")
+            logger.info("HIGH-VALUE TASK - Routing to Agent Arena")
             
             # Update status to indicate arena processing
             task.status = TaskStatus.PROCESSING
             db.commit()
             
             # Run the arena competition
-            import asyncio
             arena_result = await run_agent_arena(
                 user_request=user_request,
                 domain=task.domain,
@@ -277,7 +271,7 @@ Support,180"""
             try:
                 plan_data = json.loads(task.work_plan) if task.work_plan else {}
                 output_format = plan_data.get("output_format", "image")
-            except:
+            except (json.JSONDecodeError, AttributeError, TypeError):
                 output_format = "image"
             
             # Store the winning artifact URL
@@ -330,7 +324,7 @@ Support,180"""
                 error_message = f"Arena competition failed. Winner feedback: {review_feedback}"
                 task.last_error = error_message
                 await _escalate_task(db, task, "arena_failed", error_message)
-                logger.warning(f"Arena FAILED - ESCALATED for human review")
+                logger.warning("Arena FAILED - ESCALATED for human review")
             
             db.commit()
             logger.info(f"processed via Arena, final status: {task.status}")
@@ -345,7 +339,7 @@ Support,180"""
             # =====================================================
             # RESEARCH & PLAN WORKFLOW (NEW AUTONOMY CORE)
             # =====================================================
-            logger.info(f"Using Research & Plan workflow")
+            logger.info("Using Research & Plan workflow")
             
             # Step 1 & 2: Extract context and generate work plan
             if use_planning_workflow:
@@ -360,7 +354,7 @@ Support,180"""
                     if client_preferences.get("has_history"):
                         logger.info(f"Found {client_preferences['total_previous_tasks']} previous tasks with preferences")
                     else:
-                        logger.info(f"No previous task history found")
+                        logger.info("No previous task history found")
                 
                 # Extract context from files
                 context_extractor = ContextExtractor()
@@ -430,7 +424,7 @@ Support,180"""
                 try:
                     plan_data = json.loads(task.work_plan) if task.work_plan else {}
                     output_format = plan_data.get("output_format", "image")
-                except:
+                except (json.JSONDecodeError, AttributeError, TypeError):
                     output_format = "image"
                 
                 # Store result based on output format (diverse output types)
@@ -480,11 +474,11 @@ Support,180"""
                             output_format=output_format,
                             csv_headers=csv_headers
                         )
-                        logger.info(f"Stored experience for few-shot learning")
+                        logger.info("Stored experience for few-shot learning")
                 
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences after task completion
                 if task.client_email and task.review_feedback:
-                    logger.info(f"Saving client preferences for future tasks")
+                    logger.info("Saving client preferences for future tasks")
                     save_client_preferences(
                         client_email=task.client_email,
                         task_id=task_id,
@@ -494,7 +488,7 @@ Support,180"""
                         db_session=db
                     )
                 else:
-                    logger.info(f"No client email or feedback to save preferences")
+                    logger.info("No client email or feedback to save preferences")
             else:
                 # Workflow failed - check if should escalate instead of marking as FAILED
                 error_message = workflow_result.get("message", "Workflow failed")
@@ -519,7 +513,7 @@ Support,180"""
                 
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences even on failure
                 if task.client_email and task.review_feedback:
-                    logger.info(f"Saving client preferences (from failed task)")
+                    logger.info("Saving client preferences (from failed task)")
                     save_client_preferences(
                         client_email=task.client_email,
                         task_id=task_id,
@@ -533,7 +527,7 @@ Support,180"""
             # =====================================================
             # LEGACY WORKFLOW (Original TaskRouter)
             # =====================================================
-            logger.info(f"Using legacy TaskRouter workflow")
+            logger.info("Using legacy TaskRouter workflow")
             
             result = execute_task(
                 domain=task.domain,
@@ -1470,7 +1464,6 @@ async def run_arena_competition(
     The winning artifact is returned to the client, and both agents' results
     are logged for learning (DPO dataset).
     """
-    import asyncio
     
     # Map competition type string to enum
     comp_type_map = {
@@ -1592,7 +1585,7 @@ async def get_arena_history(
     
     Returns recent arena competitions and their results.
     """
-    from .models import ArenaCompetition, ArenaCompetitionStatus
+    from .models import ArenaCompetition
     
     competitions = db.query(ArenaCompetition).order_by(
         ArenaCompetition.created_at.desc()

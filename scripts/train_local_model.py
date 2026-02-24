@@ -291,7 +291,7 @@ TASK_MODEL_MAP={task_model_json}
         with open(env_path, 'a') as f:
             f.write(new_lines)
         
-        print(f"✓ Updated .env with fine-tuned model configuration")
+        print("✓ Updated .env with fine-tuned model configuration")
         print(f"  Model: {model_name}")
         print(f"  Domains: {domains}")
 

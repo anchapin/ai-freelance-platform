@@ -23,12 +23,8 @@ from datetime import datetime
 # Load environment variables
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # Import logger
 from src.utils.logger import get_logger
-
-logger = get_logger(__name__)
 
 # Import LLM service for local inference
 try:
@@ -36,14 +32,24 @@ try:
     LLM_SERVICE_AVAILABLE = True
 except ImportError:
     LLM_SERVICE_AVAILABLE = False
-    logger.warning("LLMService not available, market scanner will use fallback evaluation")
 
 # Try to import Playwright
 try:
-    from playwright.async_api import async_playwright, Page, Browser
+    from playwright.async_api import async_playwright, Page, Browser  # noqa: F401
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
+
+# Load environment variables after imports
+load_dotenv()
+
+# Initialize logger after all imports
+logger = get_logger(__name__)
+
+if not LLM_SERVICE_AVAILABLE:
+    logger.warning("LLMService not available, market scanner will use fallback evaluation")
+
+if not PLAYWRIGHT_AVAILABLE:
     logger.warning("Playwright not available, market scanner will use HTTP-only mode")
 
 
@@ -832,7 +838,6 @@ async def run_continuous_scan(
 # =============================================================================
 
 if __name__ == "__main__":
-    import sys
     
     async def main():
         """Main entry point for testing."""
@@ -844,14 +849,14 @@ if __name__ == "__main__":
         print("\nRunning market scan...")
         result = await run_single_scan(max_posts=5)
         
-        print(f"\nScan Result:")
+        print("\nScan Result:")
         print(f"  Success: {result.get('success')}")
         print(f"  Message: {result.get('message')}")
         print(f"  Postings Found: {result.get('postings_count', 0)}")
         print(f"  Suitable Jobs: {result.get('suitable_count', 0)}")
         
         if result.get('suitable_jobs'):
-            print(f"\nSuitable Jobs:")
+            print("\nSuitable Jobs:")
             for i, job in enumerate(result['suitable_jobs'], 1):
                 print(f"\n  {i}. {job['posting']['title']}")
                 print(f"     Bid: ${job['evaluation']['bid_amount']}")

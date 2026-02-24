@@ -1,8 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
-from sqlalchemy import Column, String, Text, Integer, Enum, DateTime, Boolean, JSON
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import Column, String, Text, Integer, Enum, DateTime, Boolean, JSON, UniqueConstraint
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -237,6 +236,9 @@ class BidStatus(PyEnum):
     SUBMITTED = "SUBMITTED"  # Bid submitted to marketplace
     WON = "WON"  # Bid was accepted
     LOST = "LOST"  # Bid was rejected by client
+    ACTIVE = "ACTIVE"  # Bid is active on marketplace
+    WITHDRAWN = "WITHDRAWN"  # Bid was withdrawn from marketplace
+    DUPLICATE = "DUPLICATE"  # Bid was not placed due to deduplication
 
 
 class Bid(Base):
@@ -245,8 +247,23 @@ class Bid(Base):
     
     Stores bids made on freelance marketplace jobs.
     Used to track which jobs have already been bid on to avoid duplicates.
+    
+    Implements deduplication and distributed lock pattern to prevent race conditions
+    where multiple scanner instances bid on the same posting simultaneously.
     """
     __tablename__ = "bids"
+    
+    # Unique constraint: only one ACTIVE bid per (marketplace, job_id)
+    # Note: Will be enforced at application level via should_bid() check
+    # since database-level conditional unique constraints are complex across databases
+    __table_args__ = (
+        UniqueConstraint(
+            'marketplace',
+            'job_id',
+            'status',
+            name='unique_active_bid_per_posting'
+        ),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     # Job reference (from marketplace)
@@ -269,6 +286,11 @@ class Bid(Base):
     marketplace = Column(String, nullable=True)  # Which marketplace
     skills_matched = Column(JSON, nullable=True)  # List of matched skills
     
+    # Withdrawal tracking (Issue #8: Distributed lock & deduplication)
+    withdrawn_reason = Column(String, nullable=True)  # Reason for withdrawal (if status=WITHDRAWN)
+    withdrawal_timestamp = Column(DateTime, nullable=True)  # When bid was withdrawn
+    posting_cached_at = Column(DateTime, nullable=True)  # When posting was cached (for TTL validation)
+    
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -290,6 +312,9 @@ class Bid(Base):
             "evaluation_confidence": self.evaluation_confidence,
             "marketplace": self.marketplace,
             "skills_matched": self.skills_matched,
+            "withdrawn_reason": self.withdrawn_reason,
+            "withdrawal_timestamp": self.withdrawal_timestamp.isoformat() if self.withdrawal_timestamp else None,
+            "posting_cached_at": self.posting_cached_at.isoformat() if self.posting_cached_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "submitted_at": self.submitted_at.isoformat() if self.submitted_at else None,

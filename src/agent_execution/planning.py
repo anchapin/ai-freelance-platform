@@ -19,13 +19,11 @@ CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap):
 - Passes preferences to WorkPlanGenerator to avoid ArtifactReviewer failures
 """
 
-import json
-import re
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from src.llm_service import LLMService, TASK_TYPE_BASIC_ADMIN, TASK_TYPE_COMPLEX
-from src.agent_execution.file_parser import parse_file, FileType, detect_file_type
+from src.llm_service import LLMService
+from src.agent_execution.file_parser import parse_file, detect_file_type
 
 # Import Traceloop decorators for OpenTelemetry observability
 from traceloop.sdk.decorators import workflow, task
@@ -75,9 +73,8 @@ def get_client_preferences_from_tasks(client_email: str, db_session=None) -> Dic
     
     # Import here to avoid circular imports
     try:
-        from sqlalchemy.orm import Session
         from src.api.database import SessionLocal
-        from src.api.models import Task, TaskStatus
+        from src.api.models import Task
         
         # Use provided session or create a new one
         should_close_session = False
@@ -273,7 +270,6 @@ def save_client_preferences(
         return
     
     try:
-        from sqlalchemy.orm import Session
         from src.api.database import SessionLocal
         from src.api.models import ClientProfile
         
@@ -763,9 +759,7 @@ class PlanExecutor:
         # Import here to avoid circular imports
         from src.agent_execution.executor import (
             execute_data_visualization,
-            TaskRouter,
-            TaskType,
-            OutputFormat
+            TaskRouter
         )
         
         user_request = work_plan.get("user_request", "")
@@ -893,11 +887,6 @@ class PlanReviewer:
         Returns:
             Dictionary containing review results
         """
-        # Extract base64 from URL if present
-        artifact_base64 = ""
-        if "base64," in artifact_url:
-            artifact_base64 = artifact_url.split("base64,")[1]
-        
         plan_title = work_plan.get("title", "")
         plan_steps = work_plan.get("steps", [])
         success_criteria = work_plan.get("success_criteria", [])
