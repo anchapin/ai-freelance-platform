@@ -45,19 +45,20 @@ def process_task_async(task_id: str):
             print(f"Task {task_id} is not in PAID status, current status: {task.status}")
             return
         
-        # Execute the data visualization
-        # Note: In a real implementation, you might want to get the CSV data 
-        # from somewhere (e.g., user upload, task description, etc.)
-        # For now, we use a sample CSV for demonstration
-        sample_csv = """category,value
+        # Use the CSV data stored in the task, or fall back to sample data if not provided
+        csv_data = task.csv_data
+        if not csv_data:
+            print(f"Warning: No CSV data found for task {task_id}, using sample data")
+            csv_data = """category,value
 Sales,150
 Marketing,200
 Engineering,300
 Operations,120
 Support,180"""
         
+        # Execute the data visualization with the user's CSV data
         result = execute_data_visualization(
-            csv_data=sample_csv,
+            csv_data=csv_data,
             user_request=f"Create a {task.domain} visualization for {task.title}"
         )
         
@@ -111,11 +112,13 @@ class TaskSubmission(BaseModel):
     domain: str
     title: str
     description: str
+    csvContent: str | None = None
 
 
 class CheckoutResponse(BaseModel):
     """Model for checkout session response."""
     session_id: str
+    url: str
     amount: int
     domain: str
     title: str
@@ -159,7 +162,8 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
             description=task.description,
             domain=task.domain,
             status=TaskStatus.PENDING,
-            stripe_session_id=None  # Will be updated after Stripe session is created
+            stripe_session_id=None,  # Will be updated after Stripe session is created
+            csv_data=task.csvContent  # Store the CSV content if provided
         )
         db.add(new_task)
         db.commit()
@@ -195,6 +199,7 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
         
         return CheckoutResponse(
             session_id=checkout_session.id,
+            url=checkout_session.url,
             amount=amount,
             domain=task.domain,
             title=task.title
@@ -305,6 +310,22 @@ async def get_task(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
     
     return task.to_dict()
+
+
+@app.get("/api/session/{session_id}")
+async def get_task_by_session(session_id: str, db: Session = Depends(get_db)):
+    """
+    Get task ID by Stripe checkout session ID.
+    
+    This endpoint is used by the Success component after Stripe redirects
+    back to the application with the session_id in the URL.
+    """
+    task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found for this session")
+    
+    return {"task_id": task.id}
 
 
 if __name__ == "__main__":

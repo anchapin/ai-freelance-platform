@@ -12,15 +12,26 @@ function TaskSubmissionForm() {
     domain: '',
     title: '',
     description: '',
+    file: null,
   });
   const [estimatedPrice, setEstimatedPrice] = useState(null);
-  const [sessionId, setSessionId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    const { name, value, files } = e.target;
+    
+    if (name === 'file' && files.length > 0) {
+      const file = files[0];
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const csvContent = event.target.result;
+        setFormData((prev) => ({ ...prev, file: csvContent }));
+      };
+      reader.readAsText(file);
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }));
+    }
     
     if (name === 'domain') {
       const selectedDomain = DOMAINS.find((d) => d.value === value);
@@ -32,19 +43,25 @@ function TaskSubmissionForm() {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    setSessionId(null);
 
     try {
+      const payload = {
+        domain: formData.domain,
+        title: formData.title,
+        description: formData.description,
+      };
+
+      // Include the raw CSV string if a file was uploaded
+      if (formData.file) {
+        payload.csvContent = formData.file;
+      }
+
       const response = await fetch('http://localhost:8000/api/create-checkout-session', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          domain: formData.domain,
-          title: formData.title,
-          description: formData.description,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -52,10 +69,9 @@ function TaskSubmissionForm() {
       }
 
       const data = await response.json();
-      setSessionId(data.session_id);
       
-      // Redirect to Stripe Checkout (mock - in production would use Stripe.js)
-      alert(`Stripe Checkout Session Created: ${data.session_id}\nAmount: $${data.amount}`);
+      // Redirect to Stripe Checkout
+      window.location.href = data.url;
     } catch (err) {
       setError(err.message);
     } finally {
@@ -108,6 +124,17 @@ function TaskSubmissionForm() {
             required
             placeholder="Describe your task"
             rows={5}
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="file">Attachment (CSV)</label>
+          <input
+            type="file"
+            id="file"
+            name="file"
+            accept=".csv"
+            onChange={handleChange}
           />
         </div>
 

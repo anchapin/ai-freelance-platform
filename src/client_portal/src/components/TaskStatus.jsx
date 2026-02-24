@@ -12,12 +12,20 @@ function TaskStatus() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Polling configuration with exponential backoff
+  const POLL_INTERVALS = [2000, 3000, 5000, 8000, 10000]; // 2s, 3s, 5s, 8s, 10s
+  const MAX_POLL_INTERVAL = 10000;
+  const STOP_POLLING_STATES = ['COMPLETED', 'FAILED', 'CANCELLED'];
+
   useEffect(() => {
     if (!taskId) {
       setError('No task ID provided');
       setLoading(false);
       return;
     }
+
+    let pollIndex = 0;
+    let timeoutId = null;
 
     const fetchTask = async () => {
       try {
@@ -33,9 +41,21 @@ function TaskStatus() {
         const data = await response.json();
         setTask(data);
         setError(null);
+
+        // Stop polling if task is in a terminal state
+        if (STOP_POLLING_STATES.includes(data.status)) {
+          setLoading(false);
+          if (timeoutId) clearTimeout(timeoutId);
+          return;
+        }
+
+        // Exponential backoff: increase interval between polls
+        pollIndex = Math.min(pollIndex + 1, POLL_INTERVALS.length - 1);
+        const nextInterval = POLL_INTERVALS[pollIndex];
+        
+        timeoutId = setTimeout(fetchTask, nextInterval);
       } catch (err) {
         setError(err.message);
-      } finally {
         setLoading(false);
       }
     };
@@ -43,11 +63,10 @@ function TaskStatus() {
     // Initial fetch
     fetchTask();
 
-    // Poll every 5 seconds
-    const intervalId = setInterval(fetchTask, 5000);
-
     // Cleanup on unmount
-    return () => clearInterval(intervalId);
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [taskId]);
 
   // Handle case where no task ID is provided
