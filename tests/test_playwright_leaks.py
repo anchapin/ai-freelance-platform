@@ -25,6 +25,8 @@ from src.agent_execution.exponential_backoff import (
 )
 from src.utils.logger import get_logger
 
+logger = get_logger(__name__)
+
 
 class TestBrowserPool:
     """Tests for browser connection pooling."""
@@ -260,8 +262,5 @@ class TestPlaywrightPatterns:
         asyncio.run(run_test())
 
 
-        logger = get_logger(__name__)
-
-
-if __name__ == "__main__":
+        if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
