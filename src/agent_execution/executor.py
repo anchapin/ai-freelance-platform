@@ -2737,8 +2737,8 @@ def _execute_code_in_docker(
         error_msg = str(e)
         
         # If Docker fails, try to fall back to E2B
-        print(f"Docker execution failed: {error_msg}")
-        print("Falling back to E2B...")
+        logger.warning(f"Docker execution failed: {error_msg}")
+        logger.info("Falling back to E2B...")
         
         # Get E2B API key from environment
         e2b_api_key = os.environ.get("E2B_API_KEY")
@@ -3000,11 +3000,11 @@ def _capture_for_distillation(
             model_used=model_used
         )
         
-        print(f"Captured example {example_id} for distillation training")
+        logger.info(f"Captured example {example_id} for distillation training")
         
     except Exception as e:
         # Don't fail the task if distillation capture fails
-        print(f"Warning: Failed to capture for distillation: {e}")
+        logger.warning(f"Warning: Failed to capture for distillation: {e}")
 
 
 def execute_data_visualization(
@@ -3115,7 +3115,7 @@ def execute_data_visualization(
     
     # Log which model is being used
     model_info = effective_llm.get_config()
-    print(f"LLM Config: model={model_info.get('model')}, is_local={model_info.get('is_local')}")
+    logger.info(f"LLM Config: model={model_info.get('model')}, is_local={model_info.get('is_local')}")
     
     # Generate visualization code using LLM with domain-specific prompts
     # Now includes file_type information
@@ -3174,11 +3174,11 @@ def execute_data_visualization(
                 if not approved:
                     # Review failed - try to regenerate with feedback
                     review_attempts += 1
-                    print(f"Pre-Submission Review failed: {feedback}")
-                    print(f"Issues found: {issues}")
+                    logger.warning(f"Pre-Submission Review failed: {feedback}")
+                    logger.warning(f"Issues found: {issues}")
                     
                     if review_attempts <= max_review_attempts:
-                        print(f"Regenerating code based on review feedback (attempt {review_attempts}/{max_review_attempts})...")
+                        logger.info(f"Regenerating code based on review feedback (attempt {review_attempts}/{max_review_attempts})...")
                         
                         # Regenerate code with feedback
                         reviewer = ArtifactReviewer(llm_service)
@@ -3195,7 +3195,7 @@ def execute_data_visualization(
                             chart_type = ai_generator._extract_chart_type(regen_result["code"]) or chart_type
                             continue  # Retry execution with new code
                         else:
-                            print(f"Failed to regenerate code: {regen_result.get('error', 'Unknown error')}")
+                            logger.warning(f"Failed to regenerate code: {regen_result.get('error', 'Unknown error')}")
                             # Continue to return current result even if review regeneration failed
                     
                     # Either exhausted review attempts or regeneration failed
@@ -3236,8 +3236,8 @@ def execute_data_visualization(
                 break
             
             # Try to fix the code using the LLM
-            print(f"Code execution failed (attempt {retry_count}/{max_retries}): {last_error}")
-            print("Attempting to fix code with LLM...")
+            logger.warning(f"Code execution failed (attempt {retry_count}/{max_retries}): {last_error}")
+            logger.info("Attempting to fix code with LLM...")
             
             # Extract just the user code (without csv_data assignment)
             user_code_only = code_with_csv.replace(f'csv_data = """{csv_data}"""\n\n', '', 1)
@@ -3253,10 +3253,10 @@ def execute_data_visualization(
             if fix_result["success"] and fix_result["code"]:
                 # Wrap fixed code with CSV data
                 current_code = f'csv_data = """{csv_data}"""\n\n' + fix_result["code"]
-                print(f"LLM generated fix, retrying...")
+                logger.info("LLM generated fix, retrying...")
             else:
                 # LLM failed to generate a fix
-                print(f"LLM failed to generate fix: {fix_result.get('error', 'Unknown error')}")
+                logger.warning(f"LLM failed to generate fix: {fix_result.get('error', 'Unknown error')}")
                 break
     
     # All retries exhausted
