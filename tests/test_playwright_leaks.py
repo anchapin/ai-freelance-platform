@@ -25,6 +25,8 @@ from src.agent_execution.exponential_backoff import (
 )
 from src.utils.logger import get_logger
 
+logger = get_logger(__name__)
+
 
 class TestBrowserPool:
     """Tests for browser connection pooling."""
