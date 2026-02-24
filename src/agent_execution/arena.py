@@ -18,8 +18,7 @@ import asyncio
 import json
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, field
+from typing import Optional, Dict, Any
 from enum import Enum
 
 # Import logging module
@@ -27,11 +26,7 @@ from src.utils.logger import get_logger
 
 from src.llm_service import LLMService
 from src.agent_execution.planning import (
-    ResearchAndPlanOrchestrator,
-    ContextExtractor,
-    WorkPlanGenerator,
-    PlanExecutor,
-    PlanReviewer
+    ResearchAndPlanOrchestrator
 )
 
 # Import Traceloop decorators for OpenTelemetry observability
@@ -568,7 +563,7 @@ class ArenaLearningLogger:
                 successful_output=json.dumps(winner_result),
                 task_id=task_data.get("id")
             )
-            self.logger.info(f"Logged winner to ExperienceVectorDB")
+            self.logger.info("Logged winner to ExperienceVectorDB")
         except Exception as e:
             self.logger.warning(f"Failed to log to ExperienceVectorDB: {e}")
         
@@ -582,7 +577,7 @@ class ArenaLearningLogger:
                 llm_output=json.dumps(winner_result),
                 model_used=winner_data["config"]["model"]
             )
-            self.logger.info(f"Logged winner to DistillationDataCollector")
+            self.logger.info("Logged winner to DistillationDataCollector")
         except Exception as e:
             self.logger.warning(f"Failed to log to DistillationDataCollector: {e}")
     
@@ -639,7 +634,7 @@ class ArenaLearningLogger:
             os.makedirs(os.path.dirname(self.dpo_dataset_path), exist_ok=True)
             with open(self.dpo_dataset_path, "a") as f:
                 f.write(json.dumps(dpo_example) + "\n")
-            self.logger.info(f"Logged loser to DPO dataset")
+            self.logger.info("Logged loser to DPO dataset")
         except Exception as e:
             self.logger.warning(f"Failed to log to DPO dataset: {e}")
     

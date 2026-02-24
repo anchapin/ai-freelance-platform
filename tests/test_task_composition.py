@@ -11,7 +11,6 @@ Coverage:
 """
 
 import pytest
-from datetime import datetime
 
 from src.api.models_composition import (
     Task,
@@ -31,7 +30,6 @@ from src.api.state_machine import (
     ExecutionStateMachine,
     PlanningStateMachine,
     ReviewStateMachine,
-    validate_task_transition,
 )
 
 

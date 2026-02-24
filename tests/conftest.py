@@ -11,9 +11,7 @@ This module provides:
 
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, MagicMock, patch
-from datetime import datetime
-from typing import Dict, Any, Optional
+from unittest.mock import Mock, AsyncMock, patch
 
 # Import the modules under test
 import sys
@@ -259,7 +257,6 @@ def task_statuses():
 def mock_agent_config_cloud():
     """Mock agent configuration for cloud model."""
     from src.agent_execution.arena import AgentConfig
-    from src.llm_service import LLMService
     
     mock_llm = Mock()
     mock_llm.get_model.return_value = "gpt-4o"
@@ -278,7 +275,6 @@ def mock_agent_config_cloud():
 def mock_agent_config_local():
     """Mock agent configuration for local model."""
     from src.agent_execution.arena import AgentConfig
-    from src.llm_service import LLMService
     
     mock_llm = Mock()
     mock_llm.get_model.return_value = "llama3.2"

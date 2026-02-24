@@ -16,20 +16,15 @@ Coverage:
 import pytest
 import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from src.agent_execution.bid_lock_manager import (
     BidLockManager,
     BidLock,
-    get_bid_lock_manager,
-    init_bid_lock_manager,
 )
 from src.agent_execution.bid_deduplication import (
     should_bid,
     mark_bid_withdrawn,
-    get_active_bids_for_posting,
-    get_bids_by_status,
-    DEFAULT_POSTING_TTL_HOURS,
 )
 from src.api.models import Bid, BidStatus
 

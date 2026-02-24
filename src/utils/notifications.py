@@ -79,7 +79,7 @@ class TelegramNotifier:
                 result = response.json()
                 
                 if result.get("ok"):
-                    self.logger.info(f"Telegram message sent successfully")
+                    self.logger.info("Telegram message sent successfully")
                     return True
                 else:
                     self.logger.error(f"Telegram API error: {result.get('description')}")
