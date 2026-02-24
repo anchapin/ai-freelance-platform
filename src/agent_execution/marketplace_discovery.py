@@ -28,15 +28,12 @@ load_dotenv()
 # Import logger
 from src.utils.logger import get_logger
 
-logger = get_logger(__name__)
-
 # Try to import web search capability
 try:
     from src.llm_service import LLMService
     LLM_SERVICE_AVAILABLE = True
 except ImportError:
     LLM_SERVICE_AVAILABLE = False
-    logger.warning("LLMService not available for marketplace discovery")
 
 # Try to import Playwright
 try:
@@ -44,6 +41,13 @@ try:
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
+
+logger = get_logger(__name__)
+
+if not LLM_SERVICE_AVAILABLE:
+    logger.warning("LLMService not available for marketplace discovery")
+
+if not PLAYWRIGHT_AVAILABLE:
     logger.warning("Playwright not available for marketplace evaluation")
 
 

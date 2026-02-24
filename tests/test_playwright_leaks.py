@@ -262,8 +262,5 @@ class TestPlaywrightPatterns:
         asyncio.run(run_test())
 
 
-logger = get_logger(__name__)
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
