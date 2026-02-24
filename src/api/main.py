@@ -197,7 +197,7 @@ async def process_task_async(task_id: str, use_planning_workflow: bool = True):
     
     # Initialize logger
     logger = get_logger(__name__)
-    task_logger = TaskLogger(task_id)
+    TaskLogger(task_id)
     
     db = SessionLocal()
     try:

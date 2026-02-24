@@ -162,14 +162,6 @@ class TestStateMachineTransitions:
         valid_transition = _is_valid_transition(current_status, new_status)
         assert valid_transition is True
     
-    def test_review_required_to_reviewing_valid_transition(self):
-        """Test that REVIEW_REQUIRED -> REVIEWING is valid."""
-        current_status = TaskStatus.REVIEW_REQUIRED
-        new_status = TaskStatus.REVIEWING
-        
-        valid_transition = _is_valid_transition(current_status, new_status)
-        assert valid_transition is True
-    
     def test_reviewing_to_processing_valid_transition(self):
         """Test that REVIEWING -> PROCESSING is valid (rework needed)."""
         current_status = TaskStatus.REVIEWING

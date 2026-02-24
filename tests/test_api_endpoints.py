@@ -138,7 +138,7 @@ class TestStripeWebhookEndpoint:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
         try:
-            response = client.post(
+            client.post(
                 "/api/webhook",
                 content=json.dumps(mock_event),
                 headers={"stripe-signature": "test_signature"}

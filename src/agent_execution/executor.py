@@ -2780,9 +2780,7 @@ def _execute_code_in_e2b(
         error_msg = str(e)
         
         # Detect timeout errors specifically for human escalation (Pillar 1.7)
-        is_timeout = False
         if "Timeout" in error_msg or "timeout" in error_msg.lower():
-            is_timeout = True
             error_type = "TimeoutError"
             error_msg = f"SANDBOX_TIMEOUT: Execution timed out after {sandbox_timeout}s. Complex data analysis with cloud models and retries may exceed 2 minutes. Task escalated to human review (Pillar 1.7)."
         elif "SyntaxError" in error_msg:
@@ -3083,7 +3081,6 @@ def execute_data_visualization(
             effective_file_type = detected.value
     
     # Parse file content if provided (for Excel/PDF)
-    parsed_data = None
     if file_content and effective_file_type != "csv":
         # Parse the file using the file parser
         parsed_result = parse_file(
@@ -3095,7 +3092,6 @@ def execute_data_visualization(
         if parsed_result.get("success"):
             # Use parsed data for visualization
             csv_data = parsed_result.get("data_as_csv", csv_data)
-            parsed_data = parsed_result
     
     # Extract CSV headers from the data
     first_line = csv_data.strip().split('\n')[0]
