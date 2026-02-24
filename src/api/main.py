@@ -15,7 +15,7 @@ import stripe
 
 from datetime import datetime
 from .database import get_db, init_db
-from .models import Task, TaskStatus, PlanStatus, ReviewStatus
+from .models import Task, TaskStatus, PlanStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus
 from ..agent_execution.executor import execute_task, execute_data_visualization, TaskType, OutputFormat
 from .experience_logger import experience_logger
 
@@ -123,7 +123,7 @@ def _escalate_task(db, task, reason: str, error_message: str = None):
     db.commit()
 
 
-def process_task_async(task_id: str, use_planning_workflow: bool = True):
+async def process_task_async(task_id: str, use_planning_workflow: bool = True):
     """
     Process a task asynchronously after payment is confirmed.
     
@@ -137,6 +137,9 @@ def process_task_async(task_id: str, use_planning_workflow: bool = True):
     2. Work Plan Generation: Agent creates a detailed work plan
     3. Plan Execution: Agent executes the plan in the E2B sandbox
     4. Artifact Review: ArtifactReviewer checks the final document against the plan
+    
+    For high-value tasks (is_high_value=True), the Agent Arena is used to guarantee
+    faster completion and higher success rate by running two agents in parallel.
     
     Args:
         task_id: The ID of the task to process
@@ -175,6 +178,110 @@ Marketing,200
 Engineering,300
 Operations,120
 Support,180"""
+        
+        # =====================================================
+        # HIGH-VALUE TASK: Route to Agent Arena for guaranteed success
+        # This ensures faster completion and higher success rate for paying clients
+        # =====================================================
+        if task.is_high_value:
+            print(f"Task {task_id}: HIGH-VALUE TASK - Routing to Agent Arena")
+            
+            # Update status to indicate arena processing
+            task.status = TaskStatus.PROCESSING
+            db.commit()
+            
+            # Run the arena competition
+            import asyncio
+            arena_result = await run_agent_arena(
+                user_request=user_request,
+                domain=task.domain,
+                csv_data=csv_data,
+                file_content=task.file_content,
+                filename=task.filename,
+                file_type=task.file_type,
+                api_key=e2b_api_key,
+                competition_type=CompetitionType.MODEL,  # Model competition: local vs cloud
+                task_revenue=task.amount_paid or 500,
+                enable_learning=True,
+                task_data={
+                    "id": task.id,
+                    "domain": task.domain,
+                    "description": user_request,
+                    "client_email": task.client_email
+                }
+            )
+            
+            # Extract the winning result
+            winner = arena_result.get("winner")
+            winning_agent = arena_result.get(winner, {})
+            winning_result = winning_agent.get("result", {})
+            
+            # Get review info from the winning agent
+            review_approved = winning_result.get("approved", False)
+            review_feedback = winning_result.get("feedback", "")
+            
+            # Determine output format from work plan if available
+            try:
+                plan_data = json.loads(task.work_plan) if task.work_plan else {}
+                output_format = plan_data.get("output_format", "image")
+            except:
+                output_format = "image"
+            
+            # Store the winning artifact URL
+            winning_artifact_url = arena_result.get("winning_artifact_url", "")
+            
+            if winning_artifact_url:
+                # Store result based on output format
+                task.result_type = output_format
+                
+                if output_format in ["docx", "pdf"]:
+                    task.result_document_url = winning_artifact_url
+                elif output_format == "xlsx":
+                    task.result_spreadsheet_url = winning_artifact_url
+                else:
+                    task.result_image_url = winning_artifact_url
+            
+            # Store arena execution details
+            task.execution_log = {
+                "arena_result": arena_result,
+                "winner": winner,
+                "profit_breakdown": {
+                    "agent_a": arena_result.get("agent_a", {}).get("profit", {}),
+                    "agent_b": arena_result.get("agent_b", {}).get("profit", {})
+                }
+            }
+            task.review_approved = review_approved
+            task.review_feedback = review_feedback
+            task.retry_count = 0
+            
+            if review_approved:
+                task.status = TaskStatus.COMPLETED
+                print(f"Task {task_id}: COMPLETED via Agent Arena (winner: {winner})")
+                
+                # Log success to learning systems
+                experience_logger.log_success(task)
+                
+                # Log to arena learning systems
+                try:
+                    from ..agent_execution.arena import ArenaLearningLogger
+                    arena_logger = ArenaLearningLogger()
+                    arena_logger.log_winner(arena_result, {
+                        "id": task.id,
+                        "domain": task.domain,
+                        "description": user_request
+                    })
+                except Exception as e:
+                    print(f"Task {task_id}: Error logging arena learning: {e}")
+            else:
+                # Arena failed - escalate for human review
+                error_message = f"Arena competition failed. Winner feedback: {review_feedback}"
+                task.last_error = error_message
+                _escalate_task(db, task, "arena_failed", error_message)
+                print(f"Task {task_id}: Arena FAILED - ESCALATED for human review")
+            
+            db.commit()
+            print(f"Task {task_id} processed via Arena, final status: {task.status}")
+            return
         
         # Update task status to PLANNING if using planning workflow
         if use_planning_workflow:
@@ -1317,26 +1424,44 @@ async def run_arena_competition(
     # Create arena router
     arena = ArenaRouter(competition_type=competition_type)
     
-    # Run the arena competition asynchronously
-    try:
-        # Run arena in async context
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    # Run the arena
-    result = loop.run_until_complete(
-        arena.run_arena(
-            user_request=submission.user_request,
-            domain=submission.domain,
-            csv_data=submission.csv_data,
-            file_content=submission.file_content,
-            filename=submission.filename,
-            file_type=submission.file_type,
-            task_revenue=task_revenue
-        )
+    # Run the arena natively (it's already async!)
+    result = await arena.run_arena(
+        user_request=submission.user_request,
+        domain=submission.domain,
+        csv_data=submission.csv_data,
+        file_content=submission.file_content,
+        filename=submission.filename,
+        file_type=submission.file_type,
+        task_revenue=task_revenue
     )
+    
+    # Save the competition to the database
+    competition_record = ArenaCompetition(
+        task_id=submission.task_id,
+        competition_type=result["competition_type"],
+        domain=submission.domain,
+        user_request=submission.user_request,
+        task_revenue=task_revenue,
+        status=ArenaCompetitionStatus.COMPLETED,
+        
+        # Agent A stats
+        agent_a_name=result["agent_a"]["config"]["name"],
+        agent_a_model=result["agent_a"]["config"]["model"],
+        agent_a_approved=result["agent_a"]["result"].get("approved", False),
+        agent_a_profit=result["agent_a"]["profit"]["profit"],
+        
+        # Agent B stats
+        agent_b_name=result["agent_b"]["config"]["name"],
+        agent_b_model=result["agent_b"]["config"]["model"],
+        agent_b_approved=result["agent_b"]["result"].get("approved", False),
+        agent_b_profit=result["agent_b"]["profit"]["profit"],
+        
+        winner=result["winner"],
+        win_reason=result["win_reason"],
+        winning_artifact_url=result["winning_artifact_url"]
+    )
+    db.add(competition_record)
+    db.commit()
     
     # Log to learning systems (in background)
     if submission.task_id:

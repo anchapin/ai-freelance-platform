@@ -40,8 +40,14 @@ class CostConfig:
     """Cost configuration for profit calculations."""
     
     # LLM Costs (per 1M tokens, in cents)
-    CLOUD_GPT4O_MINI_COST = 150  # $0.15/1M input tokens
-    CLOUD_GPT4O_COST = 3000      # $3.00/1M input tokens
+    # GPT-4o Input: $2.50/1M, Output: $10.00/1M
+    CLOUD_GPT4O_INPUT_COST = 250    # $2.50/1M input tokens
+    CLOUD_GPT4O_OUTPUT_COST = 1000  # $10.00/1M output tokens
+    
+    # GPT-4o-mini Input: $0.15/1M, Output: $0.60/1M
+    CLOUD_GPT4O_MINI_INPUT_COST = 15   # $0.15/1M input tokens
+    CLOUD_GPT4O_MINI_OUTPUT_COST = 60  # $0.60/1M output tokens
+    
     LOCAL_COST = 0                # Local P40 has no API cost
     
     # E2B Compute Costs (per minute, in cents)
@@ -142,15 +148,22 @@ class ProfitCalculator:
         
         total_tokens = total_input_tokens + total_output_tokens
         
-        # Calculate LLM cost
+        # Calculate LLM cost (separately for input and output tokens)
         if is_local:
             llm_cost = 0  # Local models cost nothing in API fees
+            input_cost = 0
+            output_cost = 0
         else:
             model = agent_config.llm_service.get_model()
             if "gpt-4o" in model.lower() and "mini" not in model.lower():
-                llm_cost = (total_tokens / 1_000_000) * self.cost_config.CLOUD_GPT4O_COST
+                # GPT-4o: separate input and output rates
+                input_cost = (total_input_tokens / 1_000_000) * self.cost_config.CLOUD_GPT4O_INPUT_COST
+                output_cost = (total_output_tokens / 1_000_000) * self.cost_config.CLOUD_GPT4O_OUTPUT_COST
             else:
-                llm_cost = (total_tokens / 1_000_000) * self.cost_config.CLOUD_GPT4O_MINI_COST
+                # GPT-4o-mini: separate input and output rates
+                input_cost = (total_input_tokens / 1_000_000) * self.cost_config.CLOUD_GPT4O_MINI_INPUT_COST
+                output_cost = (total_output_tokens / 1_000_000) * self.cost_config.CLOUD_GPT4O_MINI_OUTPUT_COST
+            llm_cost = input_cost + output_cost
         
         # Calculate E2B compute time cost
         execution_time = agent_result.get("execution_time_seconds", 0)
@@ -164,6 +177,8 @@ class ProfitCalculator:
             "profit": profit,
             "revenue": task_revenue,
             "llm_cost": llm_cost,
+            "input_cost": input_cost,
+            "output_cost": output_cost,
             "e2b_cost": e2b_cost,
             "total_cost": total_cost,
             "input_tokens": total_input_tokens,
