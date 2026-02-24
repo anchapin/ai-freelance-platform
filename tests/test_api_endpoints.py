@@ -104,7 +104,7 @@ class TestStripeCheckoutEndpoint:
 class TestStripeWebhookEndpoint:
     """Tests for Stripe webhook handling."""
     
-    @patch('stripe.Webhook.construct_event')
+    @patch('src.api.main.stripe.Webhook.construct_event')
     def test_webhook_checkout_completed(self, mock_construct_event):
         """Test webhook handles checkout.session.completed."""
         # Mock Stripe webhook event
@@ -138,9 +138,10 @@ class TestStripeWebhookEndpoint:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
         try:
+            payload = json.dumps(mock_event).encode('utf-8')
             client.post(
                 "/api/webhook",
-                content=json.dumps(mock_event),
+                content=payload,
                 headers={"stripe-signature": "test_signature"}
             )
             
