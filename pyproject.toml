@@ -16,6 +16,9 @@ dependencies = [
     "openpyxl>=3.1.0",
     "PyPDF2>=3.0.0",
     "python-multipart>=0.0.6",
+    # Experience Vector Database (RAG for Few-Shot Learning)
+    "chromadb>=0.4.0",
+    "sentence-transformers>=2.2.0",
 ]
 
 [build-system]

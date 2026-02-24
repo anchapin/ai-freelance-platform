@@ -30,6 +30,25 @@ from src.llm_service import LLMService, TASK_TYPE_BASIC_ADMIN, TASK_TYPE_COMPLEX
 # Import file parser for different file types
 from src.agent_execution.file_parser import parse_file, FileType, detect_file_type
 
+# Import Experience Vector Database for few-shot learning
+try:
+    from src.experience_vector_db import build_few_shot_system_prompt, query_similar_tasks
+    EXPERIENCE_DB_AVAILABLE = True
+except ImportError:
+    EXPERIENCE_DB_AVAILABLE = False
+    print("Warning: Experience Vector Database not available, using zero-shot prompts")
+
+# Import Distillation Data Collector for capturing successful cloud model outputs
+try:
+    from src.distillation import DistillationDataCollector
+    DISTILLATION_AVAILABLE = True
+except ImportError:
+    DISTILLATION_AVAILABLE = False
+    print("Warning: Distillation module not available, skipping model output capture")
+    
+# Flag to enable/disable distillation capture (can be disabled to save storage)
+ENABLE_DISTILLATION_CAPTURE = os.environ.get("ENABLE_DISTILLATION_CAPTURE", "true").lower() == "true"
+
 # For type hints
 try:
     from pandas import DataFrame
@@ -2308,6 +2327,7 @@ class AIResponseGenerator:
     AI-powered response generator using LLMService.
     Generates Python code for data visualization based on user requests.
     Supports domain-specific prompts for Legal and Accounting domains.
+    Now includes few-shot learning from Experience Vector Database.
     """
     
     def __init__(self, llm_service: Optional[LLMService] = None, domain: Optional[str] = None):
@@ -2322,13 +2342,49 @@ class AIResponseGenerator:
         """
         self.llm = llm_service or LLMService()
         self.domain = domain
+        self.enable_few_shot = EXPERIENCE_DB_AVAILABLE
+    
+    def _get_few_shot_system_prompt(
+        self,
+        base_system_prompt: str,
+        user_request: str,
+        domain: str
+    ) -> str:
+        """
+        Get system prompt enhanced with few-shot examples from Experience Vector DB.
+        
+        Args:
+            base_system_prompt: The base domain-specific system prompt
+            user_request: The user's request for finding similar past tasks
+            domain: The domain for filtering similar tasks
+            
+        Returns:
+            Enhanced system prompt with few-shot examples (if available)
+        """
+        if not self.enable_few_shot:
+            return base_system_prompt
+        
+        try:
+            # Try to build few-shot system prompt
+            enhanced_prompt = build_few_shot_system_prompt(
+                base_system_prompt=base_system_prompt,
+                user_request=user_request,
+                domain=domain,
+                top_k=2
+            )
+            return enhanced_prompt
+        except Exception as e:
+            # If few-shot fails, fall back to base prompt
+            print(f"Few-shot prompt generation failed: {e}")
+            return base_system_prompt
     
     def generate_visualization_code(
         self,
         csv_headers: list,
         user_request: str,
         domain: Optional[str] = None,
-        file_type: Optional[str] = None
+        file_type: Optional[str] = None,
+        enable_few_shot: Optional[bool] = None
     ) -> dict:
         """
         Generate Python code for data visualization using LLM.
@@ -2339,12 +2395,14 @@ class AIResponseGenerator:
             domain: Optional domain override (legal, accounting, or data_analysis)
                     If not provided, uses the domain set during initialization
             file_type: Optional file type (csv, excel, pdf)
+            enable_few_shot: Optional override for few-shot learning (default: use class setting)
             
         Returns:
             Dictionary containing:
                 - code: Python code to execute
                 - chart_type: Type of chart being generated
                 - description: Description of what the code does
+                - few_shot_used: Whether few-shot examples were used
         """
         # Use provided domain or fall back to initialized domain
         effective_domain = domain or self.domain or "data_analysis"
@@ -2352,8 +2410,21 @@ class AIResponseGenerator:
         # Use provided file type or default to csv
         effective_file_type = file_type or "csv"
         
-        # Get domain-specific system prompt (now includes file type)
-        system_prompt = get_domain_system_prompt(effective_domain, effective_file_type)
+        # Determine if we should use few-shot
+        use_few_shot = enable_few_shot if enable_few_shot is not None else self.enable_few_shot
+        
+        # Get domain-specific system prompt
+        base_system_prompt = get_domain_system_prompt(effective_domain, effective_file_type)
+        
+        # Enhance with few-shot examples if enabled
+        if use_few_shot:
+            system_prompt = self._get_few_shot_system_prompt(
+                base_system_prompt=base_system_prompt,
+                user_request=user_request,
+                domain=effective_domain
+            )
+        else:
+            system_prompt = base_system_prompt
 
         # Build user prompt with CSV headers and user request
         prompt = f"""CSV Headers: {csv_headers}
@@ -2382,7 +2453,8 @@ Generate the Python code now. Return only the code, no markdown formatting."""
                 "code": code,
                 "chart_type": chart_type,
                 "description": f"LLM-generated {chart_type} chart",
-                "success": True
+                "success": True,
+                "few_shot_used": use_few_shot
             }
             
         except Exception as e:
@@ -2726,6 +2798,7 @@ def _get_llm_for_task(domain: Optional[str]) -> LLMService:
     Strategy:
     - Legal & Accounting domains: Use cloud models (GPT-4o) for high accuracy
     - Data analysis (basic admin): Use local models (Llama 3.2) to eliminate API costs
+    - Distilled tasks: Use fine-tuned local model (after training)
     
     Args:
         domain: The task domain (legal, accounting, data_analysis)
@@ -2744,6 +2817,79 @@ def _get_llm_for_task(domain: Optional[str]) -> LLMService:
     # This covers basic admin tasks like simple data cleaning, formatting
     print("Using local model for data analysis task (cost optimization)")
     return LLMService.for_basic_admin()
+
+
+def _capture_for_distillation(
+    result: dict,
+    prompt: str,
+    code: str,
+    domain: str,
+    model_used: str
+) -> None:
+    """
+    Capture successful task outputs for distillation training.
+    
+    This function captures successful cloud model outputs to build a dataset
+    for fine-tuning local models (Local Model Distillation).
+    
+    Args:
+        result: The task result dictionary
+        prompt: The original user prompt
+        code: The generated code
+        domain: The task domain
+        model_used: The model that was used
+    """
+    if not ENABLE_DISTILLATION_CAPTURE:
+        return
+    
+    if not DISTILLATION_AVAILABLE:
+        return
+    
+    # Only capture cloud model outputs for distillation
+    # (we want to learn from GPT-4o's outputs)
+    if "gpt" not in model_used.lower() and "claude" not in model_used.lower():
+        return
+    
+    try:
+        # Determine rating based on result quality
+        rating = 5  # Default high rating
+        
+        # Downgrade if there was review feedback
+        if result.get("review_feedback"):
+            rating = 4
+        
+        # Further downgrade if there were issues
+        if result.get("review_issues"):
+            rating = 3
+        
+        # Skip if the code is too short (not meaningful)
+        if not code or len(code) < 100:
+            return
+        
+        # Capture the success
+        collector = DistillationDataCollector()
+        example_id = collector.capture_success(
+            prompt=prompt,
+            response=code,
+            domain=domain or "data_analysis",
+            task_type=result.get("task_type", "visualization"),
+            rating=rating,
+            metadata={
+                "chart_type": result.get("chart_type"),
+                "output_format": result.get("output_format"),
+                "retry_count": result.get("retry_count", 0),
+                "review_attempts": result.get("review_attempts", 0),
+                "execution_time": result.get("execution_time", 0),
+                "success": result.get("success", False)
+            },
+            model_used=model_used
+        )
+        
+        print(f"Captured example {example_id} for distillation training")
+        
+    except Exception as e:
+        # Don't fail the task if distillation capture fails
+        print(f"Warning: Failed to capture for distillation: {e}")
 
 
 def execute_data_visualization(

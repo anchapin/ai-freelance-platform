@@ -40,6 +40,14 @@ from ..agent_execution.planning import (
     save_client_preferences
 )
 
+# Import Experience Vector Database for few-shot learning (RAG)
+try:
+    from ..experience_vector_db import store_successful_task
+    EXPERIENCE_DB_AVAILABLE = True
+except ImportError:
+    EXPERIENCE_DB_AVAILABLE = False
+    print("Warning: Experience Vector Database not available, few-shot learning disabled")
+
 
 def _should_escalate_task(task, retry_count: int, error_message: str = None) -> tuple:
     """
@@ -271,6 +279,34 @@ Support,180"""
                 
                 task.status = TaskStatus.COMPLETED
                 print(f"Task {task_id}: Completed successfully with Research & Plan workflow (output: {output_format})")
+                
+                # EXPERIENCE VECTOR DATABASE (RAG for Few-Shot Learning): Store successful task
+                if EXPERIENCE_DB_AVAILABLE and task.review_approved:
+                    # Extract the generated code from execution log if available
+                    generated_code = ""
+                    if task.execution_log:
+                        plan_exec = task.execution_log.get("plan_execution", {})
+                        if plan_exec.get("result", {}).get("code"):
+                            generated_code = plan_exec["result"]["code"]
+                    
+                    # Store the experience for future few-shot learning
+                    if generated_code:
+                        # Extract CSV headers
+                        csv_headers = []
+                        if csv_data:
+                            first_line = csv_data.strip().split('\n')[0]
+                            csv_headers = [h.strip() for h in first_line.split(',')]
+                        
+                        store_successful_task(
+                            task_id=task_id,
+                            user_request=user_request,
+                            generated_code=generated_code,
+                            domain=task.domain,
+                            task_type="visualization",  # Could be extracted from result_type
+                            output_format=output_format,
+                            csv_headers=csv_headers
+                        )
+                        print(f"Task {task_id}: Stored experience for few-shot learning")
                 
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences after task completion
                 if task.client_email and task.review_feedback:

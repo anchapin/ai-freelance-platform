@@ -29,10 +29,12 @@ load_dotenv()
 # Default model configurations
 DEFAULT_CLOUD_MODEL = "gpt-4o-mini"
 DEFAULT_LOCAL_MODEL = "llama3.2"  # Common Ollama model name
+DEFAULT_DISTILLED_MODEL = "distilled-llama3.2"  # Fine-tuned distilled model
 
 # Default task type classifications
 TASK_TYPE_BASIC_ADMIN = "basic_admin"  # Simple tasks, suitable for local models
 TASK_TYPE_COMPLEX = "complex"          # Complex tasks requiring powerful models
+TASK_TYPE_DISTILLED = "distilled"     # Tasks handled by fine-tuned local model
 
 
 class ModelConfig:
@@ -432,6 +434,36 @@ class LLMService:
             LLMService configured for complex tasks
         """
         return cls.for_task(TASK_TYPE_COMPLEX, **kwargs)
+    
+    @classmethod
+    def for_distilled_task(cls, model: Optional[str] = None, **kwargs) -> "LLMService":
+        """
+        Create an LLMService for distilled tasks using fine-tuned local model.
+        
+        This uses your fine-tuned local model that was trained on successful
+        outputs from GPT-4o. This gives you cloud-quality results at local costs!
+        
+        The model should be configured via TASK_MODEL_MAP or DISTILLED_MODEL_NAME env vars.
+        
+        Args:
+            model: Optional override for the distilled model name
+            **kwargs: Additional arguments passed to LLMService constructor
+            
+        Returns:
+            LLMService configured for distilled tasks (fine-tuned local model)
+        """
+        config = get_default_model_config()
+        
+        # Get the distilled model name from config or environment
+        distilled_model = model or os.environ.get("DISTILLED_MODEL_NAME", DEFAULT_DISTILLED_MODEL)
+        
+        return cls(
+            base_url=config.local_base_url,  # Distilled model runs locally via Ollama
+            api_key=config.local_api_key,
+            model=distilled_model,
+            model_config=config,
+            **kwargs
+        )
     
     @classmethod
     def with_local(cls, model: Optional[str] = None, **kwargs) -> "LLMService":
