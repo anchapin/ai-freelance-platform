@@ -17,6 +17,7 @@ from datetime import datetime
 from .database import get_db, init_db
 from .models import Task, TaskStatus, PlanStatus, ReviewStatus
 from ..agent_execution.executor import execute_task, execute_data_visualization, TaskType, OutputFormat
+from .experience_logger import experience_logger
 
 
 # =============================================================================
@@ -280,6 +281,11 @@ Support,180"""
                 task.status = TaskStatus.COMPLETED
                 print(f"Task {task_id}: Completed successfully with Research & Plan workflow (output: {output_format})")
                 
+                # ==========================================================
+                # NEW: Log this success to our continuous learning dataset!
+                # ==========================================================
+                experience_logger.log_success(task)
+                
                 # EXPERIENCE VECTOR DATABASE (RAG for Few-Shot Learning): Store successful task
                 if EXPERIENCE_DB_AVAILABLE and task.review_approved:
                     # Extract the generated code from execution log if available
@@ -390,6 +396,11 @@ Support,180"""
                 
                 task.status = TaskStatus.COMPLETED
                 print(f"Task {task_id} completed successfully with format: {output_format}")
+                
+                # ==========================================================
+                # NEW: Log this success to our continuous learning dataset!
+                # ==========================================================
+                experience_logger.log_success(task)
             else:
                 # Legacy workflow failed - check if should escalate
                 error_message = result.get('message', 'Unknown error')
