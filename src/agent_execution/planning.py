@@ -887,10 +887,6 @@ class PlanReviewer:
         Returns:
             Dictionary containing review results
         """
-        # Extract base64 from URL if present
-        if "base64," in artifact_url:
-            artifact_url.split("base64,")[1]
-        
         plan_title = work_plan.get("title", "")
         plan_steps = work_plan.get("steps", [])
         success_criteria = work_plan.get("success_criteria", [])

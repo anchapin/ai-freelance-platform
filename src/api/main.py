@@ -18,7 +18,7 @@ from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
 
 # Import logging module
-from ..utils.logger import get_logger, TaskLogger
+from ..utils.logger import get_logger
 
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
@@ -41,20 +41,9 @@ from contextlib import asynccontextmanager
 # Import asyncio and random for autonomous loop
 import asyncio
 import random
+import logging
 
-
-# =============================================================================
-# ESCALATION & HUMAN-IN-THE-LOOP (HITL) CONFIGURATION (Pillar 1.7)
-# =============================================================================
-
-# High-value threshold for profit protection (in dollars)
-# Tasks with amount_paid >= HIGH_VALUE_THRESHOLD will always be escalated on failure
-HIGH_VALUE_THRESHOLD = 200
-
-# Maximum number of retry attempts before escalation (matches executor.py)
-MAX_RETRY_ATTEMPTS = 3
-
-
+# Import Agent execution modules
 from ..agent_execution.planning import (
     ResearchAndPlanOrchestrator,
     ContextExtractor,
@@ -78,8 +67,18 @@ try:
 except ImportError:
     EXPERIENCE_DB_AVAILABLE = False
     # Use basic logging for import errors before app logger is ready
-    import logging
     logging.warning("Experience Vector Database not available, few-shot learning disabled")
+
+# =============================================================================
+# ESCALATION & HUMAN-IN-THE-LOOP (HITL) CONFIGURATION (Pillar 1.7)
+# =============================================================================
+
+# High-value threshold for profit protection (in dollars)
+# Tasks with amount_paid >= HIGH_VALUE_THRESHOLD will always be escalated on failure
+HIGH_VALUE_THRESHOLD = 200
+
+# Maximum number of retry attempts before escalation (matches executor.py)
+MAX_RETRY_ATTEMPTS = 3
 
 
 def _should_escalate_task(task, retry_count: int, error_message: str = None) -> tuple:
@@ -197,7 +196,6 @@ async def process_task_async(task_id: str, use_planning_workflow: bool = True):
     
     # Initialize logger
     logger = get_logger(__name__)
-    TaskLogger(task_id)
     
     db = SessionLocal()
     try:
@@ -273,7 +271,7 @@ Support,180"""
             try:
                 plan_data = json.loads(task.work_plan) if task.work_plan else {}
                 output_format = plan_data.get("output_format", "image")
-            except:
+            except (json.JSONDecodeError, AttributeError, TypeError):
                 output_format = "image"
             
             # Store the winning artifact URL
@@ -426,7 +424,7 @@ Support,180"""
                 try:
                     plan_data = json.loads(task.work_plan) if task.work_plan else {}
                     output_format = plan_data.get("output_format", "image")
-                except:
+                except (json.JSONDecodeError, AttributeError, TypeError):
                     output_format = "image"
                 
                 # Store result based on output format (diverse output types)
