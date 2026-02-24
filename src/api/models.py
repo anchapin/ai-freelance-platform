@@ -35,6 +35,14 @@ class PlanStatus(PyEnum):
     REJECTED = "REJECTED"
 
 
+class ArenaCompetitionStatus(PyEnum):
+    """Status for arena competitions."""
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
 class ClientProfile(Base):
     """
     Client Preference Memory (Pillar 2.5 Gap)
@@ -218,4 +226,99 @@ class Task(Base):
             "human_reviewer": self.human_reviewer,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
             "is_high_value": self.is_high_value,
+        }
+
+
+class ArenaCompetition(Base):
+    """
+    Agent Arena Competition Model
+    
+    Stores the results of A/B competitions between agent variants.
+    Used for tracking which agent configurations perform better
+    and for building the DPO (Direct Preference Optimization) dataset.
+    """
+    __tablename__ = "arena_competitions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String, nullable=True)  # Associated task ID (if any)
+    competition_type = Column(String, nullable=False)  # "model", "prompt", "tooling"
+    status = Column(Enum(ArenaCompetitionStatus), default=ArenaCompetitionStatus.PENDING, nullable=False)
+    
+    # Task metadata for reference
+    domain = Column(String, nullable=True)
+    task_revenue = Column(Integer, nullable=True)  # Revenue in cents
+    user_request = Column(Text, nullable=True)
+    
+    # === Agent A Configuration & Results ===
+    agent_a_name = Column(String, nullable=True)
+    agent_a_model = Column(String, nullable=True)
+    agent_a_is_local = Column(Boolean, default=False)
+    agent_a_config = Column(JSON, nullable=True)  # Full config as JSON
+    agent_a_result = Column(JSON, nullable=True)  # Full result as JSON
+    agent_a_approved = Column(Boolean, default=False)
+    agent_a_execution_time = Column(Integer, default=0)  # Seconds
+    agent_a_tokens = Column(Integer, default=0)
+    agent_a_cost = Column(Integer, default=0)  # In cents
+    agent_a_profit = Column(Integer, default=0)  # In cents
+    
+    # === Agent B Configuration & Results ===
+    agent_b_name = Column(String, nullable=True)
+    agent_b_model = Column(String, nullable=True)
+    agent_b_is_local = Column(Boolean, default=False)
+    agent_b_config = Column(JSON, nullable=True)
+    agent_b_result = Column(JSON, nullable=True)
+    agent_b_approved = Column(Boolean, default=False)
+    agent_b_execution_time = Column(Integer, default=0)
+    agent_b_tokens = Column(Integer, default=0)
+    agent_b_cost = Column(Integer, default=0)
+    agent_b_profit = Column(Integer, default=0)
+    
+    # === Winner ===
+    winner = Column(String, nullable=True)  # "agent_a" or "agent_b"
+    win_reason = Column(Text, nullable=True)
+    winning_artifact_url = Column(String, nullable=True)
+    
+    # === Learning Data (for DPO) ===
+    dpo_logged = Column(Boolean, default=False)  # Whether logged to DPO dataset
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "task_id": self.task_id,
+            "competition_type": self.competition_type,
+            "status": self.status.value if isinstance(self.status, ArenaCompetitionStatus) else self.status,
+            "domain": self.domain,
+            "task_revenue": self.task_revenue,
+            "user_request": self.user_request,
+            # Agent A
+            "agent_a_name": self.agent_a_name,
+            "agent_a_model": self.agent_a_model,
+            "agent_a_is_local": self.agent_a_is_local,
+            "agent_a_approved": self.agent_a_approved,
+            "agent_a_execution_time": self.agent_a_execution_time,
+            "agent_a_tokens": self.agent_a_tokens,
+            "agent_a_cost": self.agent_a_cost,
+            "agent_a_profit": self.agent_a_profit,
+            # Agent B
+            "agent_b_name": self.agent_b_name,
+            "agent_b_model": self.agent_b_model,
+            "agent_b_is_local": self.agent_b_is_local,
+            "agent_b_approved": self.agent_b_approved,
+            "agent_b_execution_time": self.agent_b_execution_time,
+            "agent_b_tokens": self.agent_b_tokens,
+            "agent_b_cost": self.agent_b_cost,
+            "agent_b_profit": self.agent_b_profit,
+            # Winner
+            "winner": self.winner,
+            "win_reason": self.win_reason,
+            "winning_artifact_url": self.winning_artifact_url,
+            # Learning
+            "dpo_logged": self.dpo_logged,
+            # Timestamps
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }

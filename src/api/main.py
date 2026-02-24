@@ -41,6 +41,14 @@ from ..agent_execution.planning import (
     save_client_preferences
 )
 
+# Import Agent Arena modules
+from ..agent_execution.arena import (
+    ArenaRouter,
+    CompetitionType,
+    run_agent_arena,
+    ArenaLearningLogger
+)
+
 # Import Experience Vector Database for few-shot learning (RAG)
 try:
     from ..experience_vector_db import store_successful_task
@@ -1254,6 +1262,201 @@ async def get_admin_metrics(
             "by_domain": {domain: stats["revenue"] for domain, stats in domain_stats.items()},
             "currency": "USD"
         }
+    }
+
+
+# =============================================================================
+# AGENT ARENA ENDPOINTS
+# - Run A/B competitions between agent variants
+# - Track winner and profit scores
+# - Build DPO dataset from competitions
+# =============================================================================
+
+
+class ArenaSubmission(BaseModel):
+    """Model for arena competition submission."""
+    domain: str
+    user_request: str
+    csv_data: str | None = None
+    file_content: str | None = None
+    filename: str | None = None
+    file_type: str | None = None
+    competition_type: str = "model"  # "model", "prompt", "tooling"
+    task_revenue: int | None = None  # Revenue in cents
+    task_id: str | None = None  # Associated task ID (optional)
+
+
+@app.post("/api/arena/run")
+async def run_arena_competition(
+    submission: ArenaSubmission,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Run an Agent Arena competition.
+    
+    This endpoint runs two agent variants in parallel and determines the winner
+    based on quality (PlanReviewer approval) + profit score.
+    
+    The winning artifact is returned to the client, and both agents' results
+    are logged for learning (DPO dataset).
+    """
+    import asyncio
+    
+    # Map competition type string to enum
+    comp_type_map = {
+        "model": CompetitionType.MODEL,
+        "prompt": CompetitionType.PROMPT,
+        "tooling": CompetitionType.TOOLING
+    }
+    competition_type = comp_type_map.get(submission.competition_type, CompetitionType.MODEL)
+    
+    # Get task revenue (default if not provided)
+    task_revenue = submission.task_revenue or 500  # Default $5.00
+    
+    # Create arena router
+    arena = ArenaRouter(competition_type=competition_type)
+    
+    # Run the arena competition asynchronously
+    try:
+        # Run arena in async context
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    # Run the arena
+    result = loop.run_until_complete(
+        arena.run_arena(
+            user_request=submission.user_request,
+            domain=submission.domain,
+            csv_data=submission.csv_data,
+            file_content=submission.file_content,
+            filename=submission.filename,
+            file_type=submission.file_type,
+            task_revenue=task_revenue
+        )
+    )
+    
+    # Log to learning systems (in background)
+    if submission.task_id:
+        background_tasks.add_task(
+            _log_arena_learning,
+            result,
+            submission.task_id,
+            submission.domain,
+            submission.user_request
+        )
+    
+    # Return the winning result to the client
+    return {
+        "status": "success",
+        "winner": result["winner"],
+        "win_reason": result["win_reason"],
+        "artifact_url": result["winning_artifact_url"],
+        "competition_type": result["competition_type"],
+        "profit_breakdown": {
+            "agent_a": result["agent_a"]["profit"],
+            "agent_b": result["agent_b"]["profit"]
+        },
+        "agent_configs": {
+            "agent_a": result["agent_a"]["config"],
+            "agent_b": result["agent_b"]["config"]
+        }
+    }
+
+
+async def _log_arena_learning(
+    arena_result: dict,
+    task_id: str,
+    domain: str,
+    user_request: str
+):
+    """Log arena results to learning systems."""
+    try:
+        logger = ArenaLearningLogger()
+        
+        # Create task data for logging
+        task_data = {
+            "id": task_id,
+            "domain": domain,
+            "description": user_request
+        }
+        
+        # Log winner and loser
+        logger.log_winner(arena_result, task_data)
+        logger.log_loser(arena_result, task_data)
+        
+        print(f"[ARENA] Learning data logged for task {task_id}")
+    except Exception as e:
+        print(f"[ARENA] Error logging learning data: {e}")
+
+
+@app.get("/api/arena/history")
+async def get_arena_history(
+    db: Session = Depends(get_db),
+    limit: int = 20
+):
+    """
+    Get arena competition history.
+    
+    Returns recent arena competitions and their results.
+    """
+    from .models import ArenaCompetition, ArenaCompetitionStatus
+    
+    competitions = db.query(ArenaCompetition).order_by(
+        ArenaCompetition.created_at.desc()
+    ).limit(limit).all()
+    
+    return {
+        "competitions": [c.to_dict() for c in competitions],
+        "total": len(competitions)
+    }
+
+
+@app.get("/api/arena/stats")
+async def get_arena_stats(db: Session = Depends(get_db)):
+    """
+    Get arena statistics.
+    
+    Returns aggregated statistics about arena competitions,
+    including win rates for each agent type.
+    """
+    from .models import ArenaCompetition, ArenaCompetitionStatus
+    
+    # Get all completed competitions
+    completed = db.query(ArenaCompetition).filter(
+        ArenaCompetition.status == ArenaCompetitionStatus.COMPLETED
+    ).all()
+    
+    if not completed:
+        return {
+            "total_competitions": 0,
+            "agent_a_wins": 0,
+            "agent_b_wins": 0,
+            "agent_a_win_rate": 0.0,
+            "agent_b_win_rate": 0.0,
+            "avg_profit_agent_a": 0.0,
+            "avg_profit_agent_b": 0.0
+        }
+    
+    agent_a_wins = sum(1 for c in completed if c.winner == "agent_a")
+    agent_b_wins = sum(1 for c in completed if c.winner == "agent_b")
+    
+    total = len(completed)
+    
+    # Calculate average profits
+    avg_profit_a = sum(c.agent_a_profit or 0 for c in completed) / total if total > 0 else 0
+    avg_profit_b = sum(c.agent_b_profit or 0 for c in completed) / total if total > 0 else 0
+    
+    return {
+        "total_competitions": total,
+        "agent_a_wins": agent_a_wins,
+        "agent_b_wins": agent_b_wins,
+        "agent_a_win_rate": round(agent_a_wins / total * 100, 2) if total > 0 else 0.0,
+        "agent_b_win_rate": round(agent_b_wins / total * 100, 2) if total > 0 else 0.0,
+        "avg_profit_agent_a": round(avg_profit_a / 100, 2),  # Convert to dollars
+        "avg_profit_agent_b": round(avg_profit_b / 100, 2),
     }
 
 
