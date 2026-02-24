@@ -205,7 +205,6 @@ class FinancialSummaryTemplate:
                 
                 # Change (optional)
                 if change:
-                    change_color = "green" if "+" in str(change) or "increase" in str(change).lower() else "red"
                     run = para.add_run(f" ({change})")
                     # Note: Color not fully supported in basic python-docx
                 
