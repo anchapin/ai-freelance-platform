@@ -261,7 +261,7 @@ class TestBackgroundJobQueue:
             if call_count[0] < 2:
                 raise Exception("First attempt fails")
         
-        _ = await queue.queue_job(
+        job_id = await queue.queue_job(
             job_type="test",
             task_func=failing_task,
             max_retries=2
