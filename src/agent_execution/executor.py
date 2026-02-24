@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 
 # Docker Sandbox (primary - for cost savings)
 try:
-    from src.agent_execution.docker_sandbox import LocalDockerSandbox, SandboxResult, SandboxArtifact, SandboxLog
+    from src.agent_execution.docker_sandbox import LocalDockerSandbox, SandboxResult, SandboxArtifact, SandboxLog  # noqa: F401
     DOCKER_SANDBOX_AVAILABLE = True
 except ImportError:
     DOCKER_SANDBOX_AVAILABLE = False
@@ -52,7 +52,7 @@ from src.agent_execution.file_parser import parse_file, FileType, detect_file_ty
 
 # Import Experience Vector Database for few-shot learning
 try:
-    from src.experience_vector_db import build_few_shot_system_prompt, query_similar_tasks
+    from src.experience_vector_db import build_few_shot_system_prompt, query_similar_tasks  # noqa: F401
     EXPERIENCE_DB_AVAILABLE = True
 except ImportError:
     EXPERIENCE_DB_AVAILABLE = False
@@ -109,7 +109,7 @@ class OutputFormat:
 
 # Import template registry for JSON-based document generation
 try:
-    from src.templates import TemplateRegistry
+    from src.templates import TemplateRegistry  # noqa: F401
     TEMPLATES_AVAILABLE = True
 except ImportError:
     TEMPLATES_AVAILABLE = False

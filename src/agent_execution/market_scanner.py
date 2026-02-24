@@ -40,7 +40,7 @@ except ImportError:
 
 # Try to import Playwright
 try:
-    from playwright.async_api import async_playwright, Page, Browser
+    from playwright.async_api import async_playwright, Page, Browser  # noqa: F401
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
