@@ -149,3 +149,335 @@
 .task-details strong {
   color: #333;
 }
+
+/* Dashboard Styles */
+.dashboard-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.dashboard-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.dashboard-header h1 {
+  color: #333;
+  margin-bottom: 0.5rem;
+}
+
+.dashboard-header p {
+  color: #666;
+}
+
+.email-lookup {
+  max-width: 500px;
+  margin: 0 auto 2rem;
+}
+
+.email-lookup form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.email-lookup input {
+  flex: 1;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.email-lookup button {
+  padding: 0.75rem 1.5rem;
+  background: #4a90e2;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.email-lookup button:hover {
+  background: #357abd;
+}
+
+/* Stats Grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.stat-card.completed {
+  border-top: 3px solid #4caf50;
+}
+
+.stat-card.in-progress {
+  border-top: 3px solid #2196f3;
+}
+
+.stat-card.spending {
+  border-top: 3px solid #ff9800;
+}
+
+.stat-value {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #333;
+}
+
+.stat-label {
+  color: #666;
+  font-size: 0.9rem;
+  margin-top: 0.25rem;
+}
+
+/* Discount Section */
+.discount-section {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.discount-section h3 {
+  margin-bottom: 1rem;
+  color: #333;
+}
+
+.discount-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.current-tier {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.tier-badge {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-weight: 500;
+}
+
+.discount-amount {
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: #4caf50;
+}
+
+.next-tier {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+/* History Section */
+.history-section {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.history-section h3 {
+  margin-bottom: 1rem;
+  color: #333;
+}
+
+.no-tasks {
+  text-align: center;
+  color: #999;
+  padding: 2rem;
+}
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.task-item {
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 1rem;
+  transition: box-shadow 0.2s;
+}
+
+.task-item:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.task-item.status-completed {
+  border-left: 3px solid #4caf50;
+}
+
+.task-item.status-paid,
+.task-item.status-pending {
+  border-left: 3px solid #2196f3;
+}
+
+.task-item.status-failed {
+  border-left: 3px solid #f44336;
+}
+
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.status-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.status-badge.status-completed {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.status-badge.status-paid,
+.status-badge.status-pending {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.status-badge.status-failed {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.task-date {
+  color: #999;
+  font-size: 0.85rem;
+}
+
+.task-info h4 {
+  margin: 0 0 0.25rem;
+  color: #333;
+}
+
+.task-domain {
+  color: #666;
+  font-size: 0.9rem;
+  margin: 0;
+  text-transform: capitalize;
+}
+
+.task-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #eee;
+}
+
+.task-price {
+  font-weight: bold;
+  color: #333;
+}
+
+.delivery-link {
+  color: #4a90e2;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.delivery-link:hover {
+  text-decoration: underline;
+}
+
+/* Secure Delivery Link in Task Status */
+.secure-delivery-link {
+  display: inline-block;
+  margin: 1rem 0;
+  padding: 0.75rem 1.5rem;
+  background: #4a90e2;
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.secure-delivery-link:hover {
+  background: #357abd;
+}
+
+/* Dashboard Quick Link */
+.dashboard-quick-link {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #eee;
+  text-align: center;
+}
+
+.dashboard-quick-link button {
+  padding: 0.5rem 1rem;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #555;
+}
+
+.dashboard-quick-link button:hover {
+  background: #eee;
+}
+
+/* Mini Dashboard */
+.mini-dashboard {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.mini-dashboard h4 {
+  margin: 0 0 1rem;
+  color: #333;
+}
+
+.mini-stats {
+  display: flex;
+  justify-content: space-around;
+}
+
+.mini-stat {
+  text-align: center;
+}
+
+.mini-stat .value {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #333;
+}
+
+.mini-stat .label {
+  font-size: 0.8rem;
+  color: #666;
+}

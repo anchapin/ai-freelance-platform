@@ -4,9 +4,11 @@ from sqlalchemy.orm import sessionmaker, Session
 from .models import Base
 
 # Get the database URL from environment variable or use default SQLite path
+# Use absolute path to ensure data directory is at project root
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    f"sqlite:///{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'tasks.db')}"
+    f"sqlite:///{os.path.join(PROJECT_ROOT, 'data', 'tasks.db')}"
 )
 
 # Create engine based on database type

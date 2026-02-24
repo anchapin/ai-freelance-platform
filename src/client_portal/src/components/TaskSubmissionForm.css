@@ -88,3 +88,29 @@
   background: #ccc;
   cursor: not-allowed;
 }
+
+.discount-badge {
+  padding: 1rem;
+  background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+  border: 1px solid #ff9800;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  text-align: center;
+  color: #e65100;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.discount-badge strong {
+  font-size: 1.1rem;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
