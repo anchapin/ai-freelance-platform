@@ -1,0 +1,109 @@
+{
+  "version": "1.0",
+  "last_updated": null,
+  "config": {
+    "search_keywords": [
+      "freelance jobs marketplace",
+      "remote work board",
+      "gig economy platforms",
+      "online freelance projects",
+      "contract work websites"
+    ],
+    "min_success_rate": 0.1,
+    "max_marketplaces": 20,
+    "discovery_interval_hours": 168,
+    "rescore_interval_hours": 24
+  },
+  "marketplaces": [
+    {
+      "name": "Upwork",
+      "url": "https://upwork.com/jobs/",
+      "category": "freelance",
+      "discovered_at": "2024-02-15T10:00:00",
+      "last_scanned": null,
+      "scan_count": 0,
+      "jobs_found": 0,
+      "bids_placed": 0,
+      "bids_won": 0,
+      "total_revenue": 0.0,
+      "success_rate": 0.0,
+      "is_active": true,
+      "priority_score": 0.0,
+      "metadata": {
+        "description": "Largest freelance platform for remote work"
+      }
+    },
+    {
+      "name": "Fiverr",
+      "url": "https://fiverr.com/gigs/search",
+      "category": "gig",
+      "discovered_at": "2024-02-15T10:00:00",
+      "last_scanned": null,
+      "scan_count": 0,
+      "jobs_found": 0,
+      "bids_placed": 0,
+      "bids_won": 0,
+      "total_revenue": 0.0,
+      "success_rate": 0.0,
+      "is_active": true,
+      "priority_score": 0.0,
+      "metadata": {
+        "description": "Gig-based platform for micro services and tasks"
+      }
+    },
+    {
+      "name": "PeoplePerHour",
+      "url": "https://www.peopleperhour.com/",
+      "category": "freelance",
+      "discovered_at": "2024-02-15T10:00:00",
+      "last_scanned": null,
+      "scan_count": 0,
+      "jobs_found": 0,
+      "bids_placed": 0,
+      "bids_won": 0,
+      "total_revenue": 0.0,
+      "success_rate": 0.0,
+      "is_active": true,
+      "priority_score": 0.0,
+      "metadata": {
+        "description": "European freelance platform with hourly and project-based work"
+      }
+    },
+    {
+      "name": "Guru",
+      "url": "https://www.guru.com/",
+      "category": "freelance",
+      "discovered_at": "2024-02-15T10:00:00",
+      "last_scanned": null,
+      "scan_count": 0,
+      "jobs_found": 0,
+      "bids_placed": 0,
+      "bids_won": 0,
+      "total_revenue": 0.0,
+      "success_rate": 0.0,
+      "is_active": true,
+      "priority_score": 0.0,
+      "metadata": {
+        "description": "Global freelance marketplace with verified reviews"
+      }
+    },
+    {
+      "name": "Freelancer.com",
+      "url": "https://www.freelancer.com/",
+      "category": "freelance",
+      "discovered_at": "2024-02-15T10:00:00",
+      "last_scanned": null,
+      "scan_count": 0,
+      "jobs_found": 0,
+      "bids_placed": 0,
+      "bids_won": 0,
+      "total_revenue": 0.0,
+      "success_rate": 0.0,
+      "is_active": true,
+      "priority_score": 0.0,
+      "metadata": {
+        "description": "Large global freelance platform with competitions and fixed-price projects"
+      }
+    }
+  ]
+}

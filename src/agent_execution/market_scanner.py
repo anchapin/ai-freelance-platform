@@ -51,9 +51,12 @@ except ImportError:
 # CONFIGURATION
 # =============================================================================
 
-# Marketplace URL from environment (or use default mock URL)
+# Marketplace URLs configuration
+MARKETPLACES_FILE = os.environ.get(
+    "MARKETPLACES_FILE",
+    os.path.join(os.path.dirname(__file__), "../../data/marketplaces.json")
+)
 DEFAULT_MARKETPLACE_URL = "https://example.com/freelance-jobs"
-MARKETPLACE_URL = os.environ.get("MARKETPLACE_URL", DEFAULT_MARKETPLACE_URL)
 
 # Evaluation settings
 EVALUATION_MODEL = os.environ.get("MARKET_SCAN_MODEL", "llama3.2")
@@ -121,10 +124,12 @@ class MarketScanner:
     Scans freelance marketplaces for potential tasks using Playwright.
     
     This scanner:
-    1. Navigates to the configured marketplace URL using Playwright
+    1. Loads marketplace URLs from configuration (data/marketplaces.json)
     2. Extracts job postings from the page
     3. Evaluates each posting using local LLM (Ollama)
     4. Returns evaluation results with suitability, bid amount, and reasoning
+    
+    Supports scanning multiple marketplaces with deduplication of jobs.
     """
     
     def __init__(
@@ -137,11 +142,17 @@ class MarketScanner:
         Initialize the MarketScanner.
         
         Args:
-            marketplace_url: URL of the freelance marketplace to scan
+            marketplace_url: URL of the freelance marketplace to scan (overrides config)
             headless: Whether to run Playwright in headless mode
             timeout: Page load timeout in seconds
         """
-        self.marketplace_url = marketplace_url or MARKETPLACE_URL
+        self.marketplace_urls: List[str] = []
+        self.marketplace_url = marketplace_url  # Single URL override
+        
+        # Load marketplace URLs from config if no override provided
+        if not marketplace_url:
+            self._load_marketplaces_from_config()
+        
         self.headless = headless
         self.timeout = timeout * 1000  # Convert to milliseconds for Playwright
         
@@ -157,6 +168,34 @@ class MarketScanner:
                 logger.info(f"MarketScanner initialized with LLM model: {EVALUATION_MODEL}")
             except Exception as e:
                 logger.warning(f"Failed to initialize LLM service: {e}")
+    
+    def _load_marketplaces_from_config(self) -> None:
+        """Load active marketplace URLs from the marketplaces.json config file."""
+        try:
+            if not os.path.exists(MARKETPLACES_FILE):
+                logger.warning(f"Marketplaces config file not found: {MARKETPLACES_FILE}")
+                self.marketplace_urls = [DEFAULT_MARKETPLACE_URL]
+                return
+            
+            with open(MARKETPLACES_FILE, 'r') as f:
+                data = json.load(f)
+            
+            # Extract active marketplace URLs
+            marketplaces = data.get('marketplaces', [])
+            self.marketplace_urls = [
+                m['url'] for m in marketplaces
+                if m.get('is_active', True) and m.get('url')
+            ]
+            
+            if not self.marketplace_urls:
+                logger.warning("No active marketplaces found in config, using default")
+                self.marketplace_urls = [DEFAULT_MARKETPLACE_URL]
+            
+            logger.info(f"Loaded {len(self.marketplace_urls)} marketplace URLs from config")
+        
+        except Exception as e:
+            logger.error(f"Failed to load marketplaces from config: {e}")
+            self.marketplace_urls = [DEFAULT_MARKETPLACE_URL]
     
     async def __aenter__(self):
         """Async context manager entry."""
@@ -204,12 +243,17 @@ class MarketScanner:
             self.browser = None
             self.playwright = None
     
-    async def fetch_job_postings(self, max_posts: int = 10) -> List[JobPosting]:
+    async def fetch_job_postings(
+        self,
+        max_posts: int = 10,
+        marketplace_url: Optional[str] = None
+    ) -> List[JobPosting]:
         """
         Fetch job postings from the marketplace.
         
         Args:
             max_posts: Maximum number of postings to fetch
+            marketplace_url: Optional marketplace URL (uses default if not provided)
             
         Returns:
             List of JobPosting objects
@@ -217,13 +261,16 @@ class MarketScanner:
         if not self.page:
             await self.start()
         
+        # Use provided URL or fall back to single URL override or first configured URL
+        url = marketplace_url or self.marketplace_url or (self.marketplace_urls[0] if self.marketplace_urls else DEFAULT_MARKETPLACE_URL)
+        
         job_postings = []
         
         try:
-            logger.info(f"Navigating to marketplace: {self.marketplace_url}")
+            logger.info(f"Navigating to marketplace: {url}")
             
             # Navigate to the marketplace
-            response = await self.page.goto(self.marketplace_url, wait_until="domcontentloaded")
+            response = await self.page.goto(url, wait_until="domcontentloaded")
             
             if response and response.status >= 400:
                 logger.warning(f"Marketplace returned status {response.status}")
@@ -551,7 +598,8 @@ Evaluate this job posting and return JSON."""
     async def scan_and_evaluate(
         self,
         max_posts: int = 10,
-        min_bid_threshold: int = 30
+        min_bid_threshold: int = 30,
+        marketplace_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Scan marketplace and evaluate all job postings.
@@ -559,6 +607,7 @@ Evaluate this job posting and return JSON."""
         Args:
             max_posts: Maximum number of postings to fetch
             min_bid_threshold: Minimum bid amount to consider
+            marketplace_url: Optional marketplace URL override
             
         Returns:
             Dictionary with scan results
@@ -567,7 +616,7 @@ Evaluate this job posting and return JSON."""
         
         try:
             # Fetch job postings
-            postings = await self.fetch_job_postings(max_posts)
+            postings = await self.fetch_job_postings(max_posts, marketplace_url=marketplace_url)
             
             if not postings:
                 return {
@@ -619,6 +668,95 @@ Evaluate this job posting and return JSON."""
                 "postings": [],
                 "evaluations": [],
                 "scan_time": 0,
+                "error": str(e)
+            }
+    
+    async def scan_all_marketplaces(
+        self,
+        max_posts: int = 10,
+        min_bid_threshold: int = 30
+    ) -> Dict[str, Any]:
+        """
+        Scan all configured marketplaces and evaluate all job postings.
+        
+        Deduplicates jobs across marketplaces based on title and description.
+        
+        Args:
+            max_posts: Maximum number of postings to fetch per marketplace
+            min_bid_threshold: Minimum bid amount to consider
+            
+        Returns:
+            Dictionary with aggregated scan results from all marketplaces
+        """
+        start_time = datetime.now()
+        
+        try:
+            # Determine which URLs to scan
+            urls_to_scan = self.marketplace_urls if not self.marketplace_url else [self.marketplace_url]
+            
+            if not urls_to_scan:
+                return {
+                    "success": False,
+                    "message": "No marketplace URLs configured",
+                    "marketplaces_scanned": 0,
+                    "total_postings": 0,
+                    "suitable_jobs": [],
+                    "scan_duration_seconds": 0
+                }
+            
+            all_suitable_jobs = []
+            seen_job_hashes = set()  # For deduplication
+            marketplace_results = {}
+            
+            # Scan each marketplace
+            for url in urls_to_scan:
+                logger.info(f"Scanning marketplace: {url}")
+                
+                try:
+                    result = await self.scan_and_evaluate(
+                        max_posts=max_posts,
+                        min_bid_threshold=min_bid_threshold,
+                        marketplace_url=url
+                    )
+                    
+                    marketplace_results[url] = result
+                    
+                    # Add suitable jobs, avoiding duplicates
+                    for job in result.get('suitable_jobs', []):
+                        job_hash = hash(job['posting']['title'] + job['posting']['description'])
+                        if job_hash not in seen_job_hashes:
+                            seen_job_hashes.add(job_hash)
+                            job['marketplace_url'] = url
+                            all_suitable_jobs.append(job)
+                
+                except Exception as e:
+                    logger.error(f"Failed to scan {url}: {e}")
+                    marketplace_results[url] = {
+                        "success": False,
+                        "error": str(e)
+                    }
+            
+            scan_duration = (datetime.now() - start_time).total_seconds()
+            
+            return {
+                "success": True,
+                "message": f"Scanned {len(urls_to_scan)} marketplace(s), found {len(all_suitable_jobs)} suitable unique jobs",
+                "marketplaces_scanned": len(urls_to_scan),
+                "marketplace_results": marketplace_results,
+                "total_postings": sum(r.get('postings_count', 0) for r in marketplace_results.values()),
+                "suitable_jobs": all_suitable_jobs,
+                "scan_duration_seconds": scan_duration,
+                "scanned_at": datetime.now().isoformat()
+            }
+        
+        except Exception as e:
+            logger.error(f"Multi-marketplace scan failed: {e}")
+            return {
+                "success": False,
+                "message": f"Multi-marketplace scan failed: {str(e)}",
+                "marketplaces_scanned": 0,
+                "total_postings": 0,
+                "suitable_jobs": [],
                 "error": str(e)
             }
 
