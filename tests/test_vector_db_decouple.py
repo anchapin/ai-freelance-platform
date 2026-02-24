@@ -233,7 +233,7 @@ class TestBackgroundJobQueue:
         async def test_task(value):
             executed.append(value)
         
-        _ = await queue.queue_job(
+        job_id = await queue.queue_job(
             job_type="test",
             task_func=test_task,
             task_args=(42,)
@@ -261,7 +261,7 @@ class TestBackgroundJobQueue:
             if call_count[0] < 2:
                 raise Exception("First attempt fails")
         
-        _ = await queue.queue_job(
+        job_id = await queue.queue_job(
             job_type="test",
             task_func=failing_task,
             max_retries=2
@@ -290,7 +290,7 @@ class TestBackgroundJobQueue:
         # Queue multiple jobs
         job_ids = []
         for i in range(5):
-            _ = await queue.queue_job(
+            job_id = await queue.queue_job(
                 job_type="test",
                 task_func=slow_task,
                 task_args=(i,)
