@@ -1,0 +1,121 @@
+# PR Configuration for CI Fixing & Merging
+# Generated: 2026-02-24
+
+prs:
+  - number: 9
+    title: "Issue #8: Implement distributed lock and deduplication for marketplace bids"
+    branch: "feature/issue-8-distributed-lock"
+    depends-on: []
+    status: "open"
+    tests_count: 17
+    
+  - number: 10
+    title: "Issue #6: Decouple Experience Vector Database from task execution flow"
+    branch: "feature/issue-6-vector-db-decouple"
+    depends-on: [9]
+    status: "open"
+    tests_count: 15
+    
+  - number: 11
+    title: "Issue #5: Refactor overloaded Task model using composition pattern"
+    branch: "feature/issue-5-task-composition"
+    depends-on: [10]
+    status: "open"
+    tests_count: 24
+    
+  - number: 12
+    title: "Issue #4: Fix async Playwright resource leaks in market scanner"
+    branch: "feature/issue-4-playwright-leaks"
+    depends-on: [11]
+    status: "open"
+    tests_count: 13
+
+# Auto-fix strategies for common failures
+auto-fix-strategies:
+  - pattern: "ModuleNotFoundError: No module named"
+    action: "check-import"
+    description: "Check if import path is correct and module is installed"
+    
+  - pattern: "NameError: name '.*' is not defined"
+    action: "add-import"
+    description: "Add missing import statement"
+    
+  - pattern: "ImportError:"
+    action: "verify-imports"
+    description: "Verify all imports are available"
+    
+  - pattern: "pytest: error:"
+    action: "run-pytest"
+    description: "Run pytest with verbose output"
+    
+  - pattern: "FAILED.*test_"
+    action: "review-test"
+    description: "Review and potentially fix test assertion"
+    
+  - pattern: "E.*AssertionError"
+    action: "check-assertion"
+    description: "Verify test assertion matches implementation"
+    
+  - pattern: "lint.*error"
+    action: "run-linter"
+    description: "Run linter to check code style"
+
+# Merge settings
+merge:
+  base-branch: "main"
+  strategy: "squash"  # Options: squash, merge, rebase
+  delete-branch: true
+  require-ci-pass: true
+  allow-conflict-auto-resolve: true
+
+# CI settings
+ci:
+  providers: ["github-actions"]
+  timeout-seconds: 600
+  check-interval-seconds: 10
+  max-wait-retries: 3
+
+# Dependency rules
+dependencies:
+  # PR #10 needs #9 merged first
+  "10":
+    - "9"
+  # PR #11 needs #10 merged
+  "11":
+    - "10"
+  # PR #12 needs #11 merged
+  "12":
+    - "11"
+
+# Test requirements per PR
+test-requirements:
+  "9":
+    - "tests/test_marketplace_dedup.py"
+    - "pytest"
+    - "17 tests passing"
+    
+  "10":
+    - "tests/test_vector_db_decouple.py"
+    - "pytest"
+    - "15 tests passing"
+    
+  "11":
+    - "tests/test_task_composition.py"
+    - "pytest"
+    - "24 tests passing"
+    
+  "12":
+    - "tests/test_playwright_leaks.py"
+    - "pytest"
+    - "13 tests passing"
+
+# Post-merge actions
+post-merge:
+  - action: "update-status"
+    description: "Update GitHub issues to mark as resolved"
+    
+  - action: "create-release-notes"
+    description: "Create release notes for merged changes"
+    
+  - action: "notify-team"
+    description: "Send notification to team about merge"
