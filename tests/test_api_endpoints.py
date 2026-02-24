@@ -61,7 +61,7 @@ class TestStripeCheckoutEndpoint:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
         try:
-            response = client.post(
+            _response = client.post(
                 "/api/create-checkout-session",
                 json={
                     "domain": "data_analysis",
@@ -88,7 +88,7 @@ class TestStripeCheckoutEndpoint:
         
         client = TestClient(app)
         
-        response = client.post(
+        _response = client.post(
             "/api/create-checkout-session",
             json={
                 "domain": "invalid_domain",
@@ -138,7 +138,7 @@ class TestStripeWebhookEndpoint:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
         try:
-            response = client.post(
+            _response = client.post(
                 "/api/webhook",
                 content=json.dumps(mock_event),
                 headers={"stripe-signature": "test_signature"}
@@ -224,7 +224,7 @@ class TestPricingEndpoint:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
         try:
-            response = client.post(
+            _response = client.post(
                 "/api/client/calculate-price-with-discount",
                 params={
                     "domain": "accounting",
