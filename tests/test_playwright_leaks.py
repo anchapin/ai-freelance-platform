@@ -23,6 +23,7 @@ from src.agent_execution.exponential_backoff import (
     ExponentialBackoff,
     retry_with_backoff,
 )
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
