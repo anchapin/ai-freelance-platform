@@ -260,3 +260,4 @@ class TestPlaywrightPatterns:
             assert elapsed > 0.1
         
         asyncio.run(run_test())
+
