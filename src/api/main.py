@@ -1,5 +1,5 @@
 """
-FastAPI backend for the AI Freelance Platform.
+FastAPI backend for ArbitrageAI.
 Provides endpoints for creating checkout sessions and processing task submissions.
 """
 import os
@@ -25,8 +25,24 @@ from ..utils.logger import get_logger, TaskLogger
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
 
+# Import notifications for Telegram alerts
+from ..utils.notifications import TelegramNotifier
+
+# Import Market Scanner for autonomous job scanning
+from ..agent_execution.market_scanner import MarketScanner, run_single_scan
+
+# Import LLM Service for proposal generation
+from ..llm_service import LLMService
+
+# Import Bid model for tracking bids
+from .models import Bid, BidStatus
+
 # Import contextlib for lifespan
 from contextlib import asynccontextmanager
+
+# Import asyncio and random for autonomous loop
+import asyncio
+import random
 
 
 # =============================================================================
@@ -104,7 +120,7 @@ def _should_escalate_task(task, retry_count: int, error_message: str = None) -> 
     return False, None
 
 
-def _escalate_task(db, task, reason: str, error_message: str = None):
+async def _escalate_task(db, task, reason: str, error_message: str = None):
     """
     Escalate a task to human review.
     
@@ -133,6 +149,25 @@ def _escalate_task(db, task, reason: str, error_message: str = None):
     
     if error_message:
         logger.warning(f"[ESCALATION] Error: {error_message[:200]}...")
+    
+    # Send Telegram notification for high-value tasks (profit protection)
+    if is_high_value:
+        try:
+            notifier = TelegramNotifier()
+            context = f"Reason: {reason}"
+            if error_message:
+                context += f"\nError: {error_message[:200]}"
+            
+            await notifier.request_human_help(
+                task_id=task.id,
+                context=context,
+                amount_paid=task.amount_paid,
+                domain=task.domain,
+                client_email=task.client_email
+            )
+            logger.info(f"[ESCALATION] Telegram notification sent for high-value task {task.id}")
+        except Exception as e:
+            logger.error(f"[ESCALATION] Failed to send Telegram notification: {e}")
     
     db.commit()
 
@@ -294,7 +329,7 @@ Support,180"""
                 # Arena failed - escalate for human review
                 error_message = f"Arena competition failed. Winner feedback: {review_feedback}"
                 task.last_error = error_message
-                _escalate_task(db, task, "arena_failed", error_message)
+                await _escalate_task(db, task, "arena_failed", error_message)
                 logger.warning(f"Arena FAILED - ESCALATED for human review")
             
             db.commit()
@@ -474,7 +509,7 @@ Support,180"""
                 
                 if should_escalate:
                     # ESCALATE to human review (Pillar 1.7)
-                    _escalate_task(db, task, escalation_reason, error_message)
+                    await _escalate_task(db, task, escalation_reason, error_message)
                     logger.warning(f"ESCALATED for human review - {escalation_reason}")
                 else:
                     # Mark as FAILED for non-high-value tasks that exhausted retries
@@ -551,7 +586,7 @@ Support,180"""
                 
                 if should_escalate:
                     # ESCALATE to human review (Pillar 1.7)
-                    _escalate_task(db, task, escalation_reason, error_message)
+                    await _escalate_task(db, task, escalation_reason, error_message)
                     logger.warning(f"ESCALATED for human review - {escalation_reason}")
                 else:
                     # Mark as FAILED
@@ -580,7 +615,7 @@ Support,180"""
                 
                 if should_escalate:
                     # ESCALATE to human review (Pillar 1.7)
-                    _escalate_task(db, task, escalation_reason, error_message)
+                    await _escalate_task(db, task, escalation_reason, error_message)
                     logger.warning(f"ESCALATED for human review - {escalation_reason}")
                 else:
                     # Mark as FAILED
@@ -715,18 +750,22 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize DB and Observability
     init_db()
     init_observability()
+    
+    # Start autonomous scanning loop if enabled
+    await start_autonomous_loop()
+    
     yield
     # Shutdown logic goes here
 
 
 # Update your FastAPI initialization to use the lifespan
-app = FastAPI(title="AI Freelance Platform API", lifespan=lifespan)
+app = FastAPI(title="ArbitrageAI API", lifespan=lifespan)
 
 
 @app.get("/")
 async def root():
     """Health check endpoint."""
-    return {"status": "ok", "message": "AI Freelance Platform API is running"}
+    return {"status": "ok", "message": "ArbitrageAI API is running"}
 
 
 @app.post("/api/create-checkout-session", response_model=CheckoutResponse)
@@ -1609,6 +1648,208 @@ async def get_arena_stats(db: Session = Depends(get_db)):
         "avg_profit_agent_a": round(avg_profit_a / 100, 2),  # Convert to dollars
         "avg_profit_agent_b": round(avg_profit_b / 100, 2),
     }
+
+
+# =============================================================================
+# AUTONOMOUS JOB SCANNING LOOP
+# - Background task that scans marketplace for new jobs
+# - Evaluates jobs using LLM and filters suitable ones
+# - Sends Telegram notifications for user approval before bidding
+# =============================================================================
+
+# Autonomous loop configuration
+AUTONOMOUS_SCAN_ENABLED = os.environ.get("AUTONOMOUS_SCAN_ENABLED", "false").lower() == "true"
+AUTONOMOUS_SCAN_INTERVAL_MIN = 15  # minutes
+AUTONOMOUS_SCAN_INTERVAL_MAX = 30  # minutes
+AUTONOMOUS_MIN_BID_THRESHOLD = 30  # Minimum bid amount in dollars to consider
+
+
+async def generate_proposal(job_title: str, job_description: str, bid_amount: int) -> str:
+    """
+    Generate a proposal for a job using LLM.
+    
+    Args:
+        job_title: The job title
+        job_description: The job description
+        bid_amount: The proposed bid amount in dollars
+        
+    Returns:
+        Generated proposal text
+    """
+    logger = get_logger(__name__)
+    
+    try:
+        # Use LLM with stealth mode for human-like typing
+        llm = LLMService.with_cloud()
+        
+        prompt = f"""Generate a professional proposal for the following freelance job:
+
+Job Title: {job_title}
+
+Job Description: {job_description}
+
+Your Bid: ${bid_amount}
+
+Write a compelling proposal that:
+1. Introduces your relevant skills and experience
+2. Explains how you'll approach the project
+3. Mentions any relevant tools or technologies
+4. Includes a timeline for completion
+
+Keep it concise but professional. Around 150-200 words."""
+        
+        result = llm.complete(
+            prompt=prompt,
+            temperature=0.7,
+            max_tokens=500,
+            stealth_mode=True  # Add human-like delay
+        )
+        
+        return result.get("content", "Proposal generation failed.")
+        
+    except Exception as e:
+        logger.error(f"Error generating proposal: {e}")
+        return f"Professional proposal for {job_title} - ${bid_amount} budget"
+
+
+async def run_autonomous_loop():
+    """
+    Autonomous background loop that:
+    1. Scans marketplace for new jobs
+    2. Filters out jobs already in Bids table
+    3. Evaluates jobs for suitability
+    4. Generates proposals for suitable jobs
+    5. Sends Telegram notification for user approval
+    """
+    from .database import SessionLocal
+    
+    logger = get_logger(__name__)
+    logger.info("[AUTONOMOUS] Starting autonomous job scanning loop")
+    
+    # Initialize notifier
+    notifier = TelegramNotifier()
+    
+    while True:
+        try:
+            logger.info("[AUTONOMOUS] Scanning marketplace for new jobs...")
+            
+            # Scan marketplace for jobs
+            scan_result = await run_single_scan(max_posts=10)
+            
+            if not scan_result.get("success"):
+                logger.warning(f"[AUTONOMOUS] Scan failed: {scan_result.get('message')}")
+            else:
+                suitable_jobs = scan_result.get("suitable_jobs", [])
+                logger.info(f"[AUTONOMOUS] Found {len(suitable_jobs)} suitable jobs")
+                
+                # Get database session
+                db = SessionLocal()
+                
+                try:
+                    # Get all existing job IDs/URLs we've already bid on
+                    existing_bids = db.query(Bid).filter(
+                        Bid.status.in_([BidStatus.SUBMITTED, BidStatus.PENDING, BidStatus.APPROVED])
+                    ).all()
+                    
+                    # Create set of existing job identifiers for quick lookup
+                    existing_job_titles = {bid.job_title for bid in existing_bids}
+                    
+                    logger.info(f"[AUTONOMOUS] Already have {len(existing_job_titles)} bids in progress")
+                    
+                    # Process each suitable job
+                    for job in suitable_jobs:
+                        job_title = job.get("posting", {}).get("title", "")
+                        job_description = job.get("posting", {}).get("description", "")
+                        bid_amount = job.get("evaluation", {}).get("bid_amount", 0)
+                        
+                        # Skip if already bid on this job
+                        if job_title in existing_job_titles:
+                            logger.info(f"[AUTONOMOUS] Skipping already-bid job: {job_title}")
+                            continue
+                        
+                        # Skip if below minimum bid threshold
+                        if bid_amount < AUTONOMOUS_MIN_BID_THRESHOLD:
+                            logger.info(f"[AUTONOMOUS] Skipping low-value job: {job_title} (${bid_amount})")
+                            continue
+                        
+                        logger.info(f"[AUTONOMOUS] Processing job: {job_title} - ${bid_amount}")
+                        
+                        # Generate proposal
+                        proposal = await generate_proposal(
+                            job_title=job_title,
+                            job_description=job_description,
+                            bid_amount=bid_amount
+                        )
+                        
+                        # Create bid record with PENDING status
+                        bid = Bid(
+                            job_title=job_title,
+                            job_description=job_description[:2000],  # Limit description length
+                            job_url=job.get("posting", {}).get("url"),
+                            bid_amount=bid_amount * 100,  # Store in cents
+                            proposal=proposal,
+                            status=BidStatus.PENDING,
+                            is_suitable=job.get("evaluation", {}).get("is_suitable", True),
+                            evaluation_reasoning=job.get("evaluation", {}).get("reasoning", ""),
+                            evaluation_confidence=int(job.get("evaluation", {}).get("confidence", 0.5) * 100),
+                            marketplace=os.environ.get("MARKETPLACE_URL", "unknown"),
+                            skills_matched=job.get("posting", {}).get("skills", [])
+                        )
+                        db.add(bid)
+                        db.commit()
+                        
+                        # Send Telegram notification for approval
+                        notification_message = f"""🤖 *New Job Opportunity*
+
+*Title:* {job_title}
+*Bid Amount:* ${bid_amount}
+*Confidence:* {int(job.get('evaluation', {}).get('confidence', 0.5) * 100)}%
+
+*Evaluation:*
+{job.get('evaluation', {}).get('reasoning', 'No reasoning provided')}
+
+*Proposal Preview:*
+{proposal[:300]}...
+
+Reply with APPROVE to submit bid or REJECT to skip."""
+
+                        await notifier.send_urgent_message(notification_message)
+                        logger.info(f"[AUTONOMOUS] Sent notification for approval: {job_title}")
+                        
+                finally:
+                    db.close()
+                    
+        except Exception as e:
+            logger.error(f"[AUTONOMOUS] Error in scan loop: {e}")
+        
+        # Random sleep between 15-30 minutes
+        sleep_minutes = random.randint(AUTONOMOUS_SCAN_INTERVAL_MIN, AUTONOMOUS_SCAN_INTERVAL_MAX)
+        logger.info(f"[AUTONOMOUS] Sleeping for {sleep_minutes} minutes until next scan...")
+        await asyncio.sleep(sleep_minutes * 60)
+
+
+# =============================================================================
+# FASTAPI STARTUP - Start autonomous loop if enabled
+# =============================================================================
+
+# Track if autonomous loop is running
+_autonomous_loop_task = None
+
+
+async def start_autonomous_loop():
+    """Start the autonomous scanning loop if enabled."""
+    global _autonomous_loop_task
+    
+    if AUTONOMOUS_SCAN_ENABLED:
+        logger = get_logger(__name__)
+        logger.info("[STARTUP] Autonomous scanning is ENABLED")
+        
+        # Create and start the background task
+        _autonomous_loop_task = asyncio.create_task(run_autonomous_loop())
+        logger.info("[STARTUP] Autonomous scanning loop started")
+    else:
+        logger = get_logger(__name__)
+        logger.info("[STARTUP] Autonomous scanning is DISABLED (set AUTONOMOUS_SCAN_ENABLED=true to enable)")
 
 
 if __name__ == "__main__":

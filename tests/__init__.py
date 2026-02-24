@@ -1,5 +1,5 @@
 """
-Test suite for AI Freelance Platform.
+Test suite for ArbitrageAI.
 
 This package contains unit tests and integration tests for:
 - Pricing calculations

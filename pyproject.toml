@@ -1,7 +1,7 @@
 [project]
-name = "ai-freelance-platform"
+name = "arbitrage-ai"
 version = "0.1.0"
-description = "AI Freelance Platform Backend"
+description = "ArbitrageAI Backend"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.100.0",
@@ -10,7 +10,7 @@ dependencies = [
     "openai>=1.0.0",
     "e2b-code-interpreter>=1.0.0",
     "python-dotenv>=1.0.0",
-    "git+https://github.com/HKUDS/ClawWork.git",
+    "livebench @ git+https://github.com/HKUDS/ClawWork.git",
     # File parsing dependencies
     "pandas>=2.0.0",
     "openpyxl>=3.1.0",
@@ -26,6 +26,8 @@ dependencies = [
     "opentelemetry-sdk>=1.24.0",
     # Docker Sandbox (replaces E2B for cost savings)
     "docker>=7.0.0",
+    # Market Scanner (Playwright for web scraping)
+    "playwright>=1.40.0",
 ]
 
 [project.optional-dependencies]

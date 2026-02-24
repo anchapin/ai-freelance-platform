@@ -1,0 +1,725 @@
+"""
+Market Scanner Module
+
+This module provides functionality to scan freelance marketplaces for potential tasks.
+It uses Playwright to navigate to marketplace URLs and evaluates job postings
+using a local LLM (Ollama) to determine suitability and optimal bid amounts.
+
+Features:
+- Playwright-based web scraping of freelance marketplace pages
+- LLM-powered evaluation of job postings (suitability, bid amount, reasoning)
+- Graceful error handling for 24/7 operation
+- Configurable marketplace URL from environment variables
+"""
+
+import os
+import json
+import asyncio
+import re
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
+from datetime import datetime
+
+# Load environment variables
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Import logger
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# Import LLM service for local inference
+try:
+    from src.llm_service import LLMService
+    LLM_SERVICE_AVAILABLE = True
+except ImportError:
+    LLM_SERVICE_AVAILABLE = False
+    logger.warning("LLMService not available, market scanner will use fallback evaluation")
+
+# Try to import Playwright
+try:
+    from playwright.async_api import async_playwright, Page, Browser
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    logger.warning("Playwright not available, market scanner will use HTTP-only mode")
+
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+# Marketplace URL from environment (or use default mock URL)
+DEFAULT_MARKETPLACE_URL = "https://example.com/freelance-jobs"
+MARKETPLACE_URL = os.environ.get("MARKETPLACE_URL", DEFAULT_MARKETPLACE_URL)
+
+# Evaluation settings
+EVALUATION_MODEL = os.environ.get("MARKET_SCAN_MODEL", "llama3.2")
+MAX_BID_AMOUNT = int(os.environ.get("MAX_BID_AMOUNT", "500"))
+MIN_BID_AMOUNT = int(os.environ.get("MIN_BID_AMOUNT", "10"))
+
+# Timeout settings (seconds)
+PAGE_LOAD_TIMEOUT = int(os.environ.get("MARKET_SCAN_PAGE_TIMEOUT", "30"))
+SCAN_INTERVAL = int(os.environ.get("MARKET_SCAN_INTERVAL", "300"))  # 5 minutes default
+
+
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
+
+@dataclass
+class JobPosting:
+    """Represents a job posting from the marketplace."""
+    title: str
+    description: str
+    budget: Optional[str] = None
+    skills: List[str] = None
+    url: Optional[str] = None
+    posted_date: Optional[str] = None
+    client_rating: Optional[float] = None
+    client_spend: Optional[str] = None
+    
+    def __post_init__(self):
+        if self.skills is None:
+            self.skills = []
+
+
+@dataclass
+class EvaluationResult:
+    """Result of evaluating a job posting."""
+    is_suitable: bool
+    bid_amount: int
+    reasoning: str
+    task_id: Optional[str] = None
+    confidence: Optional[float] = None
+    evaluated_at: Optional[datetime] = None
+    
+    def __post_init__(self):
+        if self.evaluated_at is None:
+            self.evaluated_at = datetime.now()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "is_suitable": self.is_suitable,
+            "bid_amount": self.bid_amount,
+            "reasoning": self.reasoning,
+            "task_id": self.task_id,
+            "confidence": self.confidence,
+            "evaluated_at": self.evaluated_at.isoformat() if self.evaluated_at else None
+        }
+
+
+# =============================================================================
+# MARKET SCANNER CLASS
+# =============================================================================
+
+class MarketScanner:
+    """
+    Scans freelance marketplaces for potential tasks using Playwright.
+    
+    This scanner:
+    1. Navigates to the configured marketplace URL using Playwright
+    2. Extracts job postings from the page
+    3. Evaluates each posting using local LLM (Ollama)
+    4. Returns evaluation results with suitability, bid amount, and reasoning
+    """
+    
+    def __init__(
+        self,
+        marketplace_url: Optional[str] = None,
+        headless: bool = True,
+        timeout: int = PAGE_LOAD_TIMEOUT
+    ):
+        """
+        Initialize the MarketScanner.
+        
+        Args:
+            marketplace_url: URL of the freelance marketplace to scan
+            headless: Whether to run Playwright in headless mode
+            timeout: Page load timeout in seconds
+        """
+        self.marketplace_url = marketplace_url or MARKETPLACE_URL
+        self.headless = headless
+        self.timeout = timeout * 1000  # Convert to milliseconds for Playwright
+        
+        self.playwright = None
+        self.browser = None
+        self.page = None
+        
+        # Initialize LLM service for evaluation
+        self.llm = None
+        if LLM_SERVICE_AVAILABLE:
+            try:
+                self.llm = LLMService.with_local(model=EVALUATION_MODEL)
+                logger.info(f"MarketScanner initialized with LLM model: {EVALUATION_MODEL}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize LLM service: {e}")
+    
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.start()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.stop()
+    
+    async def start(self):
+        """
+        Start the Playwright browser.
+        
+        Must be called before scanning if not using context manager.
+        """
+        if not PLAYWRIGHT_AVAILABLE:
+            logger.error("Playwright is not available. Install with: pip install playwright && playwright install chromium")
+            raise RuntimeError("Playwright is not installed")
+        
+        try:
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(headless=self.headless)
+            self.page = await self.browser.new_page()
+            await self.page.set_default_timeout(self.timeout)
+            logger.info("MarketScanner browser started successfully")
+        except Exception as e:
+            logger.error(f"Failed to start browser: {e}")
+            raise
+    
+    async def stop(self):
+        """Stop the Playwright browser and cleanup."""
+        try:
+            if self.page:
+                await self.page.close()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+            logger.info("MarketScanner browser stopped")
+        except Exception as e:
+            logger.warning(f"Error stopping browser: {e}")
+        finally:
+            self.page = None
+            self.browser = None
+            self.playwright = None
+    
+    async def fetch_job_postings(self, max_posts: int = 10) -> List[JobPosting]:
+        """
+        Fetch job postings from the marketplace.
+        
+        Args:
+            max_posts: Maximum number of postings to fetch
+            
+        Returns:
+            List of JobPosting objects
+        """
+        if not self.page:
+            await self.start()
+        
+        job_postings = []
+        
+        try:
+            logger.info(f"Navigating to marketplace: {self.marketplace_url}")
+            
+            # Navigate to the marketplace
+            response = await self.page.goto(self.marketplace_url, wait_until="domcontentloaded")
+            
+            if response and response.status >= 400:
+                logger.warning(f"Marketplace returned status {response.status}")
+                # Return mock data for testing when marketplace is unavailable
+                return self._get_mock_job_postings(max_posts)
+            
+            # Wait for job listings to load
+            await self.page.wait_for_load_state("networkidle", timeout=self.timeout)
+            
+            # Try to extract job postings (common selectors)
+            # This is a generic approach - may need adjustment for specific marketplaces
+            job_elements = await self.page.query_selector_all([
+                ".job-listing",
+                ".job-card",
+                ".freelancer-project",
+                ".project-card",
+                "[data-testid='job-post']",
+                ".listing-item",
+                "article.job",
+                ".job-post"
+            ])
+            
+            if not job_elements:
+                logger.warning("No job postings found with common selectors, using fallback extraction")
+                return self._get_mock_job_postings(max_posts)
+            
+            # Extract data from each job element
+            for i, element in enumerate(job_elements[:max_posts]):
+                try:
+                    posting = await self._extract_job_posting(element, i)
+                    if posting:
+                        job_postings.append(posting)
+                except Exception as e:
+                    logger.warning(f"Failed to extract job posting {i}: {e}")
+                    continue
+            
+            logger.info(f"Extracted {len(job_postings)} job postings")
+            
+        except Exception as e:
+            logger.error(f"Error fetching job postings: {e}")
+            # Return mock data for graceful degradation
+            return self._get_mock_job_postings(max_posts)
+        
+        return job_postings
+    
+    async def _extract_job_posting(self, element, index: int) -> Optional[JobPosting]:
+        """
+        Extract job posting data from a page element.
+        
+        Args:
+            element: Playwright element handle
+            index: Index of the element
+            
+        Returns:
+            JobPosting object or None if extraction fails
+        """
+        try:
+            # Try common selectors for job data
+            title_elem = await element.query_selector([
+                "h2", "h3", ".title", ".job-title", "[data-testid='title']"
+            ])
+            title = await title_elem.inner_text() if title_elem else f"Job {index + 1}"
+            
+            desc_elem = await element.query_selector([
+                ".description", ".job-description", ".snippet", "p"
+            ])
+            description = await desc_elem.inner_text() if desc_elem else ""
+            
+            # Try to get budget
+            budget_elem = await element.query_selector([
+                ".budget", ".price", ".amount", ".job-price", "[data-testid='budget']"
+            ])
+            budget = await budget_elem.inner_text() if budget_elem else None
+            
+            # Try to get skills
+            skill_elems = await element.query_selector_all([
+                ".skills span", ".skill-tag", ".tag", "span[data-testid='skill']"
+            ])
+            skills = []
+            for skill in skill_elems:
+                skill_text = await skill.inner_text()
+                if skill_text:
+                    skills.append(skill_text.strip())
+            
+            # Try to get URL
+            link_elem = await element.query_selector("a")
+            url = None
+            if link_elem:
+                url = await link_elem.get_attribute("href")
+            
+            return JobPosting(
+                title=title.strip(),
+                description=description.strip()[:500],  # Limit description length
+                budget=budget,
+                skills=skills,
+                url=url
+            )
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract job posting: {e}")
+            return None
+    
+    def _get_mock_job_postings(self, max_posts: int) -> List[JobPosting]:
+        """
+        Get mock job postings for testing or when marketplace is unavailable.
+        
+        Args:
+            max_posts: Maximum number of mock postings
+            
+        Returns:
+            List of mock JobPosting objects
+        """
+        mock_postings = [
+            JobPosting(
+                title="Python Data Analysis Script",
+                description="Need a Python developer to create a data analysis script that processes CSV files and generates visualizations. Must include pandas and matplotlib.",
+                budget="$100-200",
+                skills=["Python", "pandas", "matplotlib", "data analysis"]
+            ),
+            JobPosting(
+                title="React Dashboard Development",
+                description="Looking for an experienced React developer to build a dashboard with charts, tables, and real-time data updates. Experience with D3.js preferred.",
+                budget="$500-1000",
+                skills=["React", "JavaScript", "D3.js", "CSS"]
+            ),
+            JobPosting(
+                title="Excel Spreadsheet Automation",
+                description="Need VBA macros created to automate repetitive spreadsheet tasks. Should include data validation and automated report generation.",
+                budget="$50-150",
+                skills=["Excel", "VBA", "Microsoft Office"]
+            ),
+            JobPosting(
+                title="Legal Document Template",
+                description="Create a professional legal contract template for NDA agreements. Must comply with US law standards.",
+                budget="$200-300",
+                skills=["Legal", "Document Creation", "Contract Law"]
+            ),
+            JobPosting(
+                title="Web Scraping Bot",
+                description="Build a web scraping bot to collect product prices from e-commerce sites. Must handle anti-scraping measures.",
+                budget="$150-400",
+                skills=["Python", "BeautifulSoup", "Selenium", "Web Scraping"]
+            )
+        ]
+        
+        return mock_postings[:max_posts]
+    
+    async def evaluate_post(self, title: str, description: str) -> EvaluationResult:
+        """
+        Evaluate a job posting for suitability using LLM.
+        
+        Args:
+            title: Job title
+            description: Job description
+            
+        Returns:
+            EvaluationResult with is_suitable, bid_amount, and reasoning
+        """
+        # Generate a unique task ID
+        task_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(title) % 10000}"
+        
+        # If LLM is available, use it for evaluation
+        if self.llm and LLM_SERVICE_AVAILABLE:
+            return await self._evaluate_with_llm(title, description, task_id)
+        
+        # Fallback to rule-based evaluation
+        return self._evaluate_fallback(title, description, task_id)
+    
+    async def _evaluate_with_llm(
+        self,
+        title: str,
+        description: str,
+        task_id: str
+    ) -> EvaluationResult:
+        """
+        Evaluate job posting using local LLM (Ollama).
+        
+        Args:
+            title: Job title
+            description: Job description
+            task_id: Unique task identifier
+            
+        Returns:
+            EvaluationResult
+        """
+        system_prompt = """You are an expert freelance job evaluator. Your task is to evaluate job postings
+for suitability and determine an optimal bid amount.
+
+Evaluate the job based on:
+1. Whether it matches typical ArbitrageAI capabilities
+2. Complexity and scope of work
+3. Budget appropriateness
+4. Required skills alignment
+
+Return ONLY valid JSON with these exact keys:
+{
+    "is_suitable": true or false,
+    "bid_amount": integer (your recommended bid in dollars),
+    "reasoning": "Brief explanation of your evaluation (2-3 sentences)",
+    "confidence": float between 0 and 1
+}
+
+Guidelines for bid amount:
+- Low complexity tasks (simple data entry, basic formatting): $10-50
+- Medium complexity (standard coding tasks, document creation): $50-150
+- High complexity (complex development, specialized work): $150-400
+- Very high complexity (full applications, complex systems): $400+
+
+Only mark as suitable if the job is something an AI can reasonably handle."""
+
+        prompt = f"""Job Title: {title}
+Job Description: {description}
+
+Evaluate this job posting and return JSON."""
+
+        try:
+            # Use the LLM service
+            result = self.llm.complete(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.3,
+                max_tokens=500
+            )
+            
+            # Parse the response
+            response_content = result.get("content", "{}")
+            
+            # Extract JSON from response
+            json_match = re.search(r'\{[\s\S]*\}', response_content)
+            if json_match:
+                eval_data = eval(json_match.group(0))
+                
+                # Validate and clamp bid amount
+                bid_amount = eval_data.get("bid_amount", 50)
+                bid_amount = max(MIN_BID_AMOUNT, min(MAX_BID_AMOUNT, bid_amount))
+                
+                return EvaluationResult(
+                    is_suitable=eval_data.get("is_suitable", False),
+                    bid_amount=bid_amount,
+                    reasoning=eval_data.get("reasoning", "Evaluation completed"),
+                    task_id=task_id,
+                    confidence=eval_data.get("confidence", 0.5)
+                )
+            
+            # If JSON parsing fails, use fallback
+            logger.warning("Failed to parse LLM response, using fallback evaluation")
+            return self._evaluate_fallback(title, description, task_id)
+            
+        except Exception as e:
+            logger.error(f"LLM evaluation failed: {e}")
+            return self._evaluate_fallback(title, description, task_id)
+    
+    def _evaluate_fallback(
+        self,
+        title: str,
+        description: str,
+        task_id: str
+    ) -> EvaluationResult:
+        """
+        Fallback rule-based evaluation when LLM is unavailable.
+        
+        Args:
+            title: Job title
+            description: Job description
+            task_id: Unique task identifier
+            
+        Returns:
+            EvaluationResult
+        """
+        title_lower = title.lower()
+        desc_lower = description.lower()
+        
+        # Keywords that indicate suitable tasks
+        suitable_keywords = [
+            "python", "data", "analysis", "excel", "spreadsheet", "chart",
+            "visualization", "report", "document", "script", "automation",
+            "dashboard", "table", "csv", "parsing", "template", "format"
+        ]
+        
+        # Keywords that indicate unsuitable tasks
+        unsuitable_keywords = [
+            "physical", "in-person", "on-site", "video", "call", "meeting",
+            "voice", "audio", "real-time", "live", "3d modeling", "mobile app"
+        ]
+        
+        # Check for unsuitable keywords first
+        for keyword in unsuitable_keywords:
+            if keyword in title_lower or keyword in desc_lower:
+                return EvaluationResult(
+                    is_suitable=False,
+                    bid_amount=50,
+                    reasoning=f"Job contains '{keyword}' which requires human involvement.",
+                    task_id=task_id,
+                    confidence=0.9
+                )
+        
+        # Check for suitable keywords
+        suitable_count = sum(1 for kw in suitable_keywords if kw in title_lower or kw in desc_lower)
+        
+        if suitable_count >= 1:
+            # Estimate bid amount based on description length and complexity
+            base_bid = 50
+            if len(description) > 300:
+                base_bid += 25
+            if any(kw in desc_lower for kw in ["complex", "advanced", "professional", "expert"]):
+                base_bid += 50
+            
+            return EvaluationResult(
+                is_suitable=True,
+                bid_amount=base_bid,
+                reasoning=f"Job appears suitable based on keyword matching ({suitable_count} matching keywords).",
+                task_id=task_id,
+                confidence=0.6
+            )
+        
+        # Default: mark as not suitable with moderate confidence
+        return EvaluationResult(
+            is_suitable=False,
+            bid_amount=50,
+            reasoning="Job does not match typical AI-capable tasks based on keyword analysis.",
+            task_id=task_id,
+            confidence=0.5
+        )
+    
+    async def scan_and_evaluate(
+        self,
+        max_posts: int = 10,
+        min_bid_threshold: int = 30
+    ) -> Dict[str, Any]:
+        """
+        Scan marketplace and evaluate all job postings.
+        
+        Args:
+            max_posts: Maximum number of postings to fetch
+            min_bid_threshold: Minimum bid amount to consider
+            
+        Returns:
+            Dictionary with scan results
+        """
+        start_time = datetime.now()
+        
+        try:
+            # Fetch job postings
+            postings = await self.fetch_job_postings(max_posts)
+            
+            if not postings:
+                return {
+                    "success": False,
+                    "message": "No job postings found",
+                    "postings": [],
+                    "evaluations": [],
+                    "scan_time": 0
+                }
+            
+            # Evaluate each posting
+            evaluations = []
+            suitable_jobs = []
+            
+            for posting in postings:
+                evaluation = await self.evaluate_post(posting.title, posting.description)
+                evaluation.task_id = f"{evaluation.task_id}_{hash(posting.title) % 1000}"
+                evaluations.append(evaluation.to_dict())
+                
+                if evaluation.is_suitable and evaluation.bid_amount >= min_bid_threshold:
+                    suitable_jobs.append({
+                        "posting": {
+                            "title": posting.title,
+                            "description": posting.description[:200] + "...",
+                            "budget": posting.budget,
+                            "skills": posting.skills
+                        },
+                        "evaluation": evaluation.to_dict()
+                    })
+            
+            scan_duration = (datetime.now() - start_time).total_seconds()
+            
+            return {
+                "success": True,
+                "message": f"Scanned {len(postings)} postings, found {len(suitable_jobs)} suitable",
+                "postings_count": len(postings),
+                "suitable_count": len(suitable_jobs),
+                "suitable_jobs": suitable_jobs,
+                "all_evaluations": evaluations,
+                "scan_duration_seconds": scan_duration,
+                "scanned_at": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Scan and evaluation failed: {e}")
+            return {
+                "success": False,
+                "message": f"Scan failed: {str(e)}",
+                "postings": [],
+                "evaluations": [],
+                "scan_time": 0,
+                "error": str(e)
+            }
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+async def run_single_scan(
+    marketplace_url: Optional[str] = None,
+    max_posts: int = 10
+) -> Dict[str, Any]:
+    """
+    Run a single market scan.
+    
+    Args:
+        marketplace_url: Optional override for marketplace URL
+        max_posts: Maximum postings to scan
+        
+    Returns:
+        Dictionary with scan results
+    """
+    async with MarketScanner(marketplace_url=marketplace_url) as scanner:
+        return await scanner.scan_and_evaluate(max_posts=max_posts)
+
+
+async def run_continuous_scan(
+    interval: int = SCAN_INTERVAL,
+    marketplace_url: Optional[str] = None,
+    max_posts: int = 10,
+    max_iterations: Optional[int] = None
+):
+    """
+    Run continuous market scanning at regular intervals.
+    
+    Args:
+        interval: Seconds between scans
+        marketplace_url: Optional override for marketplace URL
+        max_posts: Maximum postings to scan per iteration
+        max_iterations: Maximum number of scans (None for infinite)
+        
+    Yields:
+        Scan results dictionary for each iteration
+    """
+    iteration = 0
+    
+    while max_iterations is None or iteration < max_iterations:
+        iteration += 1
+        logger.info(f"Starting scan iteration {iteration}")
+        
+        try:
+            async with MarketScanner(marketplace_url=marketplace_url) as scanner:
+                result = await scanner.scan_and_evaluate(max_posts=max_posts)
+                result["iteration"] = iteration
+                yield result
+                
+        except Exception as e:
+            logger.error(f"Scan iteration {iteration} failed: {e}")
+            yield {
+                "success": False,
+                "error": str(e),
+                "iteration": iteration
+            }
+        
+        # Wait before next scan
+        if max_iterations is None or iteration < max_iterations:
+            logger.info(f"Waiting {interval} seconds before next scan")
+            await asyncio.sleep(interval)
+
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
+
+if __name__ == "__main__":
+    import sys
+    
+    async def main():
+        """Main entry point for testing."""
+        print("=" * 60)
+        print("Market Scanner - Test Run")
+        print("=" * 60)
+        
+        # Run a single scan
+        print("\nRunning market scan...")
+        result = await run_single_scan(max_posts=5)
+        
+        print(f"\nScan Result:")
+        print(f"  Success: {result.get('success')}")
+        print(f"  Message: {result.get('message')}")
+        print(f"  Postings Found: {result.get('postings_count', 0)}")
+        print(f"  Suitable Jobs: {result.get('suitable_count', 0)}")
+        
+        if result.get('suitable_jobs'):
+            print(f"\nSuitable Jobs:")
+            for i, job in enumerate(result['suitable_jobs'], 1):
+                print(f"\n  {i}. {job['posting']['title']}")
+                print(f"     Bid: ${job['evaluation']['bid_amount']}")
+                print(f"     Reasoning: {job['evaluation']['reasoning']}")
+        
+        print(f"\nScan Duration: {result.get('scan_duration_seconds', 0):.2f}s")
+    
+    # Run the main function
+    asyncio.run(main())

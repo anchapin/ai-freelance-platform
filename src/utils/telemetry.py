@@ -23,6 +23,6 @@ def init_observability():
 
     # 3. Initialize auto-instrumentation
     Traceloop.init(
-        app_name="ai_freelance_platform",
+        app_name="arbitrage_ai",
         disable_batch=True  # Sends traces immediately for real-time debugging
     )

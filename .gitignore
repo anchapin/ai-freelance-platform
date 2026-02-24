@@ -33,3 +33,7 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+
+# Database
+*.db
+data/tasks.db

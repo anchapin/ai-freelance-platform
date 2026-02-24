@@ -1,5 +1,5 @@
 # =============================================================================
-# AI Freelance Platform - Sandbox Base Image
+# ArbitrageAI - Sandbox Base Image
 # =============================================================================
 # This image provides a pre-built environment with all common libraries
 # pre-installed, avoiding the need for pip install on every execution.

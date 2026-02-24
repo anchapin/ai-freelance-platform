@@ -1,6 +1,6 @@
-# AI Freelance Platform - Developer Setup Guide
+# ArbitrageAI - Developer Setup Guide
 
-This guide covers how to set up and run the complete AI Freelance Platform locally, including the Ollama local LLM instance, FastAPI backend, and Vite React frontend.
+This guide covers how to set up and run the complete ArbitrageAI locally, including the Ollama local LLM instance, FastAPI backend, and Vite React frontend.
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ Before starting, ensure you have the following installed:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        AI Freelance Platform                     │
+│                           ArbitrageAI                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     │
@@ -48,7 +48,7 @@ Before starting, ensure you have the following installed:
 
 ```bash
 # Navigate to project root
-cd /home/alexc/Projects/ai-freelance-platform
+cd /home/alexc/Projects/ArbitrageAI
 
 # Install Python dependencies
 pip install -e .
@@ -212,7 +212,7 @@ curl http://localhost:11434/v1/chat/completions \
 
 ```bash
 # From project root
-cd /home/alexc/Projects/ai-freelance-platform
+cd /home/alexc/Projects/ArbitrageAI
 
 # Start the backend server
 uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
@@ -243,7 +243,7 @@ The API will be available at:
 
 ```bash
 # Navigate to client portal
-cd /home/alexc/Projects/ai-freelance-platform/src/client_portal
+cd /home/alexc/Projects/ArbitrageAI/src/client_portal
 
 # Start development server
 npm run dev
@@ -344,7 +344,34 @@ Check your backend logs to confirm webhooks are being received:
 
 ## Quick Start Command Summary
 
-Here's all the commands you need to run the full system:
+### Option 1: Single Command (Recommended - February 2026)
+
+Install the `just` command runner, then start everything with one command:
+
+```bash
+# Install just (once)
+brew install just   # or: curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash
+
+# Start all services with one command
+just start
+
+# Or install dependencies first
+just setup   # First-time setup
+just start   # Start all services
+```
+
+Other useful commands:
+```bash
+just status      # Check which services are running
+just stop        # Stop all services
+just backend     # Start only backend
+just frontend    # Start only frontend
+just ollama      # Start only Ollama
+just test        # Run tests
+just docs        # Open API docs in browser
+```
+
+### Option 2: Manual (Legacy)
 
 ```bash
 # Terminal 1: Start Ollama
@@ -354,11 +381,11 @@ export OLLAMA_CONTEXT_WINDOW=16384
 ollama serve
 
 # Terminal 2: Start FastAPI Backend
-cd /home/alexc/Projects/ai-freelance-platform
+cd /home/alexc/Projects/ArbitrageAI
 uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 
 # Terminal 3: Start Vite Frontend
-cd /home/alexc/Projects/ai-freelance-platform/src/client_portal
+cd /home/alexc/Projects/ArbitrageAI/src/client_portal
 npm run dev
 
 # Terminal 4: Stripe Webhook Forwarding (for local testing)

@@ -229,6 +229,73 @@ class Task(Base):
         }
 
 
+class BidStatus(PyEnum):
+    """Status for job bids."""
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"  # User approved, bid submitted
+    REJECTED = "REJECTED"  # User rejected the proposal
+    SUBMITTED = "SUBMITTED"  # Bid submitted to marketplace
+    WON = "WON"  # Bid was accepted
+    LOST = "LOST"  # Bid was rejected by client
+
+
+class Bid(Base):
+    """
+    Bid Model for Autonomous Job Scanning
+    
+    Stores bids made on freelance marketplace jobs.
+    Used to track which jobs have already been bid on to avoid duplicates.
+    """
+    __tablename__ = "bids"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Job reference (from marketplace)
+    job_title = Column(String, nullable=False)
+    job_description = Column(Text, nullable=False)
+    job_url = Column(String, nullable=True)
+    job_id = Column(String, nullable=True)  # External marketplace job ID
+    
+    # Bid details
+    bid_amount = Column(Integer, nullable=False)  # Bid amount in cents
+    proposal = Column(Text, nullable=True)  # Generated proposal text
+    status = Column(Enum(BidStatus), default=BidStatus.PENDING, nullable=False)
+    
+    # Evaluation data from market scanner
+    is_suitable = Column(Boolean, default=False)
+    evaluation_reasoning = Column(Text, nullable=True)
+    evaluation_confidence = Column(Integer, nullable=True)  # 0-100
+    
+    # Market scanner data
+    marketplace = Column(String, nullable=True)  # Which marketplace
+    skills_matched = Column(JSON, nullable=True)  # List of matched skills
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    submitted_at = Column(DateTime, nullable=True)  # When bid was submitted
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "job_title": self.job_title,
+            "job_description": self.job_description,
+            "job_url": self.job_url,
+            "job_id": self.job_id,
+            "bid_amount": self.bid_amount,
+            "bid_amount_dollars": (self.bid_amount / 100) if self.bid_amount else None,
+            "proposal": self.proposal,
+            "status": self.status.value if isinstance(self.status, BidStatus) else self.status,
+            "is_suitable": self.is_suitable,
+            "evaluation_reasoning": self.evaluation_reasoning,
+            "evaluation_confidence": self.evaluation_confidence,
+            "marketplace": self.marketplace,
+            "skills_matched": self.skills_matched,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "submitted_at": self.submitted_at.isoformat() if self.submitted_at else None,
+        }
+
+
 class ArenaCompetition(Base):
     """
     Agent Arena Competition Model

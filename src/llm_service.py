@@ -13,6 +13,8 @@ Features:
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
+import time
+import random
 from typing import Optional, Dict, Any, List
 
 # Load environment variables from .env file
@@ -35,6 +37,10 @@ DEFAULT_DISTILLED_MODEL = "distilled-llama3.2"  # Fine-tuned distilled model
 TASK_TYPE_BASIC_ADMIN = "basic_admin"  # Simple tasks, suitable for local models
 TASK_TYPE_COMPLEX = "complex"          # Complex tasks requiring powerful models
 TASK_TYPE_DISTILLED = "distilled"     # Tasks handled by fine-tuned local model
+
+# Revenue threshold for cloud vs local model selection (in cents)
+# Default: $30 - below this use local, above this use cloud
+MIN_CLOUD_REVENUE = int(os.environ.get("MIN_CLOUD_REVENUE", "3000"))
 
 
 class ModelConfig:
@@ -266,6 +272,7 @@ class LLMService:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         system_prompt: Optional[str] = None,
+        stealth_mode: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -276,11 +283,17 @@ class LLMService:
             temperature: Sampling temperature (0.0 to 2.0). Higher = more creative
             max_tokens: Maximum tokens to generate
             system_prompt: Optional system prompt to set context
+            stealth_mode: If True, adds random delay (2-5 seconds) to mimic human typing
             **kwargs: Additional parameters passed to the API
             
         Returns:
             Dictionary containing the response text and metadata
         """
+        # Stealth mode: add random delay to mimic human typing speed
+        if stealth_mode:
+            delay = random.uniform(2.0, 5.0)
+            time.sleep(delay)
+        
         messages = []
         
         if system_prompt:
@@ -303,7 +316,8 @@ class LLMService:
                 "prompt_tokens": response.usage.prompt_tokens,
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens
-            }
+            },
+            "stealth_mode_used": stealth_mode
         }
     
     def complete_streaming(
@@ -506,6 +520,42 @@ class LLMService:
             model_config=config,
             **kwargs
         )
+    
+    # =========================================================================
+    # REVENUE-BASED OPTIMIZATION
+    # =========================================================================
+    
+    @classmethod
+    def get_optimized_service(
+        cls,
+        potential_revenue_cents: int,
+        min_cloud_revenue: Optional[int] = None,
+        **kwargs
+    ) -> "LLMService":
+        """
+        Get an optimized LLMService based on potential revenue.
+        
+        Uses revenue-based model selection to optimize costs:
+        - Below MIN_CLOUD_REVENUE threshold: Use local model (free)
+        - Above threshold: Use cloud model (best quality)
+        
+        Args:
+            potential_revenue_cents: The potential revenue in cents (e.g., 2500 = $25)
+            min_cloud_revenue: Optional override for MIN_CLOUD_REVENUE threshold (in cents)
+                             Defaults to $30 (3000 cents) if not specified
+            **kwargs: Additional arguments passed to LLMService constructor
+            
+        Returns:
+            LLMService configured for optimal model based on revenue
+        """
+        threshold = min_cloud_revenue if min_cloud_revenue is not None else MIN_CLOUD_REVENUE
+        
+        if potential_revenue_cents < threshold:
+            # Low revenue: use local model (free, cost optimization)
+            return cls.with_local(**kwargs)
+        else:
+            # High revenue: use cloud model (best quality for high-value tasks)
+            return cls.with_cloud(**kwargs)
     
     # =========================================================================
     # FALLBACK MECHANISM

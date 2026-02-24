@@ -8,7 +8,7 @@ function App() {
   return (
     <div className="app">
       <header>
-        <h1>AI Freelance Platform</h1>
+        <h1>ArbitrageAI</h1>
       </header>
       <main>
         <Routes>

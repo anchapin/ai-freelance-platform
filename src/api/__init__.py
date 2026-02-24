@@ -1,1 +1,1 @@
-# API package for the AI Freelance Platform
+# API package for ArbitrageAI

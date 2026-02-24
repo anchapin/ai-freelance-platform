@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for AI Freelance Platform tests.
+Pytest configuration and shared fixtures for ArbitrageAI tests.
 
 This module provides:
 - Mock fixtures for Stripe API
