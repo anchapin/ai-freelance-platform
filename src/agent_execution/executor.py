@@ -24,13 +24,18 @@ from datetime import datetime
 # E2B Code Interpreter SDK (fallback)
 from e2b_code_interpreter import Sandbox
 
+# Import logger for proper logging with rotating files
+# (Must be before any modules that use logging for import warnings)
+from src.utils.logger import get_logger
+logger = get_logger(__name__)
+
 # Docker Sandbox (primary - for cost savings)
 try:
     from src.agent_execution.docker_sandbox import LocalDockerSandbox, SandboxResult, SandboxArtifact, SandboxLog
     DOCKER_SANDBOX_AVAILABLE = True
 except ImportError:
     DOCKER_SANDBOX_AVAILABLE = False
-    print("Warning: Docker Sandbox not available, using E2B")
+    logger.warning("Docker Sandbox not available, using E2B")
 
 # Configuration: Use Docker sandbox by default if available
 USE_DOCKER_SANDBOX = os.environ.get("USE_DOCKER_SANDBOX", "true").lower() == "true"
@@ -52,7 +57,7 @@ try:
     EXPERIENCE_DB_AVAILABLE = True
 except ImportError:
     EXPERIENCE_DB_AVAILABLE = False
-    print("Warning: Experience Vector Database not available, using zero-shot prompts")
+    logger.warning("Experience Vector Database not available, using zero-shot prompts")
 
 # Import Distillation Data Collector for capturing successful cloud model outputs
 try:
@@ -109,7 +114,7 @@ try:
     TEMPLATES_AVAILABLE = True
 except ImportError:
     TEMPLATES_AVAILABLE = False
-    print("Warning: Template system not available, using legacy code generation")
+    logger.warning("Template system not available, using legacy code generation")
 
 
 # =============================================================================

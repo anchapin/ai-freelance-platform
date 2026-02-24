@@ -67,6 +67,22 @@ cd src/client_portal
 npm install
 ```
 
+### Docker Dependencies
+
+The LocalDockerSandbox requires a base Docker image to be built before running tasks:
+
+```bash
+# Build the Local Docker Sandbox Base Image
+docker build -t ai-sandbox-base -f Dockerfile.sandbox .
+```
+
+**Important:** Add your user to the Docker group to avoid permissions errors:
+
+```bash
+# Add your user to the docker group (log out and back in for changes to take effect)
+sudo usermod -aG docker $USER
+```
+
 ---
 
 ## Step 2: Configure Environment Variables

@@ -282,8 +282,9 @@ class LocalDockerSandbox:
                     exit_code = result.get("StatusCode", 0)
                 except Exception as e:
                     # Check if it's a timeout
+                    # Use remove(force=True) directly instead of stop() to avoid hanging
+                    # on infinite loops - SIGKILL destroys the container instantly
                     if "timeout" in str(e).lower():
-                        container.stop(timeout=5)
                         container.remove(force=True)
                         return SandboxResult(
                             logs=[],
