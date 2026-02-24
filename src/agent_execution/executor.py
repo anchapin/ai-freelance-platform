@@ -23,24 +23,6 @@ from datetime import datetime
 # E2B Code Interpreter SDK (fallback)
 from e2b_code_interpreter import Sandbox
 
-# Import logger for proper logging with rotating files
-# (Must be before any modules that use logging for import warnings)
-from src.utils.logger import get_logger
-logger = get_logger(__name__)
-
-# Docker Sandbox (primary - for cost savings)
-try:
-    from src.agent_execution.docker_sandbox import LocalDockerSandbox, SandboxResult, SandboxArtifact, SandboxLog  # noqa: F401
-    DOCKER_SANDBOX_AVAILABLE = True
-except ImportError:
-    DOCKER_SANDBOX_AVAILABLE = False
-    logger.warning("Docker Sandbox not available, using E2B")
-
-# Configuration: Use Docker sandbox by default if available
-USE_DOCKER_SANDBOX = os.environ.get("USE_DOCKER_SANDBOX", "true").lower() == "true"
-DOCKER_SANDBOX_IMAGE = os.environ.get("DOCKER_SANDBOX_IMAGE", "ai-sandbox-base")
-DOCKER_SANDBOX_TIMEOUT = int(os.environ.get("DOCKER_SANDBOX_TIMEOUT", "120"))
-
 # Import LLM Service for AI-powered code generation
 from src.llm_service import LLMService
 
@@ -50,13 +32,23 @@ from traceloop.sdk.decorators import task
 # Import file parser for different file types
 from src.agent_execution.file_parser import parse_file, FileType, detect_file_type
 
+# Import logger for proper logging with rotating files
+# (Must be before any modules that use logging for import warnings)
+from src.utils.logger import get_logger
+
+# Docker Sandbox (primary - for cost savings)
+try:
+    from src.agent_execution.docker_sandbox import LocalDockerSandbox, SandboxResult, SandboxArtifact, SandboxLog  # noqa: F401
+    DOCKER_SANDBOX_AVAILABLE = True
+except ImportError:
+    DOCKER_SANDBOX_AVAILABLE = False
+
 # Import Experience Vector Database for few-shot learning
 try:
     from src.experience_vector_db import build_few_shot_system_prompt, query_similar_tasks  # noqa: F401
     EXPERIENCE_DB_AVAILABLE = True
 except ImportError:
     EXPERIENCE_DB_AVAILABLE = False
-    logger.warning("Experience Vector Database not available, using zero-shot prompts")
 
 # Import Distillation Data Collector for capturing successful cloud model outputs
 try:
@@ -64,16 +56,33 @@ try:
     DISTILLATION_AVAILABLE = True
 except ImportError:
     DISTILLATION_AVAILABLE = False
-    logger.warning("Distillation module not available, skipping model output capture")
-    
-# Flag to enable/disable distillation capture (can be disabled to save storage)
-ENABLE_DISTILLATION_CAPTURE = os.environ.get("ENABLE_DISTILLATION_CAPTURE", "true").lower() == "true"
 
 # For type hints
 try:
     from pandas import DataFrame
 except ImportError:
     DataFrame = None  # Will be available in sandbox
+
+# Initialize logger after all imports
+logger = get_logger(__name__)
+
+# Log import warnings after logger is initialized
+if not DOCKER_SANDBOX_AVAILABLE:
+    logger.warning("Docker Sandbox not available, using E2B")
+
+if not EXPERIENCE_DB_AVAILABLE:
+    logger.warning("Experience Vector Database not available, using zero-shot prompts")
+
+if not DISTILLATION_AVAILABLE:
+    logger.warning("Distillation module not available, skipping model output capture")
+
+# Configuration: Use Docker sandbox by default if available
+USE_DOCKER_SANDBOX = os.environ.get("USE_DOCKER_SANDBOX", "true").lower() == "true"
+DOCKER_SANDBOX_IMAGE = os.environ.get("DOCKER_SANDBOX_IMAGE", "ai-sandbox-base")
+DOCKER_SANDBOX_TIMEOUT = int(os.environ.get("DOCKER_SANDBOX_TIMEOUT", "120"))
+
+# Flag to enable/disable distillation capture (can be disabled to save storage)
+ENABLE_DISTILLATION_CAPTURE = os.environ.get("ENABLE_DISTILLATION_CAPTURE", "true").lower() == "true"
 
 
 # Maximum number of retry attempts when code fails
@@ -431,7 +440,7 @@ Return ONLY the Python code, no markdown."""
                                     "output_format": output_format,
                                     "message": f"{output_format.upper()} document generated"
                                 }
-                        except:
+                        except Exception:
                             pass
             
             return {
@@ -544,7 +553,7 @@ Return ONLY the Python code, no markdown."""
                                     "output_format": OutputFormat.XLSX,
                                     "message": "Excel spreadsheet generated"
                                 }
-                        except:
+                        except Exception:
                             pass
             
             return {
@@ -1013,7 +1022,7 @@ Return ONLY valid JSON, no markdown formatting, no explanations."""
                                     "message": f"{output_format.upper()} document generated using template",
                                     "generation_method": "template_json"
                                 }
-                        except:
+                        except Exception:
                             pass
             
             return {
@@ -1311,7 +1320,7 @@ Return ONLY Python code, no markdown."""
                                 "document_type": "document",
                                 "message": f"{self.output_format.upper()} document generated"
                             }
-                    except:
+                    except Exception:
                         pass
         
         return {
@@ -1846,7 +1855,7 @@ Return ONLY Python code, no markdown."""
                                 "report_type": report_type,
                                 "message": "Report generated"
                             }
-                    except:
+                    except Exception:
                         pass
         
         return {
@@ -2780,9 +2789,7 @@ def _execute_code_in_e2b(
         error_msg = str(e)
         
         # Detect timeout errors specifically for human escalation (Pillar 1.7)
-        is_timeout = False
         if "Timeout" in error_msg or "timeout" in error_msg.lower():
-            is_timeout = True
             error_type = "TimeoutError"
             error_msg = f"SANDBOX_TIMEOUT: Execution timed out after {sandbox_timeout}s. Complex data analysis with cloud models and retries may exceed 2 minutes. Task escalated to human review (Pillar 1.7)."
         elif "SyntaxError" in error_msg:
@@ -3083,7 +3090,6 @@ def execute_data_visualization(
             effective_file_type = detected.value
     
     # Parse file content if provided (for Excel/PDF)
-    parsed_data = None
     if file_content and effective_file_type != "csv":
         # Parse the file using the file parser
         parsed_result = parse_file(
@@ -3095,7 +3101,6 @@ def execute_data_visualization(
         if parsed_result.get("success"):
             # Use parsed data for visualization
             csv_data = parsed_result.get("data_as_csv", csv_data)
-            parsed_data = parsed_result
     
     # Extract CSV headers from the data
     first_line = csv_data.strip().split('\n')[0]
