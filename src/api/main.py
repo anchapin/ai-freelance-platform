@@ -35,7 +35,9 @@ from ..agent_execution.planning import (
     ResearchAndPlanOrchestrator,
     create_research_plan_workflow,
     ContextExtractor,
-    WorkPlanGenerator
+    WorkPlanGenerator,
+    get_client_preferences_from_tasks,
+    save_client_preferences
 )
 
 
@@ -173,6 +175,16 @@ Support,180"""
                 task.plan_status = "GENERATING"  # Update plan status
                 db.commit()
                 
+                # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Get preferences BEFORE generating work plan
+                client_preferences = None
+                if task.client_email:
+                    print(f"Task {task_id}: Loading client preferences for {task.client_email}")
+                    client_preferences = get_client_preferences_from_tasks(task.client_email)
+                    if client_preferences.get("has_history"):
+                        print(f"Task {task_id}: Found {client_preferences['total_previous_tasks']} previous tasks with preferences")
+                    else:
+                        print(f"Task {task_id}: No previous task history found")
+                
                 # Extract context from files
                 context_extractor = ContextExtractor()
                 extracted_context = context_extractor.extract_context(
@@ -186,12 +198,13 @@ Support,180"""
                 # Store extracted context in task
                 task.extracted_context = extracted_context
                 
-                # Generate work plan
+                # Generate work plan WITH client preferences
                 plan_generator = WorkPlanGenerator()
                 plan_result = plan_generator.create_work_plan(
                     user_request=user_request,
                     domain=task.domain,
-                    extracted_context=extracted_context
+                    extracted_context=extracted_context,
+                    client_preferences=client_preferences  # Pass preferences to avoid review failures
                 )
                 
                 if plan_result.get("success"):
@@ -258,6 +271,20 @@ Support,180"""
                 
                 task.status = TaskStatus.COMPLETED
                 print(f"Task {task_id}: Completed successfully with Research & Plan workflow (output: {output_format})")
+                
+                # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences after task completion
+                if task.client_email and task.review_feedback:
+                    print(f"Task {task_id}: Saving client preferences for future tasks")
+                    save_client_preferences(
+                        client_email=task.client_email,
+                        task_id=task_id,
+                        review_feedback=task.review_feedback,
+                        review_approved=task.review_approved or False,
+                        domain=task.domain,
+                        db_session=db
+                    )
+                else:
+                    print(f"Task {task_id}: No client email or feedback to save preferences")
             else:
                 # Workflow failed - check if should escalate instead of marking as FAILED
                 error_message = workflow_result.get("message", "Workflow failed")
@@ -279,6 +306,18 @@ Support,180"""
                     task.status = TaskStatus.FAILED
                     task.review_feedback = error_message
                     print(f"Task {task_id}: Failed - {error_message}")
+                
+                # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences even on failure
+                if task.client_email and task.review_feedback:
+                    print(f"Task {task_id}: Saving client preferences (from failed task)")
+                    save_client_preferences(
+                        client_email=task.client_email,
+                        task_id=task_id,
+                        review_feedback=task.review_feedback,
+                        review_approved=False,  # Failed task
+                        domain=task.domain,
+                        db_session=db
+                    )
         
         else:
             # =====================================================
@@ -572,7 +611,11 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
                 'task_id': new_task.id,
                 'domain': task.domain,
                 'title': task.title,
-            }
+            },
+            # Inform user that document generation may take up to 10 minutes
+            billing_address_collection='required',
+            shipping_address_collection=None,
+            customer_email=task.client_email,
         )
         
         # Update task with Stripe session ID

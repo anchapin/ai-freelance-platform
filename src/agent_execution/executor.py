@@ -65,6 +65,19 @@ class OutputFormat:
 
 
 # =============================================================================
+# TEMPLATE SYSTEM IMPORTS
+# =============================================================================
+
+# Import template registry for JSON-based document generation
+try:
+    from src.templates import TemplateRegistry
+    TEMPLATES_AVAILABLE = True
+except ImportError:
+    TEMPLATES_AVAILABLE = False
+    print("Warning: Template system not available, using legacy code generation")
+
+
+# =============================================================================
 # TASK ROUTER - Domain and Task Type Detection
 # =============================================================================
 
@@ -348,7 +361,7 @@ Return ONLY the Python code, no markdown."""
             sandbox_timeout = kwargs.get("sandbox_timeout", 120)
             
             success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
-                code_with_csv, e2b_api_key, sandbox_timeout
+                code_with_csv, e2b_api_key, sandbox_timeout, output_format
             )
             
             if success and artifacts:
@@ -461,7 +474,7 @@ Return ONLY the Python code, no markdown."""
             sandbox_timeout = kwargs.get("sandbox_timeout", 120)
             
             success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
-                code_with_csv, e2b_api_key, sandbox_timeout
+                code_with_csv, e2b_api_key, sandbox_timeout, output_format
             )
             
             if success and artifacts:
@@ -650,6 +663,334 @@ The code must:
 5. Print JSON: {'file_path': 'output.xlsx', 'success': True}
 
 Return ONLY Python code, no markdown."""
+    
+    # =========================================================================
+    # NEW: JSON-BASED TEMPLATE GENERATION (Pillar 2.2 Gap)
+    # =========================================================================
+    
+    def _get_json_content_system_prompt(self, domain: str, template_type: str) -> str:
+        """
+        Get system prompt for generating JSON content (instead of Python code).
+        
+        This is the NEW approach for Pillar 2.2 - instead of asking the LLM
+        to write Python code from scratch, we ask it to output structured JSON
+        which is then injected into pre-tested templates.
+        
+        Args:
+            domain: The domain (legal, accounting, data_analysis)
+            template_type: Type of template (legal_contract, financial_summary, base)
+            
+        Returns:
+            System prompt string for JSON generation
+        """
+        if domain.lower() == "legal" or template_type == "legal_contract":
+            return """You are an expert legal document content generator. Your task is to generate
+structured JSON content for a legal document, NOT Python code.
+
+The JSON structure should follow this schema for legal contracts:
+{
+    "title": "Document title (e.g., 'SERVICE AGREEMENT')",
+    "date": "Document date (e.g., 'January 15, 2024')",
+    "parties": [
+        {"name": "Party name", "role": "Party role (e.g., 'Client', 'Provider')", "address": "Address"}
+    ],
+    "preamble": "Introduction text explaining the agreement",
+    "recitals": ["Recital 1", "Recital 2"],  # WHEREAS clauses
+    "definitions": {"term1": "definition1", "term2": "definition2"},
+    "terms": [
+        {"number": 1, "title": "Term title", "content": "Detailed term content"}
+    ],
+    "obligations": [
+        {"party": "Party name", "duties": ["Duty 1", "Duty 2"]}
+    ],
+    "termination": {
+        "conditions": "Termination conditions",
+        "notice_period": "Notice period required",
+        "effects": "Effects of termination"
+    },
+    "confidentiality": {
+        "obligations": "Confidentiality obligations",
+        "duration": "Duration of confidentiality",
+        "exceptions": ["Exception 1", "Exception 2"]
+    },
+    "dispute_resolution": {
+        "method": "Resolution method (e.g., arbitration)",
+        "location": "Location",
+        "governing_law": "Governing law jurisdiction"
+    },
+    "general_provisions": ["Provision 1", "Provision 2"],
+    "signatures": [
+        {"party_name": "Party name", "signatory_name": "Name", "title": "Title", "date": "Date"}
+    ]
+}
+
+Generate ONLY valid JSON, no explanations or markdown. The JSON will be injected into
+a pre-tested Python template that handles all formatting."""
+        
+        elif domain.lower() == "accounting" or template_type == "financial_summary":
+            return """You are an expert financial document content generator. Your task is to generate
+structured JSON content for a financial document, NOT Python code.
+
+The JSON structure should follow this schema for financial summaries:
+{
+    "title": "Report title (e.g., 'Quarterly Financial Summary')",
+    "subtitle": "Subtitle or period covered (e.g., 'Q4 2023')",
+    "executive_summary": "Executive summary text or [\"point1\", \"point2\"]",
+    "key_metrics": {
+        "Total Revenue": "$1,000,000",
+        "Net Profit": "$250,000",
+        "Profit Margin": "25%"
+    },
+    "highlights": [
+        {"title": "Highlight title", "value": "Value", "change": "+10%", "description": "Description"}
+    ],
+    "analysis": [
+        {"title": "Analysis section title", "content": "Analysis text or [\"point1\", \"point2\"]"}
+    ],
+    "tables": [
+        {
+            "title": "Table title",
+            "data": [{"column1": "value1", "column2": "value2"}]
+        }
+    ],
+    "conclusions": ["Conclusion 1", "Conclusion 2"]
+}
+
+Generate ONLY valid JSON, no explanations or markdown. The JSON will be injected into
+a pre-tested Python template that handles all formatting."""
+        
+        # Default (base document)
+        return """You are an expert document content generator. Your task is to generate
+structured JSON content for a document, NOT Python code.
+
+The JSON structure should follow this schema:
+{
+    "title": "Document title",
+    "subtitle": "Document subtitle or date",
+    "sections": [
+        {
+            "heading": "Section heading",
+            "level": 1,
+            "content": "Section content text or [\"point1\", \"point2\"]",
+            "table": [{"column1": "value1", "column2": "value2"}]
+        }
+    ],
+    "data": [{"column1": "value1", "column2": "value2"}]  # Optional raw data
+}
+
+Generate ONLY valid JSON, no explanations or markdown. The JSON will be injected into
+a pre-tested Python template that handles all formatting."""
+    
+    def generate_json_content(
+        self,
+        csv_headers: list,
+        user_request: str,
+        domain: str,
+        template_type: str = "base"
+    ) -> dict:
+        """
+        Generate JSON content for document templates (NEW approach for Pillar 2.2).
+        
+        Instead of generating Python code, this method asks the LLM to generate
+        structured JSON that will be injected into pre-tested templates.
+        
+        Args:
+            csv_headers: List of CSV column headers
+            user_request: The user's request
+            domain: The domain (legal, accounting, data_analysis)
+            template_type: Type of template (legal_contract, financial_summary, base)
+            
+        Returns:
+            Dictionary with JSON content or error
+        """
+        llm = self.llm or LLMService()
+        
+        system_prompt = self._get_json_content_system_prompt(domain, template_type)
+        
+        prompt = f"""CSV Headers: {csv_headers}
+User Request: {user_request}
+Domain: {domain}
+
+Generate the JSON content for this document. The JSON should be appropriate for
+the domain ({domain}) and template type ({template_type}).
+
+Return ONLY valid JSON, no markdown formatting, no explanations."""
+
+        try:
+            result = llm.complete(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=1500,  # Less tokens than generating full Python code
+                system_prompt=system_prompt
+            )
+            
+            content = result["content"].strip()
+            
+            # Extract JSON from response (handle markdown code blocks if present)
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                json_str = json_match.group(0)
+                content_json = json.loads(json_str)
+                return {
+                    "success": True,
+                    "content_json": content_json,
+                    "template_type": template_type
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "Failed to parse JSON from LLM response"
+                }
+                
+        except json.JSONDecodeError as e:
+            return {
+                "success": False,
+                "message": f"JSON parsing error: {str(e)}"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Error generating JSON content: {str(e)}"
+            }
+    
+    def _handle_document_generation_with_template(
+        self,
+        domain: str,
+        user_request: str,
+        csv_data: str,
+        output_format: str = OutputFormat.DOCX,
+        **kwargs
+    ) -> dict:
+        """
+        Handle document generation using JSON templates (NEW approach for Pillar 2.2).
+        
+        Instead of asking the LLM to generate Python code from scratch, this method:
+        1. Asks the LLM to generate structured JSON content
+        2. Injects that JSON into a pre-tested template
+        3. Executes the template in the sandbox
+        
+        This guarantees formatting won't throw Python errors and heavily reduces token usage.
+        
+        Args:
+            domain: The domain
+            user_request: The user's request
+            csv_data: CSV data
+            output_format: Output format (docx or pdf)
+            **kwargs: Additional arguments
+            
+        Returns:
+            Dictionary with document generation results
+        """
+        # Determine template type based on domain
+        if domain.lower() == "legal":
+            template_type = "legal_contract"
+        elif domain.lower() == "accounting":
+            template_type = "financial_summary"
+        else:
+            template_type = "base"
+        
+        # Extract headers
+        first_line = csv_data.strip().split('\n')[0]
+        csv_headers = [h.strip() for h in first_line.split(',')]
+        
+        # Step 1: Generate JSON content (much smaller token usage than Python code)
+        json_result = self.generate_json_content(
+            csv_headers=csv_headers,
+            user_request=user_request,
+            domain=domain,
+            template_type=template_type
+        )
+        
+        if not json_result.get("success"):
+            # Fall back to legacy code generation if JSON fails
+            print(f"JSON generation failed: {json_result.get('message')}, falling back to legacy code generation")
+            return self._handle_document_generation(
+                domain=domain,
+                user_request=user_request,
+                csv_data=csv_data,
+                output_format=output_format,
+                **kwargs
+            )
+        
+        content_json = json_result.get("content_json", {})
+        print(f"Generated JSON content with {len(content_json)} keys for template: {template_type}")
+        
+        # Step 2: Get template code with injected JSON
+        try:
+            if template_type == "legal_contract":
+                from src.templates.legal_contract import get_legal_template_code
+                code = get_legal_template_code(content_json, csv_data, output_format)
+            elif template_type == "financial_summary":
+                from src.templates.financial_summary import get_financial_template_code
+                code = get_financial_template_code(content_json, csv_data, output_format)
+            else:
+                from src.templates.base_document import get_template_code
+                code = get_template_code(content_json, csv_data, output_format)
+        except ImportError as e:
+            print(f"Template import failed: {str(e)}, falling back to legacy code generation")
+            return self._handle_document_generation(
+                domain=domain,
+                user_request=user_request,
+                csv_data=csv_data,
+                output_format=output_format,
+                **kwargs
+            )
+        
+        # Step 3: Execute in sandbox
+        try:
+            e2b_api_key = kwargs.get("api_key") or os.environ.get("E2B_API_KEY")
+            sandbox_timeout = kwargs.get("sandbox_timeout", 120)
+            
+            success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
+                code, e2b_api_key, sandbox_timeout, output_format
+            )
+            
+            if success and artifacts:
+                for artifact in artifacts:
+                    if hasattr(artifact, 'data') and hasattr(artifact, 'name'):
+                        if artifact.name.endswith(f'.{output_format}'):
+                            return {
+                                "success": True,
+                                "file_url": f"data:application/{output_format};base64,{base64.b64encode(artifact.data).decode('utf-8')}",
+                                "file_name": artifact.name,
+                                "output_format": output_format,
+                                "message": f"{output_format.upper()} document generated successfully using template",
+                                "generation_method": "template_json"
+                            }
+            
+            # Check logs for result
+            if success and sandbox_result and sandbox_result.logs:
+                for log in sandbox_result.logs:
+                    if hasattr(log, 'text') and log.text and "{" in log.text:
+                        try:
+                            json_start = log.text.find("{")
+                            json_end = log.text.rfind("}") + 1
+                            result_data = eval(log.text[json_start:json_end])
+                            if result_data.get("success"):
+                                return {
+                                    "success": True,
+                                    "file_url": result_data.get("file_path", ""),
+                                    "output_format": output_format,
+                                    "message": f"{output_format.upper()} document generated using template",
+                                    "generation_method": "template_json"
+                                }
+                        except:
+                            pass
+            
+            return {
+                "success": False,
+                "message": f"Failed to generate {output_format} document with template",
+                "output_format": output_format,
+                "generation_method": "template_json"
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Template document generation error: {str(e)}",
+                "output_format": output_format,
+                "generation_method": "template_json"
+            }
 
 
 def execute_task(
@@ -877,7 +1218,7 @@ Return ONLY Python code, no markdown."""
         
         # Execute in sandbox
         success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
-            code_with_csv, e2b_api_key, sandbox_timeout
+            code_with_csv, e2b_api_key, sandbox_timeout, self.output_format
         )
         
         # Parse result
@@ -1059,7 +1400,7 @@ Return ONLY the Python code, no markdown."""
             sandbox_timeout = kwargs.get("sandbox_timeout", 120)
             
             success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
-                code_with_csv, e2b_api_key, sandbox_timeout
+                code_with_csv, e2b_api_key, sandbox_timeout, "docx"
             )
             
             return self._parse_result(success, sandbox_result, artifacts, "summary")
@@ -1131,7 +1472,7 @@ Return ONLY the Python code, no markdown."""
             sandbox_timeout = kwargs.get("sandbox_timeout", 120)
             
             success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
-                code_with_csv, e2b_api_key, sandbox_timeout
+                code_with_csv, e2b_api_key, sandbox_timeout, "docx"
             )
             
             return self._parse_result(success, sandbox_result, artifacts, "detailed")
@@ -1228,7 +1569,7 @@ Return ONLY the Python code, no markdown."""
             sandbox_timeout = kwargs.get("sandbox_timeout", 120)
             
             success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
-                code_with_csv, e2b_api_key, sandbox_timeout
+                code_with_csv, e2b_api_key, sandbox_timeout, "docx"
             )
             
             return self._parse_result(success, sandbox_result, artifacts, "combined")
@@ -2201,10 +2542,18 @@ print(json.dumps(result))
         }
 
 
+# Sandbox timeout configuration
+# For complex data analysis with cloud models and retries, tasks may take up to 10 minutes
+SANDBOX_TIMEOUT_SECONDS = 600  # 10 minutes max for complex tasks
+DEFAULT_SANDBOX_TIMEOUT = 120  # 2 minutes default for simple tasks
+
+
 def _execute_code_in_sandbox(
     code: str,
     e2b_api_key: Optional[str],
-    sandbox_timeout: int
+    sandbox_timeout: int,
+    output_format: str = "image",
+    is_complex_task: bool = False
 ) -> tuple:
     """
     Execute Python code in the E2B sandbox and return the result.
@@ -2213,25 +2562,48 @@ def _execute_code_in_sandbox(
         code: The Python code to execute
         e2b_api_key: E2B API key
         sandbox_timeout: Timeout in seconds
+        output_format: The required output format (image, docx, pdf, xlsx)
+        is_complex_task: Whether this is a complex task that may need longer timeout
         
     Returns:
         Tuple of (success, result/error_message, logs, artifacts)
     """
+    # For complex tasks (document generation, cloud models), use longer timeout
+    effective_timeout = sandbox_timeout
+    if is_complex_task:
+        effective_timeout = min(sandbox_timeout * 5, SANDBOX_TIMEOUT_SECONDS)  # Up to 10 minutes
+        print(f"Complex task detected, using extended timeout: {effective_timeout}s")
+    
     try:
         with Sandbox(api_key=e2b_api_key) as sandbox:
-            result = sandbox.run_code(code, timeout=sandbox_timeout)
-            return (True, result, None, None)
+            # Pre-install dependencies based on the required output format
+            if output_format == "docx":
+                sandbox.commands.run("pip install python-docx pandas")
+            elif output_format == "pdf":
+                sandbox.commands.run("pip install reportlab pandas")
+            elif output_format == "xlsx":
+                sandbox.commands.run("pip install openpyxl pandas")
+            
+            result = sandbox.run_code(code, timeout=effective_timeout)
+            # Extract artifacts from the result
+            artifacts = result.artifacts if hasattr(result, 'artifacts') else None
+            return (True, result, None, artifacts)
     except Exception as e:
         error_msg = str(e)
-        # Extract error type if possible
-        if "SyntaxError" in error_msg:
+        
+        # Detect timeout errors specifically for human escalation (Pillar 1.7)
+        # Sandbox execution can exceed 2 minutes for complex data analysis with cloud models and retries
+        is_timeout = False
+        if "Timeout" in error_msg or "timeout" in error_msg.lower():
+            is_timeout = True
+            error_type = "TimeoutError"
+            error_msg = f"SANDBOX_TIMEOUT: Execution timed out after {effective_timeout}s. Complex data analysis with cloud models and retries may exceed 2 minutes. Task escalated to human review (Pillar 1.7)."
+        elif "SyntaxError" in error_msg:
             error_type = "SyntaxError"
         elif "NameError" in error_msg:
             error_type = "NameError"
         elif "ImportError" in error_msg or "ModuleNotFoundError" in error_msg:
             error_type = "ImportError"
-        elif "Timeout" in error_msg:
-            error_type = "TimeoutError"
         elif "IndexError" in error_msg:
             error_type = "IndexError"
         elif "KeyError" in error_msg:
@@ -2241,6 +2613,8 @@ def _execute_code_in_sandbox(
         else:
             error_type = "ExecutionError"
         
+        # Return error message with timeout indicator embedded (for escalation handling)
+        # Format: "TimeoutError: SANDBOX_TIMEOUT: ..." to allow callers to detect timeout
         return (False, f"{error_type}: {error_msg}", None, None)
 
 

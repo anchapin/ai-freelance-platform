@@ -11,6 +11,12 @@ The workflow ensures professional-grade output by:
 - First understanding the input data/context
 - Creating a detailed plan before execution
 - Validating the output against the plan
+
+CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap):
+- This module also handles Client Preference Memory
+- Queries previous Task records for client_email to get review_feedback
+- Extracts preferences like "Blue charts", "Times New Roman font"
+- Passes preferences to WorkPlanGenerator to avoid ArtifactReviewer failures
 """
 
 import json
@@ -20,6 +26,332 @@ from datetime import datetime
 
 from src.llm_service import LLMService, TASK_TYPE_BASIC_ADMIN, TASK_TYPE_COMPLEX
 from src.agent_execution.file_parser import parse_file, FileType, detect_file_type
+
+
+# =============================================================================
+# CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap)
+# =============================================================================
+
+
+def get_client_preferences_from_tasks(client_email: str, db_session=None) -> Dict[str, Any]:
+    """
+    Query the Task table for previous review_feedback from the same client_email.
+    
+    This is the core function for Client Preference Memory (Pillar 2.5 Gap).
+    It extracts preferences from past review feedback to help the agent
+    avoid failing ArtifactReviewer step.
+    
+    Cost Savings:
+    - If agent knows preferences upfront, it avoids failing ArtifactReviewer
+    - Saves an entire LLM retry cycle and reduces token costs
+    
+    Args:
+        client_email: The client's email address
+        db_session: Optional database session. If not provided, creates one.
+    
+    Returns:
+        Dictionary containing extracted client preferences
+    """
+    preferences = {
+        "has_history": False,
+        "preferred_colors": [],
+        "preferred_fonts": [],
+        "preferred_chart_types": [],
+        "preferred_output_formats": [],
+        "style_preferences": {},
+        "past_feedback": [],
+        "total_previous_tasks": 0,
+        "successful_tasks": 0,
+        "failed_tasks": 0,
+        "preferences_summary": ""
+    }
+    
+    # Avoid querying if no email provided
+    if not client_email:
+        return preferences
+    
+    # Import here to avoid circular imports
+    try:
+        from sqlalchemy.orm import Session
+        from src.api.database import SessionLocal
+        from src.api.models import Task, TaskStatus
+        
+        # Use provided session or create a new one
+        should_close_session = False
+        if db_session is None:
+            db_session = SessionLocal()
+            should_close_session = True
+        
+        try:
+            # Query all completed/failed tasks for this client with review feedback
+            past_tasks = db_session.query(Task).filter(
+                Task.client_email == client_email,
+                Task.review_feedback.isnot(None),
+                Task.review_feedback != ""
+            ).order_by(Task.created_at.desc()).limit(20).all()
+            
+            preferences["total_previous_tasks"] = len(past_tasks)
+            
+            if not past_tasks:
+                return preferences
+            
+            preferences["has_history"] = True
+            
+            # Extract preferences from each task's review feedback
+            for task in past_tasks:
+                feedback = task.review_feedback
+                if feedback:
+                    preferences["past_feedback"].append({
+                        "task_id": task.id,
+                        "domain": task.domain,
+                        "feedback": feedback,
+                        "approved": task.review_approved,
+                        "created_at": task.created_at.isoformat() if task.created_at else None
+                    })
+                    
+                    # Count success/failure
+                    if task.review_approved:
+                        preferences["successful_tasks"] += 1
+                    else:
+                        preferences["failed_tasks"] += 1
+                    
+                    # Extract specific preferences from feedback text
+                    extracted = _extract_preferences_from_feedback(feedback)
+                    _merge_preferences(preferences, extracted)
+            
+            # Generate summary for LLM prompts
+            preferences["preferences_summary"] = _generate_preferences_summary(preferences)
+            
+        finally:
+            if should_close_session:
+                db_session.close()
+                
+    except Exception as e:
+        print(f"Error getting client preferences: {e}")
+    
+    return preferences
+
+
+def _extract_preferences_from_feedback(feedback: str) -> Dict[str, Any]:
+    """
+    Extract specific preferences from review feedback text.
+    
+    Args:
+        feedback: The review feedback text
+    
+    Returns:
+        Dictionary of extracted preferences
+    """
+    extracted = {
+        "preferred_colors": [],
+        "preferred_fonts": [],
+        "preferred_chart_types": [],
+        "preferred_output_formats": [],
+        "style_preferences": {}
+    }
+    
+    feedback_lower = feedback.lower()
+    
+    # Color preferences
+    colors = ["blue", "red", "green", "yellow", "orange", "purple", "pink", "black", 
+              "white", "gray", "grey", "brown", "cyan", "magenta", "navy", "teal"]
+    for color in colors:
+        if color in feedback_lower:
+            extracted["preferred_colors"].append(color)
+    
+    # Font preferences
+    fonts = ["times new roman", "arial", "helvetica", "calibri", "verdana", 
+             "georgia", "courier", "consolas", "tahoma", "trebuchet", "impact"]
+    for font in fonts:
+        if font in feedback_lower:
+            extracted["preferred_fonts"].append(font)
+    
+    # Chart type preferences
+    chart_types = ["bar", "line", "pie", "scatter", "histogram", "area", "radar", "bubble"]
+    for chart in chart_types:
+        if chart in feedback_lower:
+            extracted["preferred_chart_types"].append(chart)
+    
+    # Output format preferences
+    formats = ["image", "docx", "pdf", "xlsx", "excel", "spreadsheet", "document"]
+    for fmt in formats:
+        if fmt in feedback_lower:
+            if fmt == "excel" or fmt == "spreadsheet":
+                extracted["preferred_output_formats"].append("xlsx")
+            elif fmt == "document":
+                extracted["preferred_output_formats"].append("docx")
+            else:
+                extracted["preferred_output_formats"].append(fmt)
+    
+    # Style preferences
+    style_keywords = {
+        "formal": ["formal", "professional", "business"],
+        "detailed": ["detailed", "comprehensive", "thorough"],
+        "simple": ["simple", "minimal", "clean", "minimalist"],
+        "colorful": ["colorful", "vibrant", "bright"],
+        "dark": ["dark", "dark mode", "night"],
+        "modern": ["modern", "contemporary", "sleek"],
+        "classic": ["classic", "traditional", "traditional"]
+    }
+    
+    for style, keywords in style_keywords.items():
+        for keyword in keywords:
+            if keyword in feedback_lower:
+                extracted["style_preferences"][style] = True
+                break
+    
+    return extracted
+
+
+def _merge_preferences(target: Dict[str, Any], source: Dict[str, Any]):
+    """Merge extracted preferences into target, avoiding duplicates."""
+    for key in ["preferred_colors", "preferred_fonts", "preferred_chart_types", "preferred_output_formats"]:
+        if source.get(key):
+            existing = set(target.get(key, []))
+            existing.update(source[key])
+            target[key] = list(existing)
+    
+    # Merge style preferences
+    if source.get("style_preferences"):
+        target["style_preferences"].update(source["style_preferences"])
+
+
+def _generate_preferences_summary(preferences: Dict[str, Any]) -> str:
+    """Generate a human-readable summary of preferences for LLM prompts."""
+    parts = []
+    
+    if preferences.get("preferred_colors"):
+        parts.append(f"Colors: {', '.join(preferences['preferred_colors'])}")
+    
+    if preferences.get("preferred_fonts"):
+        parts.append(f"Fonts: {', '.join(preferences['preferred_fonts'])}")
+    
+    if preferences.get("preferred_chart_types"):
+        parts.append(f"Chart types: {', '.join(preferences['preferred_chart_types'])}")
+    
+    if preferences.get("preferred_output_formats"):
+        parts.append(f"Output formats: {', '.join(preferences['preferred_output_formats'])}")
+    
+    style = preferences.get("style_preferences", {})
+    if style:
+        style_list = [k for k, v in style.items() if v]
+        if style_list:
+            parts.append(f"Style: {', '.join(style_list)}")
+    
+    if parts:
+        return "Client preferences from past tasks: " + " | ".join(parts) + f" ({preferences['successful_tasks']}/{preferences['total_previous_tasks']} tasks successful)"
+    
+    return "No preferences recorded yet"
+
+
+def save_client_preferences(
+    client_email: str,
+    task_id: str,
+    review_feedback: str,
+    review_approved: bool,
+    domain: str,
+    db_session=None
+):
+    """
+    Save or update client preferences based on task review feedback.
+    
+    This function is called after each task is processed to store
+    the client's preferences for future tasks.
+    
+    Args:
+        client_email: The client's email address
+        task_id: The task ID
+        review_feedback: The review feedback from ArtifactReviewer
+        review_approved: Whether the artifact was approved
+        domain: The task domain
+        db_session: Optional database session
+    """
+    if not client_email:
+        return
+    
+    try:
+        from sqlalchemy.orm import Session
+        from src.api.database import SessionLocal
+        from src.api.models import ClientProfile
+        
+        should_close_session = False
+        if db_session is None:
+            db_session = SessionLocal()
+            should_close_session = True
+        
+        try:
+            # Get or create client profile
+            profile = db_session.query(ClientProfile).filter(
+                ClientProfile.client_email == client_email
+            ).first()
+            
+            if not profile:
+                profile = ClientProfile(client_email=client_email)
+                db_session.add(profile)
+            
+            # Update statistics
+            profile.total_tasks = (profile.total_tasks or 0) + 1
+            if review_approved:
+                profile.completed_tasks = (profile.completed_tasks or 0) + 1
+            else:
+                profile.failed_tasks = (profile.failed_tasks or 0) + 1
+            
+            profile.last_task_at = datetime.utcnow()
+            
+            # Extract and update preferences from feedback
+            extracted = _extract_preferences_from_feedback(review_feedback)
+            
+            # Merge colors
+            if extracted.get("preferred_colors"):
+                existing_colors = set(profile.preferred_colors or [])
+                existing_colors.update(extracted["preferred_colors"])
+                profile.preferred_colors = list(existing_colors)
+            
+            # Merge fonts
+            if extracted.get("preferred_fonts"):
+                existing_fonts = set(profile.preferred_fonts or [])
+                existing_fonts.update(extracted["preferred_fonts"])
+                profile.preferred_fonts = list(existing_fonts)
+            
+            # Merge chart types
+            if extracted.get("preferred_chart_types"):
+                existing_charts = set(profile.preferred_chart_types or [])
+                existing_charts.update(extracted["preferred_chart_types"])
+                profile.preferred_chart_types = list(existing_charts)
+            
+            # Merge output formats
+            if extracted.get("preferred_output_formats"):
+                existing_formats = set(profile.preferred_output_formats or [])
+                existing_formats.update(extracted["preferred_output_formats"])
+                profile.preferred_output_formats = list(existing_formats)
+            
+            # Update style preferences
+            if extracted.get("style_preferences"):
+                current_style = profile.style_preferences or {}
+                current_style.update(extracted["style_preferences"])
+                profile.style_preferences = current_style
+            
+            # Update feedback history
+            history = profile.feedback_history or []
+            history.append({
+                "task_id": task_id,
+                "domain": domain,
+                "feedback": review_feedback,
+                "approved": review_approved,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            # Keep only last 20 feedback entries
+            profile.feedback_history = history[-20:]
+            
+            db_session.commit()
+            print(f"Updated client preferences for {client_email}")
+            
+        finally:
+            if should_close_session:
+                db_session.close()
+                
+    except Exception as e:
+        print(f"Error saving client preferences: {e}")
 
 
 class ContextExtractor:
@@ -209,6 +541,10 @@ class WorkPlanGenerator:
     - Specific steps to execute
     - Success criteria
     - Potential challenges and mitigations
+    
+    Client Preference Memory Integration:
+    - If client_preferences provided, includes them in the prompt
+    - Helps avoid ArtifactReviewer failures by incorporating known preferences
     """
     
     def __init__(self, llm_service: Optional[LLMService] = None):
@@ -226,7 +562,8 @@ class WorkPlanGenerator:
         domain: str,
         extracted_context: Dict[str, Any],
         task_type: Optional[str] = None,
-        output_format: Optional[str] = None
+        output_format: Optional[str] = None,
+        client_preferences: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Create a comprehensive work plan based on context and requirements.
@@ -237,12 +574,25 @@ class WorkPlanGenerator:
             extracted_context: Context extracted from uploaded files
             task_type: Optional task type (visualization, document, spreadsheet)
             output_format: Optional output format (image, docx, xlsx, pdf)
+            client_preferences: Optional client preferences from past tasks
             
         Returns:
             Dictionary containing the work plan
         """
         # Build context summary for the prompt
         context_summary = self._build_context_summary(extracted_context)
+        
+        # Build client preferences section (Pillar 2.5 Gap)
+        preferences_instruction = ""
+        if client_preferences and client_preferences.get("has_history"):
+            prefs_summary = client_preferences.get("preferences_summary", "")
+            if prefs_summary:
+                preferences_instruction = f"""
+\n\nIMPORTANT - CLIENT PREFERENCES (from past tasks):
+{prefs_summary}
+
+When creating the work plan, MUST incorporate these preferences to avoid 
+failing the ArtifactReviewer step. This saves expensive retry cycles."""
         
         system_prompt = f"""You are an expert project planner for {domain} tasks.
 Create a detailed work plan for fulfilling the user's request.
@@ -253,6 +603,7 @@ The work plan must include:
 3. **Execution Steps**: Numbered steps to execute
 4. **Success Criteria**: How to verify the output is correct
 5. **Potential Issues**: What could go wrong and how to handle them
+6. **Style & Formatting**: Follow any client preferences specified{preferences_instruction}
 
 Return ONLY a JSON object with this structure (no markdown, no explanation):
 {{
@@ -263,13 +614,21 @@ Return ONLY a JSON object with this structure (no markdown, no explanation):
     "success_criteria": ["Criterion 1", "Criterion 2"],
     "potential_issues": ["Issue 1: How to handle"],
     "recommended_chart_type": "bar|line|pie|scatter|table|document" or null,
-    "output_format": "image|docx|xlsx|pdf" or null
+    "output_format": "image|docx|xlsx|pdf" or null,
+    "style_requirements": "Specific style requirements to follow" or null
 }}"""
+
+        # Add client preferences to prompt if available
+        preferences_section = ""
+        if client_preferences and client_preferences.get("has_history"):
+            prefs_summary = client_preferences.get("preferences_summary", "")
+            if prefs_summary:
+                preferences_section = f"\n\nClient Preferences (MUST follow to avoid review failures):\n{prefs_summary}"
 
         prompt = f"""User Request: {user_request}
 Domain: {domain}
 Task Type: {task_type or 'auto-detect'}
-Output Format: {output_format or 'auto-detect'}
+Output Format: {output_format or 'auto-detect'}{preferences_section}
 
 Input Data Context:
 {context_summary}

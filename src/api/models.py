@@ -35,6 +35,88 @@ class PlanStatus(PyEnum):
     REJECTED = "REJECTED"
 
 
+class ClientProfile(Base):
+    """
+    Client Preference Memory (Pillar 2.5 Gap)
+    
+    Stores client preferences extracted from previous review feedback.
+    This allows the agent to remember preferences like "Blue charts" or
+    "Times New Roman font" to avoid failing ArtifactReviewer step.
+    
+    Cost Savings:
+    - If agent knows preferences upfront, it avoids failing ArtifactReviewer
+    - Saves an entire LLM retry cycle and reduces token costs
+    """
+    __tablename__ = "client_profiles"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    client_email = Column(String, nullable=False, index=True)  # Client email (indexed for fast lookups)
+    
+    # Extracted preferences from previous tasks
+    preferred_colors = Column(JSON, nullable=True)  # e.g., ["blue", "green"]
+    preferred_fonts = Column(JSON, nullable=True)  # e.g., ["Times New Roman", "Arial"]
+    preferred_chart_types = Column(JSON, nullable=True)  # e.g., ["bar", "line"]
+    preferred_output_formats = Column(JSON, nullable=True)  # e.g., ["image", "docx"]
+    
+    # General preferences (style, tone, formatting)
+    style_preferences = Column(JSON, nullable=True)  # e.g., {"formal": true, "detailed": false}
+    domain_specific_preferences = Column(JSON, nullable=True)  # Domain-specific preferences
+    
+    # Feedback history (raw feedback for reference)
+    feedback_history = Column(JSON, nullable=True)  # List of past review feedback
+    
+    # Statistics
+    total_tasks = Column(Integer, default=0)
+    completed_tasks = Column(Integer, default=0)
+    failed_tasks = Column(Integer, default=0)
+    average_rating = Column(Integer, nullable=True)  # 1-5 rating if available
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_task_at = Column(DateTime, nullable=True)  # When the last task was completed
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_email": self.client_email,
+            "preferred_colors": self.preferred_colors,
+            "preferred_fonts": self.preferred_fonts,
+            "preferred_chart_types": self.preferred_chart_types,
+            "preferred_output_formats": self.preferred_output_formats,
+            "style_preferences": self.style_preferences,
+            "domain_specific_preferences": self.domain_specific_preferences,
+            "feedback_history": self.feedback_history,
+            "total_tasks": self.total_tasks,
+            "completed_tasks": self.completed_tasks,
+            "failed_tasks": self.failed_tasks,
+            "average_rating": self.average_rating,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "last_task_at": self.last_task_at.isoformat() if self.last_task_at else None,
+        }
+    
+    def get_preferences_summary(self) -> str:
+        """Get a human-readable summary of preferences for LLM prompts."""
+        parts = []
+        
+        if self.preferred_colors:
+            parts.append(f"Preferred colors: {', '.join(self.preferred_colors)}")
+        if self.preferred_fonts:
+            parts.append(f"Preferred fonts: {', '.join(self.preferred_fonts)}")
+        if self.preferred_chart_types:
+            parts.append(f"Preferred chart types: {', '.join(self.preferred_chart_types)}")
+        if self.preferred_output_formats:
+            parts.append(f"Preferred output formats: {', '.join(self.preferred_output_formats)}")
+        
+        if self.style_preferences:
+            for key, value in self.style_preferences.items():
+                if value:
+                    parts.append(f"Style: {key}")
+        
+        return " | ".join(parts) if parts else "No preferences recorded"
+
+
 class Task(Base):
     __tablename__ = "tasks"
 

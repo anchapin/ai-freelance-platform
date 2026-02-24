@@ -265,6 +265,20 @@ function TaskSubmissionForm() {
           </div>
         )}
 
+        {/* Document generation time notice */}
+        <div className="generation-notice" style={{ 
+          marginTop: '1rem', 
+          padding: '0.75rem', 
+          backgroundColor: '#f0f9ff', 
+          border: '1px solid #bae6fd',
+          borderRadius: '6px',
+          fontSize: '0.875rem',
+          color: '#0369a1'
+        }}>
+          ⏱️ <strong>Note:</strong> Documents may take up to <strong>10 minutes</strong> to generate 
+          for complex data analysis with cloud models and retries. You'll receive an email when your result is ready.
+        </div>
+
         {error && <div className="error-message">{error}</div>}
 
         <button type="submit" disabled={loading || !estimatedPrice}>
