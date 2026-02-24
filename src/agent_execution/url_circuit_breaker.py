@@ -7,7 +7,7 @@ Issue #4: Fix async Playwright resource leaks in market scanner
 """
 
 import time
-from typing import Dict, Set, Optional
+from typing import Dict, Optional
 from dataclasses import dataclass
 
 from src.utils.logger import get_logger

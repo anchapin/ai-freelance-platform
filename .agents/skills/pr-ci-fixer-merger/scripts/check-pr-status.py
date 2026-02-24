@@ -9,7 +9,6 @@ import subprocess
 import json
 import sys
 from typing import Dict, List, Any
-from datetime import datetime
 
 def run_command(cmd: str, check=True) -> str:
     """Run a shell command and return output."""

@@ -832,7 +832,6 @@ async def run_continuous_scan(
 # =============================================================================
 
 if __name__ == "__main__":
-    import sys
     
     async def main():
         """Main entry point for testing."""
@@ -844,14 +843,14 @@ if __name__ == "__main__":
         print("\nRunning market scan...")
         result = await run_single_scan(max_posts=5)
         
-        print(f"\nScan Result:")
+        print("\nScan Result:")
         print(f"  Success: {result.get('success')}")
         print(f"  Message: {result.get('message')}")
         print(f"  Postings Found: {result.get('postings_count', 0)}")
         print(f"  Suitable Jobs: {result.get('suitable_count', 0)}")
         
         if result.get('suitable_jobs'):
-            print(f"\nSuitable Jobs:")
+            print("\nSuitable Jobs:")
             for i, job in enumerate(result['suitable_jobs'], 1):
                 print(f"\n  {i}. {job['posting']['title']}")
                 print(f"     Bid: ${job['evaluation']['bid_amount']}")

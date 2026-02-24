@@ -13,8 +13,7 @@ Coverage:
 
 import pytest
 import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
-from datetime import datetime, timedelta
+from unittest.mock import MagicMock, AsyncMock
 
 from src.async_rag_service import (
     AsyncRAGService,
@@ -24,9 +23,7 @@ from src.async_rag_service import (
 )
 from src.background_job_queue import (
     BackgroundJobQueue,
-    Job,
     JobStatus,
-    get_background_job_queue,
 )
 from src.experience_vector_db import FewShotExample
 

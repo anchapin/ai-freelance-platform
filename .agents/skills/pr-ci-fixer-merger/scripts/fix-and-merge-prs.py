@@ -14,8 +14,7 @@ import json
 import sys
 import time
 import argparse
-from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime
+from typing import Dict, List, Any, Tuple
 
 class PRManager:
     """Manage PR CI fixing and merging."""
@@ -153,13 +152,13 @@ class PRManager:
         # Commit
         _, code = self.run_command(f"git add -A && git commit -m '{message}'")
         if code != 0:
-            print(f"❌ Commit failed (nothing to commit?)")
+            print("❌ Commit failed (nothing to commit?)")
             return False
         
         # Push
         _, code = self.run_command(f"git push origin {branch}")
         if code != 0:
-            print(f"❌ Push failed")
+            print("❌ Push failed")
             return False
         
         print(f"✅ Committed and pushed: {message}")
@@ -186,7 +185,7 @@ class PRManager:
             print(f"❌ Failures: {failing}")
             
             # Attempt automatic fixes
-            print(f"Applying fixes...")
+            print("Applying fixes...")
             
             # Run tests to see output
             _, _ = self.run_command("pytest tests/ -xvs 2>&1 | head -100")
@@ -195,8 +194,8 @@ class PRManager:
             _, _ = self.run_command("ruff check src/ 2>&1 | head -50")
             
             # For now, we need user intervention for specific fixes
-            print(f"\n⚠️  Automatic fix attempted. Please review the output above.")
-            print(f"If you see specific errors, run: pytest -xvs to see full output")
+            print("\n⚠️  Automatic fix attempted. Please review the output above.")
+            print("If you see specific errors, run: pytest -xvs to see full output")
             
             return False
         
@@ -210,7 +209,7 @@ class PRManager:
         # Verify CI passing
         passing, _ = self.get_pr_ci_status(pr_number)
         if not passing:
-            print(f"❌ Cannot merge: CI not passing")
+            print("❌ Cannot merge: CI not passing")
             return False
         
         # Merge
@@ -239,25 +238,25 @@ class PRManager:
             return False
         
         # Try to rebase on main
-        _, code = self.run_command(f"git fetch origin main")
+        _, code = self.run_command("git fetch origin main")
         if code != 0:
             return False
         
-        _, code = self.run_command(f"git rebase origin/main")
+        _, code = self.run_command("git rebase origin/main")
         
         if code != 0:
             # Rebase has conflicts
-            print(f"❌ Merge conflicts detected - manual resolution needed")
+            print("❌ Merge conflicts detected - manual resolution needed")
             return False
         
         # Push resolved version
         _, code = self.run_command(f"git push origin {branch} --force-with-lease")
         
         if code == 0:
-            print(f"✅ Conflicts resolved and pushed")
+            print("✅ Conflicts resolved and pushed")
             return True
         else:
-            print(f"❌ Push failed")
+            print("❌ Push failed")
             return False
     
     def fix_all_prs(self):

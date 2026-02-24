@@ -13,15 +13,13 @@ Critical: Ensuring correct state transitions prevents workflow errors
 and ensures tasks are processed correctly.
 """
 
-import pytest
 import sys
 import os
-from datetime import datetime
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from src.api.models import TaskStatus, ReviewStatus, PlanStatus, ArenaCompetitionStatus
+from src.api.models import TaskStatus
 
 
 class TestTaskStatusValues:

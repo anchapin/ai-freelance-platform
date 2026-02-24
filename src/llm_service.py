@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 import os
 import time
 import random
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 # Load environment variables from .env file
 # Create a .env file in your project root with the following variables:
@@ -615,7 +615,7 @@ class LLMService:
                     result["fallback_used"] = True
                     result["original_error"] = str(cloud_error)
                     return result
-                except Exception as local_error:
+                except Exception:
                     # Both failed, raise the original cloud error
                     raise cloud_error
             

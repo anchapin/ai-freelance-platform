@@ -2,7 +2,6 @@ import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
 from sqlalchemy import Column, String, Text, Integer, Enum, DateTime, Boolean, JSON, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()

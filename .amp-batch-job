@@ -1,0 +1,28 @@
+issues:
+  - identifier: "8"
+    title: "Implement distributed lock and deduplication for marketplace bids"
+    branch: "feature/distributed-lock-dedup"
+    worktree: "main-issue-8"
+    status: "pending"
+    
+  - identifier: "6"
+    title: "Decouple Experience Vector Database from task execution flow"
+    branch: "feature/vector-db-decouple"
+    worktree: "main-issue-6"
+    status: "pending"
+    
+  - identifier: "5"
+    title: "Refactor overloaded Task model using composition pattern"
+    branch: "feature/task-composition"
+    worktree: "main-issue-5"
+    status: "pending"
+    
+  - identifier: "4"
+    title: "Fix async Playwright resource leaks in market scanner"
+    branch: "feature/playwright-resource-leak"
+    worktree: "main-issue-4"
+    status: "pending"
+
+strategy: "individual"
+base_branch: "main"
+started_at: "2025-02-24T10:30:00Z"
