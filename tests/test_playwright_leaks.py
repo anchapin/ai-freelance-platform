@@ -260,7 +260,3 @@ class TestPlaywrightPatterns:
             assert elapsed > 0.1
         
         asyncio.run(run_test())
-
-
-        if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
