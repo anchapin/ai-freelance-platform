@@ -6,6 +6,7 @@ import os
 import uuid
 import json
 import secrets
+import time as _time
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -94,8 +95,6 @@ DELIVERY_LOCKOUT_SECONDS = int(os.environ.get("DELIVERY_LOCKOUT_SECONDS", "3600"
 
 # In-memory rate limiter: { task_id: (fail_count, first_fail_timestamp) }
 _delivery_rate_limits: dict[str, tuple[int, float]] = {}
-
-import time as _time
 
 
 def _check_delivery_rate_limit(task_id: str) -> bool:
