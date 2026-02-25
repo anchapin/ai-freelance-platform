@@ -13,9 +13,8 @@ Verifies:
 
 import secrets
 import time
-import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock
 
 from starlette.testclient import TestClient
 
@@ -29,7 +28,7 @@ from src.api.main import (
     DELIVERY_TOKEN_TTL_HOURS,
 )
 from src.api.database import get_db
-from src.api.models import Task, TaskStatus
+from src.api.models import TaskStatus
 
 
 # Helper to override get_db dependency
