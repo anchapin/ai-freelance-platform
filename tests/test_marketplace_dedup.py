@@ -18,64 +18,17 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from src.agent_execution.bid_lock_manager import (
     BidLockManager,
-    BidLock,
 )
 from src.agent_execution.bid_deduplication import (
     should_bid,
     mark_bid_withdrawn,
 )
-from src.api.models import Bid, BidStatus
-
-
-class TestBidLock:
-    """Tests for BidLock dataclass."""
-    
-    def test_bid_lock_creation(self):
-        """Test creating a BidLock instance."""
-        import time
-        now = time.time()
-        lock = BidLock(
-            marketplace_id="upwork",
-            posting_id="posting_123",
-            acquired_at=now,
-            ttl=300,
-            holder_id="test_holder"
-        )
-        
-        assert lock.marketplace_id == "upwork"
-        assert lock.posting_id == "posting_123"
-        assert lock.ttl == 300
-        assert lock.holder_id == "test_holder"
-    
-    def test_bid_lock_not_expired_immediately(self):
-        """Test that a lock is not expired immediately after creation."""
-        import time
-        lock = BidLock(
-            marketplace_id="upwork",
-            posting_id="posting_123",
-            acquired_at=time.time(),
-            ttl=300,
-            holder_id="test_holder"
-        )
-        
-        assert not lock.is_expired()
-    
-    def test_bid_lock_remaining_ttl(self):
-        """Test remaining TTL calculation."""
-        import time
-        now = time.time()
-        lock = BidLock(
-            marketplace_id="upwork",
-            posting_id="posting_123",
-            acquired_at=now,
-            ttl=300,
-            holder_id="test_holder"
-        )
-        
-        remaining = lock.remaining_ttl()
-        assert 290 < remaining <= 300
+from src.api.models import Base, Bid, BidStatus
 
 
 class TestBidLockManager:
@@ -83,8 +36,13 @@ class TestBidLockManager:
     
     @pytest.fixture
     def manager(self):
-        """Create a fresh BidLockManager for each test."""
-        return BidLockManager(ttl=300)
+        """Create a BidLockManager backed by an in-memory DB."""
+        engine = create_engine("sqlite:///:memory:", echo=False)
+        Base.metadata.create_all(bind=engine)
+        Session = sessionmaker(bind=engine)
+        mgr = BidLockManager(ttl=300)
+        mgr._get_db = lambda: Session()
+        return mgr
     
     @pytest.mark.asyncio
     async def test_lock_acquire_and_release(self, manager):
@@ -153,7 +111,12 @@ class TestBidLockManager:
     @pytest.mark.asyncio
     async def test_lock_expiration(self, manager):
         """Test that expired locks can be reacquired."""
+        # Use manager's DB session factory for the short-TTL instance
+        engine = create_engine("sqlite:///:memory:", echo=False)
+        Base.metadata.create_all(bind=engine)
+        Session = sessionmaker(bind=engine)
         manager_short_ttl = BidLockManager(ttl=1)  # 1 second TTL
+        manager_short_ttl._get_db = lambda: Session()
         
         # Acquire lock
         acquired1 = await manager_short_ttl.acquire_lock("upwork", "job_123")
@@ -185,12 +148,16 @@ class TestBidLockManager:
     @pytest.mark.asyncio
     async def test_cleanup_expired_locks(self, manager):
         """Test cleanup of expired locks."""
+        engine = create_engine("sqlite:///:memory:", echo=False)
+        Base.metadata.create_all(bind=engine)
+        Session = sessionmaker(bind=engine)
         manager_short_ttl = BidLockManager(ttl=1)
+        manager_short_ttl._get_db = lambda: Session()
         
         # Acquire multiple locks
         await manager_short_ttl.acquire_lock("upwork", "job_1")
         await manager_short_ttl.acquire_lock("upwork", "job_2")
-        assert manager_short_ttl._locks.__len__() == 2
+        assert manager_short_ttl.get_metrics()["active_locks"] == 2
         
         # Wait for expiration
         await asyncio.sleep(1.1)
@@ -198,8 +165,8 @@ class TestBidLockManager:
         # Trigger cleanup by attempting acquisition
         await manager_short_ttl.acquire_lock("upwork", "job_3")
         
-        # Old locks should be cleaned up
-        assert manager_short_ttl._locks.__len__() == 1
+        # Old locks should be cleaned up, only job_3 remains
+        assert manager_short_ttl.get_metrics()["active_locks"] == 1
 
 
 class TestBidDeduplication:
@@ -261,10 +228,19 @@ class TestBidDeduplication:
 class TestConcurrentBidScenarios:
     """Tests for concurrent bid scenarios."""
     
+    def _make_db_manager(self, ttl=300):
+        """Create a BidLockManager with an in-memory DB."""
+        engine = create_engine("sqlite:///:memory:", echo=False)
+        Base.metadata.create_all(bind=engine)
+        Session = sessionmaker(bind=engine)
+        mgr = BidLockManager(ttl=ttl)
+        mgr._get_db = lambda: Session()
+        return mgr
+    
     def test_100_concurrent_bids_different_postings(self):
         """Test 100 concurrent bids on different postings."""
         async def run_test():
-            manager = BidLockManager(ttl=300)
+            manager = self._make_db_manager()
             
             async def bid_on_posting(posting_id):
                 async with manager.with_lock("upwork", f"job_{posting_id}"):
@@ -283,7 +259,7 @@ class TestConcurrentBidScenarios:
     def test_race_condition_same_posting(self):
         """Test race condition: multiple concurrent bids on same posting."""
         async def run_test():
-            manager = BidLockManager(ttl=300)
+            manager = self._make_db_manager()
             successful_bids = []
             failed_bids = []
             
