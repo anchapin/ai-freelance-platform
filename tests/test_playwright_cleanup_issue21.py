@@ -69,7 +69,6 @@ class TestMarketScannerResourceCleanup:
     @pytest.mark.asyncio
     async def test_market_scanner_exception_during_context(self):
         """Test that cleanup happens even when exception occurs in context."""
-        scanner = None
         exception_raised = False
         
         try:
