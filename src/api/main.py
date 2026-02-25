@@ -31,6 +31,9 @@ from .models import (
     ArenaCompetitionStatus,
     EscalationLog,
 )
+
+# Import configuration validation (Issue #27)
+from ..config import validate_critical_env_vars, get_config
 from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
 
@@ -308,7 +311,18 @@ def _sanitize_string(value: str, max_length: int = 500) -> str:
 
 # High-value threshold for profit protection (in dollars)
 # Tasks with amount_paid >= HIGH_VALUE_THRESHOLD will always be escalated on failure
-HIGH_VALUE_THRESHOLD = 200
+# Loaded from ConfigManager - see src/config/manager.py for validation
+HIGH_VALUE_THRESHOLD = None  # Will be initialized after startup
+
+def _get_high_value_threshold() -> int:
+    """Get HIGH_VALUE_THRESHOLD from ConfigManager."""
+    global HIGH_VALUE_THRESHOLD
+    if HIGH_VALUE_THRESHOLD is None:
+        try:
+            HIGH_VALUE_THRESHOLD = get_config().HIGH_VALUE_THRESHOLD
+        except Exception:
+            HIGH_VALUE_THRESHOLD = 200
+    return HIGH_VALUE_THRESHOLD
 
 # Maximum number of retry attempts before escalation (matches executor.py)
 MAX_RETRY_ATTEMPTS = 3
@@ -406,7 +420,7 @@ def _should_escalate_task(task, retry_count: int, error_message: str = None) -> 
     """
     # Check if this is a high-value task
     amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
-    is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
+    is_high_value = amount_dollars >= _get_high_value_threshold()
 
     # Check if retries were exhausted
     if retry_count >= MAX_RETRY_ATTEMPTS:
@@ -446,7 +460,7 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
 
     # Log the escalation for profit protection
     amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
-    is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
+    is_high_value = amount_dollars >= _get_high_value_threshold()
 
     logger.warning(f"[ESCALATION] Task {task.id} escalated: {reason}")
     logger.warning(
@@ -1205,15 +1219,19 @@ class CheckoutResponse(BaseModel):
 # Lifespan context manager for startup/shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize DB and Observability
-    init_db()
-    init_observability()
+     # Startup: Validate critical configuration (Issue #27)
+     # Fail loudly if configuration is invalid rather than silently at runtime
+     validate_critical_env_vars()
 
-    # Start autonomous scanning loop if enabled
-    await start_autonomous_loop()
+     # Initialize DB and Observability
+     init_db()
+     init_observability()
 
-    yield
-    # Shutdown logic goes here
+     # Start autonomous scanning loop if enabled
+     await start_autonomous_loop()
+
+     yield
+     # Shutdown logic goes here
 
 
 # Update your FastAPI initialization to use the lifespan
@@ -1286,7 +1304,7 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
 
     try:
         # Determine if this is a high-value task (Pillar 1.7 - Profit Protection)
-        is_high_value = amount >= HIGH_VALUE_THRESHOLD
+        is_high_value = amount >= _get_high_value_threshold()
 
         # Create a task in the database with PENDING status
         new_task = Task(

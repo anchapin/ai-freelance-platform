@@ -26,6 +26,9 @@ from dotenv import load_dotenv
 # Import logger
 from src.utils.logger import get_logger
 
+# Import ConfigManager for centralized configuration
+from src.config import get_config
+
 # Import LLM service for local inference
 try:
     from src.llm_service import LLMService
@@ -61,6 +64,15 @@ if not PLAYWRIGHT_AVAILABLE:
 # CONFIGURATION
 # =============================================================================
 
+# Load configuration from ConfigManager (centralized)
+def _get_config():
+    """Lazy load configuration to avoid circular imports."""
+    try:
+        return get_config()
+    except Exception:
+        # Fallback to environment variables if ConfigManager fails
+        return None
+
 # Marketplace URLs configuration
 MARKETPLACES_FILE = os.environ.get(
     "MARKETPLACES_FILE",
@@ -70,12 +82,41 @@ DEFAULT_MARKETPLACE_URL = "https://example.com/freelance-jobs"
 
 # Evaluation settings
 EVALUATION_MODEL = os.environ.get("MARKET_SCAN_MODEL", "llama3.2")
-MAX_BID_AMOUNT = int(os.environ.get("MAX_BID_AMOUNT", "500"))
-MIN_BID_AMOUNT = int(os.environ.get("MIN_BID_AMOUNT", "10"))
 
-# Timeout settings (seconds)
-PAGE_LOAD_TIMEOUT = int(os.environ.get("MARKET_SCAN_PAGE_TIMEOUT", "30"))
-SCAN_INTERVAL = int(os.environ.get("MARKET_SCAN_INTERVAL", "300"))  # 5 minutes default
+# Load bid amounts from ConfigManager or use defaults
+def get_max_bid_amount() -> int:
+    """Get MAX_BID_AMOUNT from ConfigManager."""
+    config = _get_config()
+    if config:
+        return config.MAX_BID_AMOUNT
+    return int(os.environ.get("MAX_BID_AMOUNT", "500"))
+
+def get_min_bid_amount() -> int:
+    """Get MIN_BID_AMOUNT from ConfigManager."""
+    config = _get_config()
+    if config:
+        return config.MIN_BID_AMOUNT
+    return int(os.environ.get("MIN_BID_AMOUNT", "10"))
+
+def get_page_load_timeout() -> int:
+    """Get PAGE_LOAD_TIMEOUT from ConfigManager."""
+    config = _get_config()
+    if config:
+        return config.PAGE_LOAD_TIMEOUT
+    return int(os.environ.get("MARKET_SCAN_PAGE_TIMEOUT", "30"))
+
+def get_scan_interval() -> int:
+    """Get SCAN_INTERVAL from ConfigManager."""
+    config = _get_config()
+    if config:
+        return config.SCAN_INTERVAL
+    return int(os.environ.get("MARKET_SCAN_INTERVAL", "300"))
+
+# Legacy module-level constants for backward compatibility
+MAX_BID_AMOUNT = get_max_bid_amount()
+MIN_BID_AMOUNT = get_min_bid_amount()
+PAGE_LOAD_TIMEOUT = get_page_load_timeout()
+SCAN_INTERVAL = get_scan_interval()
 
 
 # =============================================================================
