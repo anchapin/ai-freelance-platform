@@ -5,13 +5,15 @@ Provides endpoints for creating checkout sessions and processing task submission
 import os
 import uuid
 import json
+import secrets
+import time as _time
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import stripe
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from .database import get_db, init_db
 from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus, EscalationLog
 from ..agent_execution.executor import execute_task, OutputFormat
@@ -82,6 +84,49 @@ HIGH_VALUE_THRESHOLD = 200
 
 # Maximum number of retry attempts before escalation (matches executor.py)
 MAX_RETRY_ATTEMPTS = 3
+
+# =============================================================================
+# DELIVERY ENDPOINT SECURITY (Issue #18)
+# =============================================================================
+
+# Delivery token TTL in hours (configurable via env)
+DELIVERY_TOKEN_TTL_HOURS = int(os.environ.get("DELIVERY_TOKEN_TTL_HOURS", "72"))
+
+# Rate limiting: max failed delivery attempts per task before lockout
+DELIVERY_MAX_FAILED_ATTEMPTS = int(os.environ.get("DELIVERY_MAX_FAILED_ATTEMPTS", "5"))
+DELIVERY_LOCKOUT_SECONDS = int(os.environ.get("DELIVERY_LOCKOUT_SECONDS", "3600"))
+
+# In-memory rate limiter: { task_id: (fail_count, first_fail_timestamp) }
+_delivery_rate_limits: dict[str, tuple[int, float]] = {}
+
+
+def _check_delivery_rate_limit(task_id: str) -> bool:
+    """
+    Check if a task_id is rate-limited for delivery attempts.
+
+    Returns True if the request is allowed, False if rate-limited.
+    """
+    entry = _delivery_rate_limits.get(task_id)
+    if entry is None:
+        return True
+
+    fail_count, first_fail_ts = entry
+    # Reset if lockout window has passed
+    if _time.time() - first_fail_ts > DELIVERY_LOCKOUT_SECONDS:
+        del _delivery_rate_limits[task_id]
+        return True
+
+    return fail_count < DELIVERY_MAX_FAILED_ATTEMPTS
+
+
+def _record_delivery_failure(task_id: str) -> None:
+    """Record a failed delivery attempt for rate limiting."""
+    entry = _delivery_rate_limits.get(task_id)
+    if entry is None:
+        _delivery_rate_limits[task_id] = (1, _time.time())
+    else:
+        fail_count, first_fail_ts = entry
+        _delivery_rate_limits[task_id] = (fail_count + 1, first_fail_ts)
 
 
 def _should_escalate_task(task, retry_count: int, error_message: str = None) -> tuple:
@@ -885,7 +930,8 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
             filename=task.filename,  # Store original filename
             client_email=task.client_email,  # Store client email for history tracking
             amount_paid=amount * 100,  # Store amount in cents
-            delivery_token=str(uuid.uuid4()),  # Generate secure delivery token
+            delivery_token=secrets.token_urlsafe(32),  # Cryptographically strong token (Issue #18)
+            delivery_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=DELIVERY_TOKEN_TTL_HOURS),
             is_high_value=is_high_value  # Mark as high-value for profit protection
         )
         db.add(new_task)
@@ -1286,37 +1332,67 @@ async def get_client_discount_info(
 async def get_secure_delivery(
     task_id: str,
     token: str,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """
-    Secure delivery link endpoint.
-    
-    Verifies the token matches the task's delivery_token
-    before returning the result.
-    
-    Path parameters:
-        task_id: The task ID
-        token: The secure delivery token
-    
-    Returns:
-        Task result including the result_image_url
+    Secure delivery link endpoint (hardened — Issue #18).
+
+    Security checks:
+    1. Rate limiting per task_id (max 5 failed attempts per hour)
+    2. Token verification (constant-time comparison via secrets.compare_digest)
+    3. Token expiration check
+    4. One-time use: token is invalidated after successful download
+    5. Audit logging for all attempts
     """
+    logger = get_logger(__name__)
+    client_ip = request.client.host if request.client else "unknown"
+
+    # 1. Rate limiting
+    if not _check_delivery_rate_limit(task_id):
+        logger.warning(f"[DELIVERY] Rate limited: task={task_id} ip={client_ip}")
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
+
     task = db.query(Task).filter(Task.id == task_id).first()
-    
+
     if not task:
+        _record_delivery_failure(task_id)
+        logger.warning(f"[DELIVERY] Not found: task={task_id} ip={client_ip}")
         raise HTTPException(status_code=404, detail="Task not found")
-    
-    # Verify the token
-    if task.delivery_token != token:
+
+    # 2. Token verification (constant-time comparison)
+    if not task.delivery_token or not secrets.compare_digest(task.delivery_token, token):
+        _record_delivery_failure(task_id)
+        logger.warning(f"[DELIVERY] Invalid token: task={task_id} ip={client_ip}")
         raise HTTPException(status_code=403, detail="Invalid delivery token")
-    
+
+    # 3. Token expiration check
+    if task.delivery_token_expires_at:
+        expires_at = task.delivery_token_expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expires_at:
+            logger.warning(f"[DELIVERY] Expired token: task={task_id} ip={client_ip}")
+            raise HTTPException(status_code=403, detail="Delivery link has expired")
+
+    # 4. One-time use check
+    if task.delivery_token_used:
+        logger.warning(f"[DELIVERY] Already used token: task={task_id} ip={client_ip}")
+        raise HTTPException(status_code=403, detail="Delivery link has already been used")
+
     # Verify the task is completed
     if task.status != TaskStatus.COMPLETED:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Task is not ready for delivery. Current status: {task.status.value}"
         )
-    
+
+    # 5. Invalidate token (one-time use)
+    task.delivery_token_used = True
+    db.commit()
+
+    logger.info(f"[DELIVERY] Success: task={task_id} ip={client_ip}")
+
     # Return the delivery data with diverse output types
     result_url = None
     if task.result_type in ["docx", "pdf"]:
@@ -1324,9 +1400,8 @@ async def get_secure_delivery(
     elif task.result_type == "xlsx":
         result_url = task.result_spreadsheet_url
     else:
-        # Default to image/visualization
         result_url = task.result_image_url
-    
+
     return {
         "task_id": task.id,
         "title": task.title,
@@ -1336,8 +1411,7 @@ async def get_secure_delivery(
         "result_image_url": task.result_image_url,
         "result_document_url": task.result_document_url,
         "result_spreadsheet_url": task.result_spreadsheet_url,
-        "delivery_token": task.delivery_token,
-        "delivered_at": task.updated_at.isoformat() if hasattr(task, 'updated_at') else None
+        "delivered_at": datetime.now(timezone.utc).isoformat()
     }
 
 

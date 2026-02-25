@@ -146,6 +146,8 @@ class Task(Base):
     client_email = Column(String, nullable=True)  # Client email for history tracking
     amount_paid = Column(Integer, nullable=True)  # Amount paid in cents
     delivery_token = Column(String, nullable=True)  # Secure token for delivery links
+    delivery_token_expires_at = Column(DateTime, nullable=True)  # Token expiration (Issue #18)
+    delivery_token_used = Column(Boolean, default=False)  # One-time use flag (Issue #18)
     # Timestamp fields for tracking turnaround time
     created_at = Column(DateTime, default=datetime.utcnow)  # Task creation timestamp
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # Last update timestamp
@@ -203,6 +205,8 @@ class Task(Base):
             "amount_paid": self.amount_paid,
             "amount_dollars": (self.amount_paid / 100) if self.amount_paid else None,
             "delivery_token": self.delivery_token,
+            "delivery_token_expires_at": self.delivery_token_expires_at.isoformat() if self.delivery_token_expires_at else None,
+            "delivery_token_used": self.delivery_token_used,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             # New fields

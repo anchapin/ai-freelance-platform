@@ -506,10 +506,12 @@ class TestDeliveryEndpoint:
     
     def test_delivery_task_not_completed(self):
         """Test delivery when task is not completed."""
-        from src.api.main import app
+        from src.api.main import app, _delivery_rate_limits
         from src.api.database import get_db
         from src.api.models import TaskStatus
+        from datetime import datetime, timedelta, timezone
         
+        _delivery_rate_limits.clear()
         client = TestClient(app)
         
         # Create mock database
@@ -518,6 +520,8 @@ class TestDeliveryEndpoint:
         mock_task = Mock()
         mock_task.id = "test_task"
         mock_task.delivery_token = "correct_token"
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_used = False
         mock_task.status = TaskStatus.PROCESSING
         
         mock_db.query.return_value.filter.return_value.first.return_value = mock_task
