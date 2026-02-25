@@ -40,6 +40,16 @@ from ..utils.logger import get_logger
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
 
+# Import webhook security utilities (Issue #35)
+from ..utils.webhook_security import (
+    verify_webhook_signature,
+    WebhookVerificationError,
+    InvalidSignatureError,
+    ReplayAttackError,
+    MissingHeaderError,
+    log_webhook_verification_attempt,
+)
+
 # Import notifications for Telegram alerts
 from ..utils.notifications import TelegramNotifier
 
@@ -1389,42 +1399,202 @@ async def stripe_webhook(
     stripe_signature: str = Header(None),
 ):
     """
-    Stripe webhook endpoint to handle checkout events.
+    Stripe webhook endpoint with comprehensive security verification (Issue #35).
 
-    Listens for checkout.session.completed events and updates task status to PAID.
-    When a task is marked as PAID, a background task is added to process the task asynchronously.
+    Security Features:
+    1. HMAC-SHA256 signature verification using Stripe webhook secret
+    2. Timestamp validation with 5-minute window (prevents replay attacks)
+    3. Comprehensive logging for all verification attempts
+    4. Proper error handling with detailed security event tracking
+
+    Listens for checkout.session.completed and checkout.session.expired events
+    and updates task status accordingly. When a task is marked as PAID, a
+    background task is added to process the task asynchronously.
+
+    Args:
+        request: FastAPI Request object containing webhook payload
+        background_tasks: FastAPI BackgroundTasks for async processing
+        db: Database session from dependency injection
+        stripe_signature: Stripe-Signature header (required for security)
+
+    Returns:
+        JSON response with status and message
+
+    Raises:
+        HTTPException 400: Invalid signature, replay attack, or malformed payload
+        HTTPException 500: Internal server error during processing
     """
+    logger = get_logger(__name__)
     payload = await request.body()
 
     try:
-        # Verify webhook signature if secret is configured
+        # =================================================================
+        # STEP 1: COMPREHENSIVE WEBHOOK VERIFICATION (Issue #35)
+        # =================================================================
+        event = None
+        verification_error = None
+
         if STRIPE_WEBHOOK_SECRET != "whsec_placeholder":
             try:
-                event = stripe.Webhook.construct_event(
-                    payload, stripe_signature, STRIPE_WEBHOOK_SECRET
+                # Use custom webhook verification with enhanced security
+                event = verify_webhook_signature(
+                    payload=payload,
+                    signature=stripe_signature,
+                    secret=STRIPE_WEBHOOK_SECRET,
+                    timestamp_seconds=300,  # 5-minute replay window
                 )
-            except stripe.error.SignatureVerificationError:
+                log_webhook_verification_attempt(
+                    success=True,
+                    event_type=event.get("type"),
+                    event_id=event.get("id"),
+                )
+
+            except InvalidSignatureError as e:
+                # Log signature verification failure with security context
+                verification_error = f"Signature verification failed: {str(e)}"
+                logger.error(
+                    f"[WEBHOOK SECURITY] {verification_error}",
+                    extra={
+                        "error_type": "InvalidSignature",
+                        "signature_header_present": bool(stripe_signature),
+                    },
+                )
+                log_webhook_verification_attempt(
+                    success=False,
+                    error_type="InvalidSignature",
+                )
                 return JSONResponse(
-                    status_code=400, content={"error": "Invalid signature"}
+                    status_code=400,
+                    content={"error": "Invalid webhook signature"},
                 )
+
+            except ReplayAttackError as e:
+                # Log potential replay attack
+                verification_error = f"Replay attack prevented: {str(e)}"
+                logger.critical(
+                    f"[WEBHOOK SECURITY ALERT] {verification_error}",
+                    extra={"error_type": "ReplayAttack"},
+                )
+                log_webhook_verification_attempt(
+                    success=False,
+                    error_type="ReplayAttack",
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Webhook timestamp outside acceptable window"},
+                )
+
+            except MissingHeaderError as e:
+                # Log missing or malformed headers
+                verification_error = f"Missing/malformed header: {str(e)}"
+                logger.warning(
+                    f"[WEBHOOK SECURITY] {verification_error}",
+                    extra={"error_type": "MissingHeader"},
+                )
+                log_webhook_verification_attempt(
+                    success=False,
+                    error_type="MissingHeader",
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Invalid or missing webhook headers"},
+                )
+
+            except WebhookVerificationError as e:
+                # Catch any other webhook verification errors
+                verification_error = f"Webhook verification error: {str(e)}"
+                logger.error(
+                    f"[WEBHOOK SECURITY] {verification_error}",
+                    extra={"error_type": "VerificationError"},
+                )
+                log_webhook_verification_attempt(
+                    success=False,
+                    error_type="VerificationError",
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Webhook verification failed"},
+                )
+
         else:
             # For development/testing without webhook secret
-            event = json.loads(payload)
+            # WARNING: This should NEVER be used in production
+            logger.warning(
+                "[WEBHOOK SECURITY] Running in development mode without signature verification. "
+                "This is insecure and should only be used for local testing!",
+            )
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError as e:
+                logger.error(
+                    f"[WEBHOOK] Invalid JSON payload: {str(e)}",
+                    extra={"error_type": "InvalidJSON"},
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Invalid JSON payload"},
+                )
+
+        # =================================================================
+        # STEP 2: PROCESS VERIFIED WEBHOOK EVENT
+        # =================================================================
+        if not event:
+            logger.error(
+                "[WEBHOOK] Event is None after verification",
+                extra={"error_type": "NullEvent"},
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Unable to process webhook"},
+            )
+
+        event_type = event.get("type", "unknown")
+        event_id = event.get("id", "unknown")
+
+        logger.info(
+            "[WEBHOOK] Processing event",
+            extra={
+                "event_type": event_type,
+                "event_id": event_id[:12] + "..." if len(event_id) > 12 else event_id,
+            },
+        )
 
         # Handle the checkout.session.completed event
-        if event["type"] == "checkout.session.completed":
-            session = event["data"]["object"]
+        if event_type == "checkout.session.completed":
+            session = event.get("data", {}).get("object", {})
             session_id = session.get("id")
+
+            if not session_id:
+                logger.warning(
+                    "[WEBHOOK] checkout.session.completed event missing session ID",
+                    extra={"event_id": event_id},
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Missing session ID in webhook"},
+                )
 
             # Look up task by stripe_session_id
             task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
 
             if task:
+                old_status = task.status
                 # Update task status to PAID
                 task.status = TaskStatus.PAID
                 db.commit()
 
-                # Add background task to process the visualization asynchronously
+                logger.info(
+                    "[WEBHOOK] Task updated to PAID",
+                    extra={
+                        "task_id": task.id,
+                        "session_id": session_id,
+                        "old_status": old_status,
+                        "new_status": "PAID",
+                        "event_id": event_id[:12] + "...",
+                    },
+                )
+
+                # Add background task to process the task asynchronously
                 background_tasks.add_task(process_task_async, task.id)
 
                 return {
@@ -1432,35 +1602,91 @@ async def stripe_webhook(
                     "message": f"Task {task.id} marked as PAID, processing started",
                 }
             else:
+                logger.warning(
+                    "[WEBHOOK] No task found for session",
+                    extra={
+                        "session_id": session_id,
+                        "event_id": event_id[:12] + "...",
+                    },
+                )
                 return {
                     "status": "warning",
                     "message": f"No task found for session {session_id}",
                 }
 
-        # Handle other event types if needed
-        elif event["type"] == "checkout.session.expired":
-            session = event["data"]["object"]
+        # Handle checkout.session.expired event
+        elif event_type == "checkout.session.expired":
+            session = event.get("data", {}).get("object", {})
             session_id = session.get("id")
+
+            if not session_id:
+                logger.warning(
+                    "[WEBHOOK] checkout.session.expired event missing session ID",
+                    extra={"event_id": event_id},
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Missing session ID in webhook"},
+                )
 
             task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
 
             if task:
+                old_status = task.status
                 task.status = TaskStatus.FAILED
                 db.commit()
+
+                logger.info(
+                    "[WEBHOOK] Task marked as FAILED (session expired)",
+                    extra={
+                        "task_id": task.id,
+                        "session_id": session_id,
+                        "old_status": old_status,
+                        "new_status": "FAILED",
+                        "event_id": event_id[:12] + "...",
+                    },
+                )
 
                 return {
                     "status": "success",
                     "message": f"Task {task.id} marked as FAILED (expired)",
                 }
 
-        # Return 200 for events we don't handle
+            else:
+                logger.warning(
+                    "[WEBHOOK] No task found for expired session",
+                    extra={
+                        "session_id": session_id,
+                        "event_id": event_id[:12] + "...",
+                    },
+                )
+                return {
+                    "status": "warning",
+                    "message": f"No task found for session {session_id}",
+                }
+
+        # Return 200 for events we don't handle (standard practice per Stripe docs)
+        logger.info(
+            "[WEBHOOK] Received unhandled event type",
+            extra={
+                "event_type": event_type,
+                "event_id": event_id[:12] + "...",
+            },
+        )
         return {"status": "received"}
 
-    except json.JSONDecodeError:
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON payload"})
     except Exception as e:
+        logger.error(
+            f"[WEBHOOK] Unexpected error during processing: {str(e)}",
+            extra={
+                "error_type": type(e).__name__,
+                "error_message": str(e)[:200],
+            },
+            exc_info=True,
+        )
         return JSONResponse(
-            status_code=500, content={"error": f"Internal error: {str(e)}"}
+            status_code=500,
+            content={"error": "Internal server error"},
         )
 
 

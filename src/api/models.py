@@ -71,10 +71,12 @@ class ClientProfile(Base):
 
     __tablename__ = "client_profiles"
 
+    __table_args__ = (UniqueConstraint("client_email", name="unique_client_email"),)
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     client_email = Column(
         String, nullable=False, index=True
-    )  # Client email (indexed for fast lookups)
+    )  # Client email (indexed + unique, prevents duplicate profiles)
 
     # Extracted preferences from previous tasks
     preferred_colors = Column(JSON, nullable=True)  # e.g., ["blue", "green"]
@@ -154,8 +156,10 @@ class ClientProfile(Base):
 class Task(Base):
     __tablename__ = "tasks"
 
-    # Performance indexes (Issue #38)
+    # Performance indexes and unique constraints (Issue #33, #38)
     __table_args__ = (
+        UniqueConstraint("stripe_session_id", name="unique_stripe_session_id"),
+        UniqueConstraint("delivery_token", name="unique_delivery_token"),
         Index("idx_task_client_email", "client_email"),
         Index("idx_task_status", "status"),
         Index("idx_task_created_at", "created_at"),
@@ -168,7 +172,9 @@ class Task(Base):
     description = Column(String, nullable=False)
     domain = Column(String, nullable=False)
     status = Column(Enum(TaskStatus), default=TaskStatus.PENDING, nullable=False)
-    stripe_session_id = Column(String, nullable=True)
+    stripe_session_id = Column(
+        String, nullable=True, index=True
+    )  # Unique to prevent duplicate payment sessions (Issue #33)
     result_image_url = Column(String, nullable=True)  # For image/visualization outputs
     result_document_url = Column(
         String, nullable=True
@@ -185,7 +191,9 @@ class Task(Base):
     # Client tracking fields
     client_email = Column(String, nullable=True)  # Client email for history tracking
     amount_paid = Column(Integer, nullable=True)  # Amount paid in cents
-    delivery_token = Column(String, nullable=True)  # Secure token for delivery links
+    delivery_token = Column(
+        String, nullable=True, index=True
+    )  # Unique token for secure delivery, one-time use (Issue #18, #33)
     delivery_token_expires_at = Column(
         DateTime, nullable=True
     )  # Token expiration (Issue #18)
