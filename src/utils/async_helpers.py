@@ -1,7 +1,7 @@
 """Async utilities for safe event loop handling"""
 
 import asyncio
-from typing import Callable, TypeVar, Awaitable
+from typing import TypeVar
 
 T = TypeVar("T")
 

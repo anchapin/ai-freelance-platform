@@ -7,8 +7,8 @@ in all execution paths (normal, exception, timeout).
 
 import asyncio
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from src.agent_execution.browser_pool import BrowserPool, get_browser_pool
+from unittest.mock import AsyncMock, patch
+from src.agent_execution.browser_pool import BrowserPool
 from src.agent_execution.market_scanner import MarketScanner
 from src.agent_execution.marketplace_discovery import MarketplaceDiscovery
 
@@ -99,7 +99,7 @@ class TestBrowserPoolCleanup:
             pool._browsers[browser_id].error_count = 6
             
             # Try to reuse - should create new one instead
-            browser2 = await pool.acquire_browser()
+            await pool.acquire_browser()
             
             # Should have 2 browsers (1 new, 1 failed but still in dict until cleanup)
             assert len(pool._browsers) <= 2
@@ -177,17 +177,9 @@ class TestMarketplaceDiscoveryCleanup:
         with patch('src.agent_execution.marketplace_discovery.PLAYWRIGHT_AVAILABLE', True):
             discovery = MarketplaceDiscovery()
             
-            # Track cleanup calls
-            page_closed = False
-            browser_closed = False
-            
-            async def mock_context_manager():
-                return MagicMock()
-            
             with patch('src.agent_execution.marketplace_discovery.async_playwright') as mock_playwright:
                 # Setup mock playwright
                 mock_pb = AsyncMock()
-                mock_chromium = AsyncMock()
                 mock_browser = AsyncMock()
                 mock_page = AsyncMock()
                 
