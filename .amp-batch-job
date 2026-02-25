@@ -1,28 +1,122 @@
 issues:
-  - identifier: "8"
-    title: "Implement distributed lock and deduplication for marketplace bids"
-    branch: "feature/distributed-lock-dedup"
-    worktree: "main-issue-8"
+  - identifier: "21"
+    issue_name: "Resource Leak: Playwright Browser Instances"
+    branch: "feature/issue-21"
+    worktree: "main-issue-21"
     status: "pending"
-    
-  - identifier: "6"
-    title: "Decouple Experience Vector Database from task execution flow"
-    branch: "feature/vector-db-decouple"
-    worktree: "main-issue-6"
+    instructions: |
+      Fix Issue #21: Resource Leak - Playwright Browser Instances
+      
+      Context: Playwright browser instances may leak resources if not properly closed.
+      
+      Changes needed:
+      1. Review src/agent_execution/browser_pool.py for proper context manager cleanup
+      2. Review src/agent_execution/market_scanner.py - ensure __aexit__ properly calls stop()
+      3. Review src/agent_execution/marketplace_discovery.py - verify finally blocks close page and browser
+      4. Add regression tests in tests/test_playwright_resource_cleanup.py
+      5. Verify all async context managers use async with async_playwright()
+      
+      Success criteria:
+      - All browser instances are closed in finally blocks
+      - AsyncioPool cleanup is verified
+      - Tests pass and detect unclosed resources
+      
+  - identifier: "22"
+    issue_name: "Database Connection Pool Exhaustion: Missing Finally Blocks"
+    branch: "feature/issue-22"
+    worktree: "main-issue-22"
     status: "pending"
-    
-  - identifier: "5"
-    title: "Refactor overloaded Task model using composition pattern"
-    branch: "feature/task-composition"
-    worktree: "main-issue-5"
+    instructions: |
+      Fix Issue #22: Database Connection Pool Exhaustion - Missing Finally Blocks
+      
+      Context: Database sessions may not be properly closed if SessionLocal() fails or exceptions occur.
+      
+      Changes needed:
+      1. Fix src/api/main.py:595-1040 - Move SessionLocal() outside try block or use safer pattern
+      2. Fix src/api/main.py:2600-2702 - Same issue in autonomous scan loop
+      3. Add db.rollback() calls in except blocks to prevent idle transactions
+      4. Review src/agent_execution/bid_lock_manager.py - already has finally blocks, verify pattern
+      5. Update src/agent_execution/planning.py - ensure rollback on exceptions
+      
+      Success criteria:
+      - SessionLocal() failures don't cause UnboundLocalError
+      - All except blocks have rollback() calls
+      - All finally blocks safely handle session cleanup
+      - Tests verify connection cleanup under failure scenarios
+      
+  - identifier: "23"
+    issue_name: "Async RAG Service: Cache Corruption on Circuit Breaker Open"
+    branch: "feature/issue-23"
+    worktree: "main-issue-23"
     status: "pending"
-    
-  - identifier: "4"
-    title: "Fix async Playwright resource leaks in market scanner"
-    branch: "feature/playwright-resource-leak"
-    worktree: "main-issue-4"
+    instructions: |
+      Fix Issue #23: Async RAG Service - Cache Corruption on Circuit Breaker Open
+      
+      Context: Cache entries may become corrupted when circuit breaker transitions to OPEN state.
+      
+      Changes needed:
+      1. Review src/async_rag_service.py - AsyncRAGCircuitBreaker state machine
+      2. Add atomic cache writes with validation (e.g., ensure complete entry before storing)
+      3. Implement cache invalidation when circuit breaker opens/closes
+      4. Add cache entry versioning or TTL validation
+      5. Add comprehensive cache corruption tests in tests/test_vector_db_decouple.py
+      
+      Success criteria:
+      - Cache entries are atomically written
+      - Circuit breaker state changes invalidate stale cache
+      - No partial/corrupted cache entries remain
+      - Tests verify cache integrity during state transitions
+      
+  - identifier: "24"
+    issue_name: "Missing Fallback for Distillation Capture Failures"
+    branch: "feature/issue-24"
+    worktree: "main-issue-24"
     status: "pending"
+    instructions: |
+      Fix Issue #24: Missing Fallback for Distillation Capture Failures
+      
+      Context: Distillation capture timeouts may silently fail without fallback strategies.
+      
+      Changes needed:
+      1. Review src/distillation/data_collector.py - add timeout handling
+      2. Review src/agent_execution/arena.py:585-598 - ensure distillation failures are caught
+      3. Review src/agent_execution/executor.py:2925-2995 - add fallback on timeout
+      4. Implement configurable timeout in BackgroundJobQueue
+      5. Add logging and metrics for distillation failures
+      6. Update src/distillation/dataset_manager.py to handle partial writes
+      
+      Success criteria:
+      - Distillation timeouts don't block main task execution
+      - Failed captures are logged with context
+      - Fallback mechanisms prevent silent failures
+      - Tests verify timeout + fallback behavior
+      
+  - identifier: "25"
+    issue_name: "Background Job Queue: Silent Job Failures Without Retry"
+    branch: "feature/issue-25"
+    worktree: "main-issue-25"
+    status: "pending"
+    instructions: |
+      Fix Issue #25: Background Job Queue - Silent Job Failures Without Retry
+      
+      Context: Jobs may fail silently without proper retry logic or status tracking.
+      
+      Changes needed:
+      1. Review src/background_job_queue.py - enhance retry mechanism
+      2. Verify exponential backoff calculation: 0.5 * (2**retry_count)
+      3. Add job status tracking (pending, processing, success, failed)
+      4. Add dead-letter queue for permanently failed jobs
+      5. Implement configurable max_retries per job type
+      6. Add comprehensive logging for job state transitions
+      7. Update src/agent_execution/errors.py - verify error categorization
+      
+      Success criteria:
+      - All failed jobs are retried with exponential backoff
+      - Dead-letter queue captures permanently failed jobs
+      - Job status is tracked and queryable
+      - Tests verify retry counts, backoff timing, and dead-letter behavior
 
-strategy: "individual"
+strategy: "consolidated"
 base_branch: "main"
-started_at: "2025-02-24T10:30:00Z"
+max_parallel: 5
+started_at: "2025-02-25T15:30:00Z"
