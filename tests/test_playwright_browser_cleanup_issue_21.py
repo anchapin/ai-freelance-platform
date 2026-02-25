@@ -152,7 +152,7 @@ class TestMarketScannerCleanup:
             
             cleanup_order = []
             
-            async def track_close(name):
+            def track_close(name):
                 cleanup_order.append(name)
             
             scanner.page.close = AsyncMock(side_effect=lambda: track_close('page'))
