@@ -35,6 +35,9 @@ from ..llm_service import LLMService
 # Import Bid model for tracking bids
 from .models import Bid, BidStatus
 
+# Import client authentication for dashboard endpoints (Issue #17)
+from ..utils.client_auth import generate_client_token, verify_client_token
+
 # Import contextlib for lifespan
 from contextlib import asynccontextmanager
 
@@ -816,6 +819,7 @@ class CheckoutResponse(BaseModel):
     amount: int
     domain: str
     title: str
+    client_auth_token: str = None  # HMAC token for dashboard access (Issue #17)
 
 
 # Lifespan context manager for startup/shutdown
@@ -920,12 +924,18 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
         new_task.stripe_session_id = checkout_session.id
         db.commit()
         
+        # Generate client auth token for dashboard access (Issue #17)
+        client_token = None
+        if task.client_email:
+            client_token = generate_client_token(task.client_email)
+
         return CheckoutResponse(
             session_id=checkout_session.id,
             url=checkout_session.url,
             amount=amount,
             domain=task.domain,
-            title=task.title
+            title=task.title,
+            client_auth_token=client_token
         )
         
     except stripe.error.StripeError as e:
@@ -1156,23 +1166,21 @@ def get_discount_tier(completed_tasks_count: int) -> int:
 @app.get("/api/client/history")
 async def get_client_task_history(
     email: str,
+    token: str,
     db: Session = Depends(get_db)
 ):
     """
-    Get task history for a client by email.
-    
-    Returns all tasks (completed, in-progress, failed) for the client.
-    Includes repeat-client discount information based on completed tasks.
-    
+    Get task history for a client by email (authenticated — Issue #17).
+
+    Requires a valid HMAC token proving ownership of the email address.
+    The token is provided when a task is created.
+
     Query parameters:
         email: Client email address
-    
-    Returns:
-        - tasks: List of all tasks for the client
-        - stats: Statistics including total tasks, completed tasks, total spent
-        - discount: Current discount tier and percentage
-        - next_discount: Information about next discount tier
+        token: HMAC authentication token for this email
     """
+    if not verify_client_token(email, token):
+        raise HTTPException(status_code=403, detail="Invalid authentication token")
     # Get all tasks for this client
     tasks = db.query(Task).filter(Task.client_email == email).order_by(
         Task.id.desc()  # Most recent first
@@ -1231,14 +1239,16 @@ async def get_client_task_history(
 @app.get("/api/client/discount-info")
 async def get_client_discount_info(
     email: str,
+    token: str,
     db: Session = Depends(get_db)
 ):
     """
-    Get discount information for a client.
-    
-    Returns the current discount tier and next tier information
-    without requiring full task history.
+    Get discount information for a client (authenticated — Issue #17).
+
+    Requires a valid HMAC token proving ownership of the email address.
     """
+    if not verify_client_token(email, token):
+        raise HTTPException(status_code=403, detail="Invalid authentication token")
     # Count completed tasks for this client
     completed_count = db.query(Task).filter(
         Task.client_email == email,
