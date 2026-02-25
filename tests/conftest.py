@@ -25,12 +25,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 # PYTEST CONFIGURATION
 # =============================================================================
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# NOTE: Removed custom event_loop fixture - pytest-asyncio 0.21+ handles this automatically
+# This fixture was causing "There is no current event loop" errors in CI.
+# The default pytest-asyncio behavior is now used with function-scoped loops.
 
 
 # =============================================================================
