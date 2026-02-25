@@ -13,9 +13,7 @@ Issue #19: Implement distributed BidLockManager with Redis
 """
 
 import asyncio
-import time
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.agent_execution.redis_bid_lock_manager import (
     RedisBidLockManager,

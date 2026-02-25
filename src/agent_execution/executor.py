@@ -21,11 +21,6 @@ from typing import Optional
 from datetime import datetime
 
 # Import error categorization (Issue #37)
-from src.agent_execution.errors import (
-    categorize_exception,
-    should_retry,
-    TransientError,
-)
 
 # E2B Code Interpreter SDK (fallback)
 from e2b_code_interpreter import Sandbox
@@ -48,9 +43,7 @@ try:
     from src.agent_execution.docker_sandbox import (
         LocalDockerSandbox,
         SandboxResult,
-        SandboxArtifact,
-        SandboxLog,
-    )  # noqa: F401
+    )
 
     DOCKER_SANDBOX_AVAILABLE = True
 except ImportError:
@@ -60,8 +53,7 @@ except ImportError:
 try:
     from src.experience_vector_db import (
         build_few_shot_system_prompt,
-        query_similar_tasks,
-    )  # noqa: F401
+    )
 
     EXPERIENCE_DB_AVAILABLE = True
 except ImportError:

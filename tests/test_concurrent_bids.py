@@ -17,13 +17,9 @@ Tests include:
 import asyncio
 import pytest
 import time
-from typing import List, Dict, Any
-from unittest.mock import patch, MagicMock
 
 from src.agent_execution.redis_bid_lock_manager import (
     RedisBidLockManager,
-    get_bid_lock_manager,
-    init_bid_lock_manager,
 )
 
 
@@ -306,7 +302,6 @@ async def test_bid_workflow_multi_instance(lock_manager):
             
             # Step 2: Place bid (simulated)
             # In real code: check if eligible, calculate bid amount, submit to marketplace
-            bid_amount = 100 + (instance_id * 10)
             await asyncio.sleep(0.05)  # Simulate API call
             
             # Step 3: Release lock

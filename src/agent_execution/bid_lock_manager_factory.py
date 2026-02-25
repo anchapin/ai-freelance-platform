@@ -7,9 +7,14 @@ based on environment configuration and availability.
 Issue #19: Distributed locking with Redis + fallback for development.
 """
 
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
+
 from src.config import should_use_redis_locks, get_redis_url
 from src.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from src.agent_execution.redis_bid_lock_manager import RedisBidLockManager
+    from src.agent_execution.bid_lock_manager import BidLockManager
 
 logger = get_logger(__name__)
 

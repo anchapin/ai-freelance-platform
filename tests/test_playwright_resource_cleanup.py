@@ -10,9 +10,7 @@ Comprehensive tests to verify:
 """
 
 import pytest
-import asyncio
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from src.agent_execution.marketplace_discovery import MarketplaceDiscovery
 from src.agent_execution.browser_pool import BrowserPool, PooledBrowser
