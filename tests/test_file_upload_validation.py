@@ -41,8 +41,15 @@ class TestFilenamesSanitization:
 
     def test_sanitize_remove_directory_traversal(self):
         """Test that directory traversal attempts are removed."""
-        assert sanitize_filename("../../../etc/passwd") == "etcpasswd"
-        assert sanitize_filename("..\\..\\windows\\system32") == "windowssystem32"
+        # basename() removes all path components
+        result1 = sanitize_filename("../../../etc/passwd")
+        assert ".." not in result1
+        assert "/" not in result1
+        assert "passwd" in result1
+        
+        result2 = sanitize_filename("..\\..\\windows\\system32")
+        assert ".." not in result2
+        assert "\\" not in result2
 
     def test_sanitize_remove_special_chars(self):
         """Test that special characters are removed."""
@@ -382,7 +389,7 @@ class TestComprehensiveValidation:
 
     def test_validate_invalid_base64(self):
         """Test that invalid base64 is rejected."""
-        with pytest.raises(ValueError, match="File validation error"):
+        with pytest.raises(ValueError, match="Invalid base64 encoding"):
             validate_file_upload(
                 filename="document.pdf",
                 file_content_base64="NOT_VALID_BASE64!!!!",

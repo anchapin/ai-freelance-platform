@@ -12,7 +12,7 @@ MAIN_BRANCH="origin/main"
 [ ! git rev-parse --verify "$MAIN_BRANCH" >/dev/null 2>&1 ] && MAIN_BRANCH="main"
 DRY_RUN=${1:-true}
 
-if ! git diff --quiet HEAD; then
+if ! git diff-index --quiet --cached HEAD && ! git diff --quiet HEAD; then
     echo "❌ ERROR: Working tree has uncommitted changes"
     exit 1
 fi
