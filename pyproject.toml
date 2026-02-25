@@ -28,6 +28,8 @@ dependencies = [
     "docker>=7.0.0",
     # Market Scanner (Playwright for web scraping)
     "playwright>=1.40.0",
+    # Distributed Locking and Caching (Issue #19)
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
