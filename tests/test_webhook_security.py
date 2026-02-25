@@ -520,12 +520,14 @@ class TestConstantTimeComparison:
         for i in range(5):
             parts = valid_signature.split("v1=")
             sig_part = parts[1]
-            # Change character at different positions
-            modified_sig = (
-                sig_part[: i % len(sig_part)]
-                + "f"
-                + sig_part[i % len(sig_part) + 1 :]
-            )
+            # Flip bits at different positions to create invalid signature
+            # Use XOR with 0x01 to flip the least significant bit
+            sig_chars = list(sig_part)
+            if len(sig_chars) > i:
+                # Flip a hex character
+                original_char = sig_chars[i]
+                sig_chars[i] = "f" if original_char != "f" else "e"
+            modified_sig = "".join(sig_chars)
             invalid_signature = parts[0] + "v1=" + modified_sig
 
             with pytest.raises(InvalidSignatureError):
