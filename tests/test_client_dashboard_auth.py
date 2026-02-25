@@ -294,3 +294,189 @@ class TestCheckoutResponseToken:
             title="Test Task"
         )
         assert resp.client_auth_token is None
+
+
+# =============================================================================
+# AUTHENTICATED CLIENT DEPENDENCY TESTS
+# =============================================================================
+
+
+class TestAuthenticatedClientDependency:
+    """Test the AuthenticatedClient dependency model."""
+
+    def test_authenticated_client_stores_email_and_token(self):
+        """Test that AuthenticatedClient stores email and token."""
+        from src.utils.client_auth import AuthenticatedClient
+
+        client = AuthenticatedClient("test@example.com", "token123")
+        assert client.email == "test@example.com"
+        assert client.token == "token123"
+
+    def test_authenticated_client_normalizes_email(self):
+        """Test that email is normalized (lowercased and trimmed)."""
+        from src.utils.client_auth import AuthenticatedClient
+
+        client = AuthenticatedClient("  User@Example.COM  ", "token123")
+        assert client.email == "user@example.com"
+
+    def test_is_authenticated_returns_true_for_valid_client(self):
+        """Test is_authenticated returns True for valid email+token combo."""
+        from src.utils.client_auth import AuthenticatedClient
+
+        email = "valid@test.com"
+        token = generate_client_token(email)
+        client = AuthenticatedClient(email, token)
+        assert client.is_authenticated() is True
+
+    def test_is_authenticated_returns_false_for_invalid_token(self):
+        """Test is_authenticated returns False for invalid token."""
+        from src.utils.client_auth import AuthenticatedClient
+
+        client = AuthenticatedClient("test@example.com", "invalid_token")
+        assert client.is_authenticated() is False
+
+    def test_is_authenticated_returns_false_for_empty_client(self):
+        """Test is_authenticated returns False for empty client."""
+        from src.utils.client_auth import AuthenticatedClient
+
+        client = AuthenticatedClient("", "")
+        assert client.is_authenticated() is False
+
+
+# =============================================================================
+# REQUIRE_CLIENT_AUTH DEPENDENCY TESTS
+# =============================================================================
+
+
+class TestRequireClientAuthDependency:
+    """Test the require_client_auth FastAPI dependency."""
+
+    def test_valid_auth_returns_authenticated_client(self):
+        """Test that valid credentials return AuthenticatedClient."""
+        client = TestClient(app)
+        mock_db = Mock()
+
+        # Mock query chain for discount info endpoint
+        mock_db.query.return_value.filter.return_value.count.return_value = 0
+
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+
+        email = "auth@test.com"
+        token = generate_client_token(email)
+
+        try:
+            response = client.get(
+                f"/api/client/discount-info?email={email}&token={token}"
+            )
+            assert response.status_code == 200
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_missing_email_returns_401(self):
+        """Test that missing email returns 401."""
+        client = TestClient(app)
+        mock_db = Mock()
+
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+
+        try:
+            response = client.get("/api/client/discount-info?token=some_token")
+            assert response.status_code == 422  # FastAPI validation error
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_missing_token_returns_422(self):
+        """Test that missing token returns 422 validation error."""
+        client = TestClient(app)
+        mock_db = Mock()
+
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+
+        try:
+            response = client.get("/api/client/discount-info?email=user@test.com")
+            assert response.status_code == 422
+        finally:
+            app.dependency_overrides.clear()
+
+
+# =============================================================================
+# OPTIONAL_CLIENT_AUTH DEPENDENCY TESTS
+# =============================================================================
+
+
+class TestOptionalClientAuthDependency:
+    """Test the optional_client_auth FastAPI dependency."""
+
+    def test_no_auth_parameters_returns_200(self):
+        """Test that endpoint with optional auth works without credentials."""
+        client = TestClient(app)
+        mock_db = Mock()
+
+        mock_db.query.return_value.filter.return_value.count.return_value = 0
+
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+
+        try:
+            # Call endpoint without any auth parameters
+            response = client.post(
+                "/api/client/calculate-price-with-discount?domain=accounting"
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["is_repeat_client"] is False
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_valid_auth_applies_discount(self):
+        """Test that valid auth allows discount calculation."""
+        client = TestClient(app)
+        mock_db = Mock()
+
+        # Mock one completed task for the client
+        mock_db.query.return_value.filter.return_value.count.return_value = 1
+
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+
+        email = "repeat@test.com"
+        token = generate_client_token(email)
+
+        try:
+            response = client.post(
+                f"/api/client/calculate-price-with-discount"
+                f"?domain=accounting&email={email}&token={token}"
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["is_repeat_client"] is True
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_partial_auth_parameters_returns_401(self):
+        """Test that providing only email (no token) returns 401."""
+        client = TestClient(app)
+        mock_db = Mock()
+
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+
+        try:
+            response = client.post(
+                "/api/client/calculate-price-with-discount?domain=accounting&email=test@test.com"
+            )
+            assert response.status_code == 401
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_partial_auth_token_only_returns_401(self):
+        """Test that providing only token (no email) returns 401."""
+        client = TestClient(app)
+        mock_db = Mock()
+
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+
+        try:
+            response = client.post(
+                "/api/client/calculate-price-with-discount?domain=accounting&token=some_token"
+            )
+            assert response.status_code == 401
+        finally:
+            app.dependency_overrides.clear()

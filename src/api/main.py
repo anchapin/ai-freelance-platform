@@ -48,7 +48,6 @@ from .models import Bid, BidStatus
 # Import client authentication for dashboard endpoints (Issue #17)
 from ..utils.client_auth import (
     generate_client_token,
-    verify_client_token,
     AuthenticatedClient,
     require_client_auth,
     optional_client_auth,
