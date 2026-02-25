@@ -1,6 +1,7 @@
 import os
 from traceloop.sdk import Traceloop
 import phoenix as px
+from ..config import get_traceloop_url
 
 
 def init_observability():
@@ -18,7 +19,8 @@ def init_observability():
         print(f"🔭 Phoenix Observability Dashboard running at: {session.url}")
 
     # 2. Tell OpenTelemetry to send traces to Phoenix
-    os.environ["TRACELOOP_BASE_URL"] = "http://localhost:6006/v1/traces"
+    traceloop_url = get_traceloop_url()
+    os.environ["TRACELOOP_BASE_URL"] = traceloop_url
     os.environ["TRACELOOP_HEADERS"] = ""
 
     # 3. Initialize auto-instrumentation

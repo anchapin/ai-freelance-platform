@@ -23,6 +23,7 @@ from typing import Optional
 
 # Import logging module
 from .logger import get_logger
+from ..config import get_telegram_api_url
 
 # Retry configuration for Telegram notifications
 MAX_NOTIFICATION_RETRIES = 3
@@ -57,7 +58,8 @@ class TelegramNotifier:
 
     def _get_api_url(self, method: str) -> str:
         """Get the full API URL for a given Telegram Bot API method."""
-        return f"https://api.telegram.org/bot{self.bot_token}/{method}"
+        api_url = get_telegram_api_url()
+        return f"{api_url}/bot{self.bot_token}/{method}"
 
     async def _send_message(self, text: str, parse_mode: str = "Markdown") -> bool:
         """

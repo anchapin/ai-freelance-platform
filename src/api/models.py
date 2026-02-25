@@ -339,14 +339,20 @@ class Bid(Base):
 
     Implements deduplication and distributed lock pattern to prevent race conditions
     where multiple scanner instances bid on the same posting simultaneously.
+
+    Issue #33: Enforces unique constraint on (job_id, marketplace) to prevent
+    duplicate bids on the same posting from different agent instances.
     """
 
     __tablename__ = "bids"
 
-    # Unique constraint: only one ACTIVE bid per (marketplace, job_id)
-    # Note: Will be enforced at application level via should_bid() check
-    # since database-level conditional unique constraints are complex across databases
+    # Unique constraints:
+    # 1. (job_id, marketplace): Prevents duplicate bids on same posting (Issue #33)
+    # 2. (marketplace, job_id, status): Only one ACTIVE bid per posting (at app level)
     __table_args__ = (
+        UniqueConstraint(
+            "job_id", "marketplace", name="unique_bid_per_posting"
+        ),
         UniqueConstraint(
             "marketplace", "job_id", "status", name="unique_active_bid_per_posting"
         ),
@@ -539,9 +545,21 @@ class EscalationLog(Base):
     when retries occur.
 
     Pillar 1.7 - Human-in-the-Loop (HITL) Escalation Idempotency
+
+    Issue #33: Enforces unique constraint on (task_id, idempotency_key) to prevent
+    duplicate escalation logs for the same task with the same idempotency key.
+    This ensures idempotency is enforced at the database level.
     """
 
     __tablename__ = "escalation_logs"
+
+    # Unique constraint: (task_id, idempotency_key) to ensure
+    # only one escalation log per task per idempotency key
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id", "idempotency_key", name="unique_escalation_per_task"
+        ),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
 
@@ -568,7 +586,8 @@ class EscalationLog(Base):
 
     # Idempotency key (prevents duplicate notifications on retry)
     # Format: "task_id_escalation_reason"
-    idempotency_key = Column(String, nullable=False, unique=True, index=True)
+    # Unique constraint is enforced via __table_args__ (Issue #33)
+    idempotency_key = Column(String, nullable=False, index=True)
 
     # Task metadata at time of escalation
     amount_paid = Column(Integer, nullable=True)  # Amount in cents

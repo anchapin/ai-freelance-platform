@@ -230,22 +230,50 @@ class LLMHealthChecker:
             ),
         }
 
-    async def health_check(self, endpoint: str, timeout_seconds: int = 5) -> bool:
+    async def health_check(
+        self, endpoint: str, timeout_seconds: int = 5
+    ) -> bool:
         """
-        Perform health check on endpoint.
+        Perform health check on Ollama endpoint.
 
-        Override in subclass to implement actual health check logic.
-        Default: returns True (assumes healthy).
+        Checks the /api/health endpoint to verify service availability.
+
+        Args:
+            endpoint: The endpoint URL (e.g., http://localhost:11434/v1)
+            timeout_seconds: Timeout for health check request
+
+        Returns:
+            True if healthy (status 200), False otherwise
         """
         metrics = self.get_health_status(endpoint)
 
         try:
-            logger.debug(f"[HEALTH] Checking {endpoint}...")
-            # Placeholder: actual implementation would test endpoint connectivity
-            # For now, assume it's healthy if no recent failures
-            if metrics.consecutive_failures == 0:
-                metrics.last_health_check_at = datetime.now(timezone.utc)
-                return True
+            import httpx
+
+            # Convert endpoint URL to health check URL
+            # http://localhost:11434/v1 -> http://localhost:11434/api/health
+            base_url = endpoint.rsplit("/v1", 1)[0]
+            health_url = f"{base_url}/api/health"
+
+            logger.debug(f"[HEALTH] Checking {health_url}...")
+
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.get(health_url)
+
+                with self._lock:
+                    metrics.last_health_check_at = datetime.now(timezone.utc)
+
+                if response.status_code == 200:
+                    logger.debug(f"[HEALTH] {endpoint} is healthy")
+                    return True
+                else:
+                    logger.warning(
+                        f"[HEALTH] {endpoint} returned status {response.status_code}"
+                    )
+                    return False
+
+        except asyncio.TimeoutError:
+            logger.warning(f"[HEALTH] Health check timeout for {endpoint}")
             return False
         except Exception as e:
             logger.error(f"[HEALTH] Check failed for {endpoint}: {e}")

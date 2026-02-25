@@ -47,6 +47,18 @@ def test_db():
     session = SessionLocal()
     yield session
     session.close()
+<<<<<<< HEAD
+=======
+from src.api.query_optimizations import (
+    get_client_tasks_optimized,
+    get_completed_tasks_by_domain_optimized,
+    get_pending_tasks_optimized,
+    get_active_bids_optimized,
+    get_recent_bids_optimized,
+    get_bid_dedup_set_optimized,
+    get_task_by_client_and_status_optimized,
+    get_tasks_for_metrics_optimized,
+    )
 
 
 class TestDatabaseIndexes:
@@ -181,6 +193,10 @@ class TestOptimizedQueries:
 
     def test_get_active_bids_optimized(self, test_db, sample_bids):
         """Verify optimized active bids query works correctly."""
+<<<<<<< HEAD
+=======
+        bids = sample_bids
+>>>>>>> origin/main
         results = get_active_bids_optimized(test_db)
         assert len(results) > 0
         assert all(
@@ -190,11 +206,19 @@ class TestOptimizedQueries:
 
     def test_get_active_bids_optimized_with_marketplace(self, test_db, sample_bids):
         """Verify marketplace-filtered active bids query works correctly."""
+<<<<<<< HEAD
+=======
+        bids = sample_bids
+>>>>>>> origin/main
         results = get_active_bids_optimized(test_db, marketplace="upwork")
         assert all(b.marketplace == "upwork" for b in results)
 
     def test_get_recent_bids_optimized(self, test_db, sample_bids):
         """Verify optimized recent bids query works correctly."""
+<<<<<<< HEAD
+=======
+        bids = sample_bids
+>>>>>>> origin/main
         results = get_recent_bids_optimized(test_db, marketplace="upwork", limit=10)
         assert all(b.marketplace == "upwork" for b in results)
         # Should be ordered by created_at desc
@@ -203,6 +227,10 @@ class TestOptimizedQueries:
 
     def test_get_bid_dedup_set_optimized(self, test_db, sample_bids):
         """Verify optimized bid deduplication query works correctly."""
+<<<<<<< HEAD
+=======
+        bids = sample_bids
+>>>>>>> origin/main
         results = get_bid_dedup_set_optimized(test_db, [BidStatus.PENDING])
         assert isinstance(results, set)
         assert len(results) > 0

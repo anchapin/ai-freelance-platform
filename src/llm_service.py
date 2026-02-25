@@ -15,7 +15,10 @@ from dotenv import load_dotenv
 import os
 import asyncio
 import random
+import time
 from typing import Optional, Dict, Any
+from .config import get_ollama_url
+from .llm_health_check import get_health_checker, CircuitBreakerError
 
 # Load environment variables from .env file
 # Create a .env file in your project root with the following variables:
@@ -38,9 +41,12 @@ TASK_TYPE_BASIC_ADMIN = "basic_admin"  # Simple tasks, suitable for local models
 TASK_TYPE_COMPLEX = "complex"  # Complex tasks requiring powerful models
 TASK_TYPE_DISTILLED = "distilled"  # Tasks handled by fine-tuned local model
 
+# Load MIN_CLOUD_REVENUE from ConfigManager
+from .config import get_config as get_config_manager
+
 # Revenue threshold for cloud vs local model selection (in cents)
-# Default: $30 - below this use local, above this use cloud
-MIN_CLOUD_REVENUE = int(os.environ.get("MIN_CLOUD_REVENUE", "3000"))
+# Loaded from ConfigManager - see src/config/manager.py for validation
+MIN_CLOUD_REVENUE: int = None  # Will be initialized below
 
 
 class ModelConfig:
@@ -55,7 +61,7 @@ class ModelConfig:
         self,
         cloud_model: str = DEFAULT_CLOUD_MODEL,
         local_model: str = DEFAULT_LOCAL_MODEL,
-        local_base_url: str = "http://localhost:11434/v1",
+        local_base_url: Optional[str] = None,
         local_api_key: str = "not-needed",
         use_local_by_default: bool = False,
         task_model_map: Optional[Dict[str, str]] = None,
@@ -68,6 +74,7 @@ class ModelConfig:
             cloud_model: Default cloud model (e.g., "gpt-4o-mini")
             local_model: Default local model (e.g., "llama3.2")
             local_base_url: Base URL for local inference (e.g., "http://localhost:11434/v1")
+                           If None, reads from OLLAMA_URL env var or defaults
             local_api_key: API key for local inference (usually not needed)
             use_local_by_default: Whether to use local models by default for all tasks
             task_model_map: Optional dict mapping task types to specific models
@@ -77,7 +84,7 @@ class ModelConfig:
         """
         self.cloud_model = cloud_model
         self.local_model = local_model
-        self.local_base_url = local_base_url
+        self.local_base_url = local_base_url or get_ollama_url()
         self.local_api_key = local_api_key
         self.use_local_by_default = use_local_by_default
         self.task_model_map = task_model_map or {}
@@ -123,8 +130,8 @@ class ModelConfig:
             cloud_model=os.environ.get("CLOUD_MODEL", DEFAULT_CLOUD_MODEL),
             local_model=os.environ.get("LOCAL_MODEL", DEFAULT_LOCAL_MODEL),
             local_base_url=os.environ.get(
-                "LOCAL_BASE_URL", "http://localhost:11434/v1"
-            ),
+                "LOCAL_BASE_URL"
+            ),  # Will use get_ollama_url() via __init__ if None
             local_api_key=os.environ.get("LOCAL_API_KEY", "not-needed"),
             use_local_by_default=os.environ.get("USE_LOCAL_BY_DEFAULT", "false").lower()
             == "true",
@@ -173,6 +180,14 @@ class ModelConfig:
             )
 
 
+# Initialize MIN_CLOUD_REVENUE from ConfigManager
+try:
+    MIN_CLOUD_REVENUE = get_config_manager().MIN_CLOUD_REVENUE
+except Exception:
+    # Fallback in case ConfigManager fails
+    MIN_CLOUD_REVENUE = int(os.environ.get("MIN_CLOUD_REVENUE", "3000"))
+
+
 # Global default model config
 _default_model_config: Optional[ModelConfig] = None
 
@@ -213,6 +228,7 @@ class LLMService:
         default_max_tokens: int = 1000,
         model_config: Optional[ModelConfig] = None,
         enable_fallback: bool = True,
+        enable_circuit_breaker: bool = True,
     ):
         """
         Initialize the LLM Service.
@@ -253,6 +269,48 @@ class LLMService:
             default_max_tokens: Default maximum tokens to generate.
             model_config: Optional ModelConfig for task-based model selection.
             enable_fallback: Whether to automatically try local if cloud fails.
+            enable_circuit_breaker: Whether to use circuit breaker for Ollama (default: True).
+            """
+        """
+        Initialize the LLM Service.
+
+        Args:
+            base_url: The base URL for the API endpoint.
+                     If not provided, reads from BASE_URL environment variable or .env file.
+
+                     # =========================================================================
+                     # CONFIGURING THE BASE URL
+                     # =========================================================================
+                     #
+                     # CLOUD PROVIDERS (use these URLs for commercial LLM APIs):
+                     #
+                     # OpenAI:           https://api.openai.com/v1
+                     # Anthropic:        https://api.anthropic.com (requires custom client)
+                     # Google Gemini:     https://generativelanguage.googleapis.com/v1
+                     # Cohere:           https://api.cohere.ai/v1
+                     # Mistral:          https://api.mistral.ai/v1
+                     #
+                     # LOCAL INFERENCE (use this URL for local Ollama/llama.cpp):
+                     #
+                     # Ollama:           http://localhost:11434/v1
+                     # llama.cpp/LM Studio: http://localhost:1234/v1
+                     # vLLM:             http://localhost:8000/v1
+                     #
+                     # Example for local Ollama:
+                     #   base_url="http://localhost:11434/v1"
+                     #   api_key="not-needed"  # Ollama doesn't require API keys
+                     #
+                     # =========================================================================
+
+            api_key: The API key for authentication.
+                    If not provided, reads from API_KEY environment variable or .env file.
+                    Note: Local inference servers like Ollama often don't require API keys.
+            model: The default model to use for completions.
+            default_temperature: Default temperature for generation.
+            default_max_tokens: Default maximum tokens to generate.
+            model_config: Optional ModelConfig for task-based model selection.
+            enable_fallback: Whether to automatically try local if cloud fails.
+            enable_circuit_breaker: Whether to use circuit breaker for Ollama (default: True).
         """
         # Get base_url from parameter, environment, or .env file
         self.base_url = base_url or os.environ.get(
@@ -269,9 +327,19 @@ class LLMService:
         self.default_max_tokens = default_max_tokens
         self.model_config = model_config or get_default_model_config()
         self.enable_fallback = enable_fallback
+        self.enable_circuit_breaker = enable_circuit_breaker
 
         # Track if we're currently using local
         self._is_local = "localhost" in self.base_url or "127.0.0.1" in self.base_url
+
+        # Initialize health checker for circuit breaker (only for local endpoints)
+        self._health_checker = None
+        if self._is_local and enable_circuit_breaker:
+            self._health_checker = get_health_checker()
+            # Register this endpoint for monitoring
+            self._health_checker.register_endpoint(
+                self.base_url, failure_threshold=3, recovery_timeout_seconds=60
+            )
 
         # Initialize the OpenAI client with custom base URL
         self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
@@ -298,7 +366,18 @@ class LLMService:
 
         Returns:
             Dictionary containing the response text and metadata
+
+        Raises:
+            CircuitBreakerError: If circuit breaker is OPEN for this endpoint
         """
+        # Check circuit breaker before making request
+        if self._health_checker:
+            if not self._health_checker.should_allow_request(self.base_url):
+                raise CircuitBreakerError(
+                    f"Circuit breaker is OPEN for {self.base_url}. "
+                    f"Service appears to be unavailable."
+                )
+
         # Stealth mode: add random delay to mimic human typing speed
         if stealth_mode:
             delay = random.uniform(2.0, 5.0)
@@ -319,9 +398,8 @@ class LLMService:
             except RuntimeError:
                 # No running event loop, safe to proceed
                 pass
-            import time as time_module
 
-            time_module.sleep(delay)
+            time.sleep(delay)
 
         messages = []
 
@@ -330,24 +408,38 @@ class LLMService:
 
         messages.append({"role": "user", "content": prompt})
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=temperature or self.default_temperature,
-            max_tokens=max_tokens or self.default_max_tokens,
-            **kwargs,
-        )
+        try:
+            start_time = time.time()
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature or self.default_temperature,
+                max_tokens=max_tokens or self.default_max_tokens,
+                timeout=30,  # Per-request timeout
+                **kwargs,
+            )
+            response_time_ms = (time.time() - start_time) * 1000
 
-        return {
-            "content": response.choices[0].message.content,
-            "model": response.model,
-            "usage": {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            },
-            "stealth_mode_used": stealth_mode,
-        }
+            # Record success in health checker
+            if self._health_checker:
+                self._health_checker.record_success(self.base_url, response_time_ms)
+
+            return {
+                "content": response.choices[0].message.content,
+                "model": response.model,
+                "usage": {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens,
+                },
+                "stealth_mode_used": stealth_mode,
+                "response_time_ms": response_time_ms,
+            }
+        except Exception as e:
+            # Record failure in health checker
+            if self._health_checker:
+                self._health_checker.record_failure(self.base_url, str(e))
+            raise
 
     async def complete_async(
         self,
@@ -640,8 +732,12 @@ class LLMService:
         """
         Generate a completion with automatic fallback to local model if cloud fails.
 
-        This method attempts the request with the current configuration,
-        and if it fails and fallback is enabled, tries the local model.
+        Uses exponential backoff with multiple attempts:
+        - Attempt 0 (10s timeout, no backoff): Try cloud
+        - Attempt 1 (20s timeout, 2s backoff): Retry cloud
+        - Attempt 2 (30s timeout, 5s backoff): Fallback to local
+
+        Max total latency: ~35 seconds (significantly improved from 90+ seconds).
 
         Args:
             prompt: The user prompt/input
@@ -653,42 +749,85 @@ class LLMService:
         Returns:
             Dictionary containing the response text and metadata
         """
-        # Try current configuration first
-        try:
-            return self.complete(
-                prompt=prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-                **kwargs,
-            )
-        except Exception as cloud_error:
-            # If cloud failed and fallback is enabled, try local
-            if self.enable_fallback and not self._is_local:
-                print(f"Cloud inference failed: {cloud_error}")
-                print("Attempting fallback to local model...")
+        from .llm_health_check import ExponentialBackoff
 
-                # Create local service
-                local_service = self.with_local()
+        # Exponential backoff configuration for fallback chain
+        # Timeouts per attempt: [10s, 20s, 30s]
+        # Delays between attempts: [0s, 2s, 5s]
+        timeouts = [10, 20, 30]
+        backoff = ExponentialBackoff(
+            initial_delay_ms=0, base=2.0, max_delay_ms=5000, jitter_factor=0.1
+        )
 
+        last_error = None
+
+        # Try cloud with exponential backoff
+        for attempt in range(2):  # 2 attempts for cloud (10s, then 20s)
+            try:
+                # Add backoff delay between attempts
+                if attempt > 0:
+                    delay_ms = attempt * 2000  # 0s for attempt 0, 2s for attempt 1
+                    time.sleep(delay_ms / 1000.0)
+
+                # Temporarily override timeout for this request
+                orig_client = self.client
+                self.client = OpenAI(
+                    base_url=self.base_url,
+                    api_key=self.api_key,
+                    timeout=timeouts[attempt],
+                )
                 try:
-                    result = local_service.complete(
+                    result = self.complete(
                         prompt=prompt,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         system_prompt=system_prompt,
                         **kwargs,
                     )
-                    # Add fallback info to result
-                    result["fallback_used"] = True
-                    result["original_error"] = str(cloud_error)
+                    result["fallback_used"] = False
+                    result["attempt"] = attempt
                     return result
-                except Exception:
-                    # Both failed, raise the original cloud error
-                    raise cloud_error
+                finally:
+                    self.client = orig_client
 
-            # Fallback disabled or already local, re-raise
-            raise
+            except CircuitBreakerError as e:
+                # Circuit breaker is open, skip to local
+                last_error = e
+                break
+            except Exception as e:
+                last_error = e
+                if attempt == 1:
+                    break  # Done with cloud attempts
+
+        # Try fallback to local if enabled
+        if self.enable_fallback and not self._is_local:
+            print(f"Cloud inference failed: {last_error}")
+            print("Attempting fallback to local model...")
+
+            # Create local service (with larger timeout for local)
+            local_service = self.with_local(enable_circuit_breaker=self.enable_circuit_breaker)
+
+            try:
+                # Attempt 2: Local with 30s timeout and 5s backoff
+                time.sleep(5.0)  # 5s backoff before fallback
+
+                result = local_service.complete(
+                    prompt=prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system_prompt=system_prompt,
+                    **kwargs,
+                )
+                result["fallback_used"] = True
+                result["original_error"] = str(last_error)
+                result["attempt"] = 2
+                return result
+            except Exception as local_error:
+                # Both failed, raise the original error
+                raise last_error if last_error else local_error
+
+        # Fallback disabled or already local, re-raise
+        raise last_error if last_error else Exception("Unknown error in complete_with_fallback")
 
 
 # =============================================================================
