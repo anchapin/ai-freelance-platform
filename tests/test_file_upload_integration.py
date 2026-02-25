@@ -5,7 +5,6 @@ Tests the create-checkout-session endpoint with file uploads.
 """
 
 import base64
-import pytest
 from fastapi.testclient import TestClient
 
 from src.api.main import app

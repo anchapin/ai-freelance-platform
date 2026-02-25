@@ -12,8 +12,7 @@ import hmac
 import hashlib
 import json
 import time
-from typing import Dict, Tuple, Optional
-from datetime import datetime, timedelta, timezone
+from typing import Dict, Optional
 
 from ..utils.logger import get_logger
 
@@ -100,7 +99,7 @@ def verify_webhook_signature(
             key, value = part.split("=", 1)
             signature_parts[key] = value
     except ValueError:
-        error_msg = f"Malformed stripe-signature header format"
+        error_msg = "Malformed stripe-signature header format"
         logger.warning(
             f"[WEBHOOK SECURITY] {error_msg}: {signature[:50]}",
             extra=logger_ctx,

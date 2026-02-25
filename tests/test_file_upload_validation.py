@@ -11,7 +11,6 @@ Tests comprehensive file validation including:
 
 import base64
 import pytest
-from pathlib import Path
 
 from src.utils.file_validator import (
     sanitize_filename,

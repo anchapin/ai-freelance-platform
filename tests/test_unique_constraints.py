@@ -12,12 +12,11 @@ These constraints prevent data duplication and maintain data integrity.
 
 import pytest
 import uuid
-from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 
-from src.api.models import Base, ClientProfile, Task, TaskStatus
+from src.api.models import Base, ClientProfile, Task
 
 
 @pytest.fixture

@@ -13,8 +13,7 @@ import hmac
 import hashlib
 import time
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from src.utils.webhook_security import (
     verify_webhook_signature,

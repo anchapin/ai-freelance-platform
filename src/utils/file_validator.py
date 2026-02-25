@@ -13,7 +13,6 @@ import os
 import re
 import base64
 from typing import Optional, Tuple
-from pathlib import Path
 
 from ..utils.logger import get_logger
 

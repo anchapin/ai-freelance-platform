@@ -12,8 +12,6 @@ Tests cover:
 import pytest
 import asyncio
 import logging
-from unittest.mock import Mock, patch
-import contextvars
 
 import sys
 import os
@@ -250,12 +248,12 @@ class TestAsyncBoundaryPropagation:
     async def test_trace_context_isolation_between_tasks(self):
         """Different async tasks should have isolated trace contexts."""
         async def task_a():
-            trace_id = init_trace_context()
+            init_trace_context()
             await asyncio.sleep(0.01)
             return get_trace_id()
 
         async def task_b():
-            trace_id = init_trace_context()
+            init_trace_context()
             await asyncio.sleep(0.01)
             return get_trace_id()
 
@@ -531,7 +529,7 @@ class TestDistributedTracingIntegration:
     async def test_trace_context_with_concurrent_operations(self):
         """Test trace context isolation with concurrent operations."""
         async def operation(op_id):
-            trace_id = init_trace_context()
+            init_trace_context()
             await asyncio.sleep(0.001)
             return (op_id, get_trace_id())
 

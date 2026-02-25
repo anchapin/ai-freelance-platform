@@ -18,7 +18,6 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import List, Tuple
 import argparse
-import json
 
 
 @dataclass
@@ -132,7 +131,7 @@ class BranchCleaner:
 
         try:
             # Use -D to force delete (ignore merge status)
-            output = self.run_git_command(f"git branch -D {branch}")
+            self.run_git_command(f"git branch -D {branch}")
             self.cleaned_branches.append(branch)
             return True
         except Exception as e:

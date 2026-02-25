@@ -1552,7 +1552,7 @@ async def stripe_webhook(
         event_id = event.get("id", "unknown")
 
         logger.info(
-            f"[WEBHOOK] Processing event",
+            "[WEBHOOK] Processing event",
             extra={
                 "event_type": event_type,
                 "event_id": event_id[:12] + "..." if len(event_id) > 12 else event_id,
@@ -1584,7 +1584,7 @@ async def stripe_webhook(
                 db.commit()
 
                 logger.info(
-                    f"[WEBHOOK] Task updated to PAID",
+                    "[WEBHOOK] Task updated to PAID",
                     extra={
                         "task_id": task.id,
                         "session_id": session_id,
@@ -1603,7 +1603,7 @@ async def stripe_webhook(
                 }
             else:
                 logger.warning(
-                    f"[WEBHOOK] No task found for session",
+                    "[WEBHOOK] No task found for session",
                     extra={
                         "session_id": session_id,
                         "event_id": event_id[:12] + "...",
@@ -1637,7 +1637,7 @@ async def stripe_webhook(
                 db.commit()
 
                 logger.info(
-                    f"[WEBHOOK] Task marked as FAILED (session expired)",
+                    "[WEBHOOK] Task marked as FAILED (session expired)",
                     extra={
                         "task_id": task.id,
                         "session_id": session_id,
@@ -1654,7 +1654,7 @@ async def stripe_webhook(
 
             else:
                 logger.warning(
-                    f"[WEBHOOK] No task found for expired session",
+                    "[WEBHOOK] No task found for expired session",
                     extra={
                         "session_id": session_id,
                         "event_id": event_id[:12] + "...",
@@ -1667,7 +1667,7 @@ async def stripe_webhook(
 
         # Return 200 for events we don't handle (standard practice per Stripe docs)
         logger.info(
-            f"[WEBHOOK] Received unhandled event type",
+            "[WEBHOOK] Received unhandled event type",
             extra={
                 "event_type": event_type,
                 "event_id": event_id[:12] + "...",

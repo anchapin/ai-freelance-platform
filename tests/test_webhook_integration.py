@@ -2,7 +2,6 @@
 Integration tests for webhook endpoint with enhanced security (Issue #35).
 """
 
-import pytest
 import json
 import hmac
 import hashlib
