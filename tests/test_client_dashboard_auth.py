@@ -230,8 +230,8 @@ class TestClientDiscountInfoAuth:
         finally:
             app.dependency_overrides.clear()
 
-    def test_invalid_token_returns_403(self):
-        """Test that invalid token returns 403."""
+    def test_invalid_token_returns_401(self):
+        """Test that invalid token returns 401 Unauthorized."""
         client = TestClient(app)
         mock_db = Mock()
 
@@ -241,7 +241,7 @@ class TestClientDiscountInfoAuth:
             response = client.get(
                 "/api/client/discount-info?email=user@test.com&token=invalid"
             )
-            assert response.status_code == 403
+            assert response.status_code == 401
         finally:
             app.dependency_overrides.clear()
 
