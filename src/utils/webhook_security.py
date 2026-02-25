@@ -165,7 +165,7 @@ def verify_webhook_signature(
     if not hmac.compare_digest(signed_content, expected_signature):
         # Log failed signature attempt without revealing the actual signature
         logger.warning(
-            f"[WEBHOOK SECURITY SIGNATURE VERIFICATION FAILED]",
+            "[WEBHOOK SECURITY SIGNATURE VERIFICATION FAILED]",
             extra={
                 **logger_ctx,
                 "received_signature": signed_content[:8] + "...",
@@ -178,7 +178,7 @@ def verify_webhook_signature(
     try:
         event = json.loads(payload)
         logger.info(
-            f"[WEBHOOK SECURITY] Webhook signature verified successfully",
+            "[WEBHOOK SECURITY] Webhook signature verified successfully",
             extra={
                 **logger_ctx,
                 "event_type": event.get("type", "unknown"),
