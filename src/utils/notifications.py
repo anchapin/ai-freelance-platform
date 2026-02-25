@@ -16,6 +16,7 @@ Usage:
     notifier.request_human_help("task-123", "Task failed after 3 retries")
 """
 
+import asyncio
 import os
 import httpx
 from typing import Optional
@@ -23,12 +24,18 @@ from typing import Optional
 # Import logging module
 from .logger import get_logger
 
+# Retry configuration for Telegram notifications
+MAX_NOTIFICATION_RETRIES = 3
+INITIAL_BACKOFF_SECONDS = 1.0
+BACKOFF_MULTIPLIER = 2.0
+
 
 class TelegramNotifier:
     """
     Telegram notification client for sending urgent messages and human help requests.
     
     Uses the Telegram Bot API to send messages to a configured chat.
+    Includes retry logic with exponential backoff for reliability.
     """
     
     def __init__(self):
@@ -52,7 +59,7 @@ class TelegramNotifier:
     
     async def _send_message(self, text: str, parse_mode: str = "Markdown") -> bool:
         """
-        Send a message via Telegram API.
+        Send a message via Telegram API with retry and exponential backoff.
         
         Args:
             text: Message text to send
@@ -72,25 +79,44 @@ class TelegramNotifier:
             "parse_mode": parse_mode
         }
         
-        try:
-            with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
-                result = response.json()
-                
-                if result.get("ok"):
-                    self.logger.info("Telegram message sent successfully")
-                    return True
-                else:
-                    self.logger.error(f"Telegram API error: {result.get('description')}")
-                    return False
+        last_error = None
+        backoff = INITIAL_BACKOFF_SECONDS
+        
+        for attempt in range(1, MAX_NOTIFICATION_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(url, json=payload)
+                    response.raise_for_status()
+                    result = response.json()
                     
-        except httpx.HTTPError as e:
-            self.logger.error(f"HTTP error sending Telegram message: {e}")
-            return False
-        except Exception as e:
-            self.logger.error(f"Error sending Telegram message: {e}")
-            return False
+                    if result.get("ok"):
+                        self.logger.info("Telegram message sent successfully")
+                        return True
+                    else:
+                        last_error = result.get("description", "Unknown API error")
+                        self.logger.error(f"Telegram API error: {last_error}")
+                        
+            except httpx.HTTPError as e:
+                last_error = str(e)
+                self.logger.error(
+                    f"HTTP error sending Telegram message (attempt {attempt}/{MAX_NOTIFICATION_RETRIES}): {e}"
+                )
+            except Exception as e:
+                last_error = str(e)
+                self.logger.error(
+                    f"Error sending Telegram message (attempt {attempt}/{MAX_NOTIFICATION_RETRIES}): {e}"
+                )
+            
+            if attempt < MAX_NOTIFICATION_RETRIES:
+                self.logger.info(f"Retrying Telegram notification in {backoff:.1f}s...")
+                await asyncio.sleep(backoff)
+                backoff *= BACKOFF_MULTIPLIER
+        
+        self.logger.error(
+            f"Failed to send Telegram notification after {MAX_NOTIFICATION_RETRIES} attempts. "
+            f"Last error: {last_error}"
+        )
+        return False
     
     async def send_urgent_message(self, message: str) -> bool:
         """
