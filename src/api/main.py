@@ -13,7 +13,7 @@ import stripe
 
 from datetime import datetime
 from .database import get_db, init_db
-from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus
+from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus, EscalationLog
 from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
 
@@ -118,7 +118,11 @@ def _should_escalate_task(task, retry_count: int, error_message: str = None) -> 
 
 async def _escalate_task(db, task, reason: str, error_message: str = None):
     """
-    Escalate a task to human review.
+    Escalate a task to human review with idempotent notification.
+    
+    Implements idempotency via EscalationLog to prevent duplicate Telegram
+    notifications on retry. Uses idempotency_key (task_id_reason) to detect
+    duplicate escalations and skip re-notification.
     
     Args:
         db: Database session
@@ -129,6 +133,7 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
     # Get logger instance
     logger = get_logger(__name__)
     
+    # Update task status atomically with escalation log
     task.status = TaskStatus.ESCALATION
     task.escalation_reason = reason
     task.escalated_at = datetime.utcnow()
@@ -146,25 +151,73 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
     if error_message:
         logger.warning(f"[ESCALATION] Error: {error_message[:200]}...")
     
-    # Send Telegram notification for high-value tasks (profit protection)
-    if is_high_value:
-        try:
-            notifier = TelegramNotifier()
-            context = f"Reason: {reason}"
-            if error_message:
-                context += f"\nError: {error_message[:200]}"
-            
-            await notifier.request_human_help(
+    # Check for idempotency via EscalationLog
+    # Format: "task_id_reason"
+    idempotency_key = f"{task.id}_{reason}"
+    
+    try:
+        escalation_log = db.query(EscalationLog).filter(
+            EscalationLog.idempotency_key == idempotency_key
+        ).first()
+        
+        if escalation_log is None:
+            # First escalation - create new log
+            escalation_log = EscalationLog(
                 task_id=task.id,
-                context=context,
+                reason=reason,
+                error_message=error_message,
+                idempotency_key=idempotency_key,
                 amount_paid=task.amount_paid,
                 domain=task.domain,
-                client_email=task.client_email
+                client_email=task.client_email,
+                notification_sent=False,
+                notification_attempt_count=0
             )
-            logger.info(f"[ESCALATION] Telegram notification sent for high-value task {task.id}")
-        except Exception as e:
-            logger.error(f"[ESCALATION] Failed to send Telegram notification: {e}")
+            db.add(escalation_log)
+        
+        # Send Telegram notification only for high-value tasks and only once
+        should_send_notification = (
+            is_high_value and 
+            not escalation_log.notification_sent
+        )
+        
+        if should_send_notification:
+            try:
+                notifier = TelegramNotifier()
+                context = f"Reason: {reason}"
+                if error_message:
+                    context += f"\nError: {error_message[:200]}"
+                
+                await notifier.request_human_help(
+                    task_id=task.id,
+                    context=context,
+                    amount_paid=task.amount_paid,
+                    domain=task.domain,
+                    client_email=task.client_email
+                )
+                
+                # Mark notification as sent
+                escalation_log.notification_sent = True
+                escalation_log.notification_attempt_count += 1
+                escalation_log.last_notification_attempt_at = datetime.utcnow()
+                
+                logger.info(f"[ESCALATION] Telegram notification sent for high-value task {task.id}")
+            except Exception as e:
+                # Log error but don't raise - task status should still be updated
+                escalation_log.notification_attempt_count += 1
+                escalation_log.last_notification_attempt_at = datetime.utcnow()
+                escalation_log.notification_error = str(e)[:500]
+                logger.error(f"[ESCALATION] Failed to send Telegram notification: {e}")
+        else:
+            # Not first notification or not high-value - just increment attempt count
+            escalation_log.notification_attempt_count += 1
+            escalation_log.last_notification_attempt_at = datetime.utcnow()
     
+    except Exception as e:
+        # If escalation log creation fails, still update task and commit
+        logger.error(f"[ESCALATION] Error creating escalation log: {e}")
+    
+    # Atomically commit task status update and escalation log
     db.commit()
 
 
