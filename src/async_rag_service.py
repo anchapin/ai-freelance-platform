@@ -77,7 +77,6 @@ class AsyncRAGCircuitBreaker:
 
     def record_success(self):
         """Record successful operation."""
-        old_state = self.state
         if self.state == CircuitBreakerState.HALF_OPEN:
             self.success_count += 1
             if self.success_count >= self.config.success_threshold:
@@ -89,7 +88,6 @@ class AsyncRAGCircuitBreaker:
 
     def record_failure(self):
         """Record failed operation."""
-        old_state = self.state
         self.failure_count += 1
         self.last_failure_time = time.time()
 
