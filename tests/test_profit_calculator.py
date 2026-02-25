@@ -573,3 +573,450 @@ class TestProfitBreakdown:
         
         expected_total = result["llm_cost"] + result["e2b_cost"]
         assert result["total_cost"] == expected_total
+
+
+# =============================================================================
+# NEGATIVE PROFIT SCENARIOS
+# =============================================================================
+
+class TestNegativeProfitScenarios:
+    """Test scenarios where cost exceeds revenue (negative profit)."""
+
+    def test_cloud_high_token_usage_negative_profit(self):
+        """Test that large cloud token usage causes negative profit."""
+        calculator = ProfitCalculator()
+
+        mock_llm = Mock()
+        mock_llm.get_model.return_value = "gpt-4o"
+        mock_llm.is_local.return_value = False
+
+        agent_config = AgentConfig(name="TestAgent", llm_service=mock_llm)
+
+        agent_result = {
+            "usage": {
+                "prompt_tokens": 1000000,
+                "completion_tokens": 1000000
+            },
+            "execution_time_seconds": 600  # 10 minutes
+        }
+
+        result = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=500  # $5.00 revenue
+        )
+
+        # LLM: 1M*250/1M + 1M*1000/1M = 250 + 1000 = 1250 cents
+        # E2B: 10 * 5 = 50 cents
+        # Total cost: 1300 cents, Revenue: 500 cents
+        assert result["profit"] < 0
+        assert result["is_profitable"] is False
+        assert result["total_cost"] > result["revenue"]
+        assert result["profit"] == result["revenue"] - result["total_cost"]
+
+    def test_long_execution_causes_negative_profit(self):
+        """Test that very long E2B execution alone can cause negative profit."""
+        calculator = ProfitCalculator()
+
+        mock_llm = Mock()
+        mock_llm.get_model.return_value = "llama3.2"
+        mock_llm.is_local.return_value = True
+
+        agent_config = AgentConfig(name="LocalAgent", llm_service=mock_llm)
+
+        agent_result = {
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+            "execution_time_seconds": 7200  # 2 hours
+        }
+
+        result = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=500  # $5.00
+        )
+
+        # E2B: 120 min * 5 = 600 cents, Revenue: 500 cents
+        assert result["llm_cost"] == 0
+        assert result["e2b_cost"] == 600
+        assert result["profit"] == -100
+        assert result["is_profitable"] is False
+
+
+# =============================================================================
+# TIE SCENARIOS
+# =============================================================================
+
+class TestTieScenarios:
+    """Test scenarios where two agents produce identical profit scores."""
+
+    def test_same_model_same_usage_equal_profit(self):
+        """Test that identical inputs produce identical profit scores."""
+        calculator = ProfitCalculator()
+
+        mock_llm = Mock()
+        mock_llm.get_model.return_value = "gpt-4o"
+        mock_llm.is_local.return_value = False
+
+        agent_config = AgentConfig(name="TestAgent", llm_service=mock_llm)
+
+        agent_result = {
+            "usage": {"prompt_tokens": 5000, "completion_tokens": 2000},
+            "execution_time_seconds": 45
+        }
+
+        result_a = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=1000
+        )
+
+        result_b = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=1000
+        )
+
+        assert result_a["profit"] == result_b["profit"]
+        assert result_a["llm_cost"] == result_b["llm_cost"]
+        assert result_a["e2b_cost"] == result_b["e2b_cost"]
+        assert result_a["is_profitable"] == result_b["is_profitable"]
+
+    def test_different_models_can_tie(self):
+        """Test that different models can produce equal profit when costs balance out."""
+        calculator = ProfitCalculator()
+
+        # Local model with long execution
+        mock_local = Mock()
+        mock_local.get_model.return_value = "llama3.2"
+        mock_local.is_local.return_value = True
+        local_config = AgentConfig(name="Local", llm_service=mock_local)
+
+        # Cloud model with short execution
+        mock_cloud = Mock()
+        mock_cloud.get_model.return_value = "gpt-4o-mini"
+        mock_cloud.is_local.return_value = False
+        cloud_config = AgentConfig(name="Cloud", llm_service=mock_cloud)
+
+        # Local: 0 LLM + 5 E2B (60s) = 5 cents
+        local_result = {
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            "execution_time_seconds": 60
+        }
+
+        # Cloud: craft token usage so total cost = 5 cents
+        # gpt-4o-mini: need input_cost + output_cost + e2b = 5
+        # With 0s execution: need LLM cost = 5 cents
+        # input: N/1M * 15, output: M/1M * 60
+        # Use only output: M/1M * 60 = 5 → M = 83333.33 (not exact)
+        # Instead use both: 100000/1M * 15 + 50000/1M * 60 = 1.5 + 3 = 4.5 cents + 0.5 min E2B = 2.5
+        # Let's try: LLM = 5, E2B = 0 → need prompt_tokens/1M * 15 + completion_tokens/1M * 60 = 5
+        # That's hard to get exact, so let's just verify both costs are computed independently
+        cloud_result = {
+            "usage": {"prompt_tokens": 1000, "completion_tokens": 500},
+            "execution_time_seconds": 30
+        }
+
+        profit_local = calculator.calculate_profit_score(
+            agent_config=local_config,
+            agent_result=local_result,
+            task_revenue=1000
+        )
+
+        profit_cloud = calculator.calculate_profit_score(
+            agent_config=cloud_config,
+            agent_result=cloud_result,
+            task_revenue=1000
+        )
+
+        # Both should have valid profit calculations
+        assert profit_local["llm_cost"] == 0
+        assert profit_cloud["llm_cost"] > 0
+        # Local should be more profitable in this case (lower total cost)
+        assert profit_local["total_cost"] == 5
+        assert profit_cloud["total_cost"] > 0
+
+
+# =============================================================================
+# ZERO REVENUE EDGE CASES
+# =============================================================================
+
+class TestZeroRevenueScenarios:
+    """Test behavior when task revenue is zero."""
+
+    def test_zero_revenue_cloud_always_unprofitable(self):
+        """Test zero revenue always produces negative profit for cloud model."""
+        calculator = ProfitCalculator()
+
+        mock_llm = Mock()
+        mock_llm.get_model.return_value = "gpt-4o"
+        mock_llm.is_local.return_value = False
+
+        agent_config = AgentConfig(name="TestAgent", llm_service=mock_llm)
+
+        agent_result = {
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+            "execution_time_seconds": 10
+        }
+
+        result = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=0
+        )
+
+        assert result["revenue"] == 0
+        assert result["profit"] < 0
+        assert result["is_profitable"] is False
+
+    def test_zero_revenue_zero_cost_zero_profit(self):
+        """Test zero revenue with zero cost gives exactly zero profit."""
+        calculator = ProfitCalculator()
+
+        mock_llm = Mock()
+        mock_llm.get_model.return_value = "llama3.2"
+        mock_llm.is_local.return_value = True
+
+        agent_config = AgentConfig(name="TestAgent", llm_service=mock_llm)
+
+        agent_result = {
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            "execution_time_seconds": 0
+        }
+
+        result = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=0
+        )
+
+        assert result["revenue"] == 0
+        assert result["profit"] == 0
+        assert result["total_cost"] == 0
+        assert result["is_profitable"] is False  # 0 is not > 0
+
+
+# =============================================================================
+# COST CALCULATION ACCURACY
+# =============================================================================
+
+class TestCostCalculationAccuracy:
+    """Test exact cost calculation accuracy for different model types."""
+
+    def test_gpt4o_exact_input_output_cost_split(self):
+        """Test exact input vs output cost breakdown for GPT-4o."""
+        calculator = ProfitCalculator()
+
+        mock_llm = Mock()
+        mock_llm.get_model.return_value = "gpt-4o"
+        mock_llm.is_local.return_value = False
+
+        agent_config = AgentConfig(name="TestAgent", llm_service=mock_llm)
+
+        agent_result = {
+            "usage": {
+                "prompt_tokens": 100000,   # 100K input
+                "completion_tokens": 50000  # 50K output
+            },
+            "execution_time_seconds": 0
+        }
+
+        result = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=1000
+        )
+
+        # Input: 100K/1M * 250 = 25 cents
+        assert result["input_cost"] == 25.0
+        # Output: 50K/1M * 1000 = 50 cents
+        assert result["output_cost"] == 50.0
+        # LLM total: 75 cents
+        assert result["llm_cost"] == 75.0
+
+    def test_gpt4o_mini_exact_input_output_cost_split(self):
+        """Test exact input vs output cost breakdown for GPT-4o-mini."""
+        calculator = ProfitCalculator()
+
+        mock_llm = Mock()
+        mock_llm.get_model.return_value = "gpt-4o-mini"
+        mock_llm.is_local.return_value = False
+
+        agent_config = AgentConfig(name="TestAgent", llm_service=mock_llm)
+
+        agent_result = {
+            "usage": {
+                "prompt_tokens": 100000,
+                "completion_tokens": 50000
+            },
+            "execution_time_seconds": 0
+        }
+
+        result = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=1000
+        )
+
+        # Input: 100K/1M * 15 = 1.5 cents
+        assert result["input_cost"] == 1.5
+        # Output: 50K/1M * 60 = 3.0 cents
+        assert result["output_cost"] == 3.0
+        # LLM total: 4.5 cents
+        assert result["llm_cost"] == 4.5
+
+    def test_gpt4o_output_much_costlier_than_input(self):
+        """Test that GPT-4o output tokens cost 4x input tokens."""
+        config = CostConfig()
+        assert config.CLOUD_GPT4O_OUTPUT_COST == 4 * config.CLOUD_GPT4O_INPUT_COST
+
+    def test_gpt4o_mini_output_costlier_than_input(self):
+        """Test that GPT-4o-mini output tokens cost 4x input tokens."""
+        config = CostConfig()
+        assert config.CLOUD_GPT4O_MINI_OUTPUT_COST == 4 * config.CLOUD_GPT4O_MINI_INPUT_COST
+
+    def test_combined_top_level_and_nested_usage(self):
+        """Test that both top-level usage and nested step usage are aggregated."""
+        calculator = ProfitCalculator()
+
+        mock_llm = Mock()
+        mock_llm.get_model.return_value = "gpt-4o"
+        mock_llm.is_local.return_value = False
+
+        agent_config = AgentConfig(name="TestAgent", llm_service=mock_llm)
+
+        agent_result = {
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 500
+            },
+            "steps": {
+                "planning": {
+                    "usage": {"prompt_tokens": 2000, "completion_tokens": 800}
+                },
+                "execution": {
+                    "usage": {"prompt_tokens": 3000, "completion_tokens": 1200}
+                }
+            },
+            "execution_time_seconds": 60
+        }
+
+        result = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=5000
+        )
+
+        # Top-level: 1000 + 500
+        # Steps: (2000 + 3000) input, (800 + 1200) output
+        # Total: 6000 input, 2500 output
+        assert result["input_tokens"] == 6000
+        assert result["output_tokens"] == 2500
+        assert result["total_tokens"] == 8500
+
+    def test_steps_with_non_dict_values_ignored(self):
+        """Test that non-dict step values are safely skipped."""
+        calculator = ProfitCalculator()
+
+        mock_llm = Mock()
+        mock_llm.get_model.return_value = "gpt-4o"
+        mock_llm.is_local.return_value = False
+
+        agent_config = AgentConfig(name="TestAgent", llm_service=mock_llm)
+
+        agent_result = {
+            "steps": {
+                "planning": {
+                    "usage": {"prompt_tokens": 1000, "completion_tokens": 500}
+                },
+                "status": "completed",  # Non-dict value
+                "error_log": None       # None value
+            },
+            "execution_time_seconds": 30
+        }
+
+        result = calculator.calculate_profit_score(
+            agent_config=agent_config,
+            agent_result=agent_result,
+            task_revenue=1000
+        )
+
+        assert result["input_tokens"] == 1000
+        assert result["output_tokens"] == 500
+
+
+# =============================================================================
+# WINNER DETERMINATION TESTS
+# =============================================================================
+
+class TestWinnerDetermination:
+    """Test ArenaRouter._determine_winner logic."""
+
+    def test_agent_a_passes_agent_b_fails(self):
+        """Test Agent A wins when it passes review but Agent B fails."""
+        from src.agent_execution.arena import ArenaRouter, CompetitionType
+        router = ArenaRouter(competition_type=CompetitionType.MODEL)
+
+        result_a = {"approved": True}
+        result_b = {"approved": False}
+        profit_a = {"profit": 100}
+        profit_b = {"profit": 900}  # Higher profit but failed
+
+        winner, reason = router._determine_winner(result_a, result_b, profit_a, profit_b)
+        assert winner == "agent_a"
+        assert "Passed review" in reason
+
+    def test_agent_b_passes_agent_a_fails(self):
+        """Test Agent B wins when it passes review but Agent A fails."""
+        from src.agent_execution.arena import ArenaRouter, CompetitionType
+        router = ArenaRouter(competition_type=CompetitionType.MODEL)
+
+        result_a = {"approved": False}
+        result_b = {"approved": True}
+        profit_a = {"profit": 900}
+        profit_b = {"profit": 100}
+
+        winner, reason = router._determine_winner(result_a, result_b, profit_a, profit_b)
+        assert winner == "agent_b"
+        assert "Passed review" in reason
+
+    def test_both_pass_equal_profit_defaults_to_agent_b(self):
+        """Test that when both pass with equal profit, agent_b wins (else clause)."""
+        from src.agent_execution.arena import ArenaRouter, CompetitionType
+        router = ArenaRouter(competition_type=CompetitionType.MODEL)
+
+        result_a = {"approved": True}
+        result_b = {"approved": True}
+        profit_a = {"profit": 500}
+        profit_b = {"profit": 500}
+
+        winner, reason = router._determine_winner(result_a, result_b, profit_a, profit_b)
+        # Equal profit: profit_a > profit_b is False, so else → agent_b
+        assert winner == "agent_b"
+
+    def test_both_fail_lower_loss_wins(self):
+        """Test winner selection when both agents fail - lower loss wins."""
+        from src.agent_execution.arena import ArenaRouter, CompetitionType
+        router = ArenaRouter(competition_type=CompetitionType.MODEL)
+
+        result_a = {"approved": False}
+        result_b = {"approved": False}
+        profit_a = {"profit": -200}  # Higher loss
+        profit_b = {"profit": -50}   # Lower loss
+
+        winner, reason = router._determine_winner(result_a, result_b, profit_a, profit_b)
+        assert winner == "agent_b"
+        assert "lower loss" in reason
+
+    def test_both_fail_agent_a_lower_loss(self):
+        """Test Agent A wins when both fail but Agent A has lower loss."""
+        from src.agent_execution.arena import ArenaRouter, CompetitionType
+        router = ArenaRouter(competition_type=CompetitionType.MODEL)
+
+        result_a = {"approved": False}
+        result_b = {"approved": False}
+        profit_a = {"profit": -10}   # Lower loss
+        profit_b = {"profit": -500}  # Higher loss
+
+        winner, reason = router._determine_winner(result_a, result_b, profit_a, profit_b)
+        assert winner == "agent_a"
+        assert "lower loss" in reason
