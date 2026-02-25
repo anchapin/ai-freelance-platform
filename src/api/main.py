@@ -75,6 +75,70 @@ except ImportError:
     logging.warning("Experience Vector Database not available, few-shot learning disabled")
 
 # =============================================================================
+# PYDANTIC MODELS FOR REQUEST VALIDATION (Issue #18)
+# =============================================================================
+
+import re
+from pydantic import BaseModel, Field, validator, HttpUrl
+from typing import Optional
+
+
+class DeliveryTokenRequest(BaseModel):
+    """Validated request model for delivery endpoint (Issue #18)."""
+    task_id: str = Field(..., min_length=1, max_length=64, description="Task ID")
+    token: str = Field(..., min_length=20, max_length=256, description="Delivery token")
+
+    @validator("task_id", pre=True)
+    def validate_task_id(cls, v):
+        """Sanitize task_id - allow UUID format only."""
+        v = v.lower().strip() if isinstance(v, str) else v
+        if not re.match(r"^[a-f0-9\-]{36}$", v):
+            raise ValueError("Invalid task_id format (must be UUID)")
+        return v
+
+    @validator("token", pre=True)
+    def validate_token(cls, v):
+        """Sanitize token - alphanumeric, hyphens, underscores only."""
+        v = v.strip() if isinstance(v, str) else v
+        if not re.match(r"^[a-zA-Z0-9\-_]+$", v):
+            raise ValueError("Invalid token format (contains invalid characters)")
+        return v
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "token": "some_secure_token_string"
+            }
+        }
+
+
+class DeliveryResponse(BaseModel):
+    """Validated response model for delivery endpoint."""
+    task_id: str
+    title: str
+    domain: str
+    result_type: str
+    result_url: Optional[str] = None
+    result_image_url: Optional[str] = None
+    result_document_url: Optional[str] = None
+    result_spreadsheet_url: Optional[str] = None
+    delivered_at: str
+
+
+def _sanitize_string(value: str, max_length: int = 500) -> str:
+    """
+    Sanitize string input to prevent injection attacks.
+    Removes null bytes and limits length.
+    """
+    if not isinstance(value, str):
+        return value
+    # Remove null bytes
+    sanitized = value.replace("\x00", "")
+    # Truncate to max length
+    return sanitized[:max_length].strip()
+
+# =============================================================================
 # ESCALATION & HUMAN-IN-THE-LOOP (HITL) CONFIGURATION (Pillar 1.7)
 # =============================================================================
 
@@ -90,20 +154,24 @@ MAX_RETRY_ATTEMPTS = 3
 # =============================================================================
 
 # Delivery token TTL in hours (configurable via env)
-DELIVERY_TOKEN_TTL_HOURS = int(os.environ.get("DELIVERY_TOKEN_TTL_HOURS", "72"))
+DELIVERY_TOKEN_TTL_HOURS = int(os.environ.get("DELIVERY_TOKEN_TTL_HOURS", "1"))
 
-# Rate limiting: max failed delivery attempts per task before lockout
+# Rate limiting configuration
 DELIVERY_MAX_FAILED_ATTEMPTS = int(os.environ.get("DELIVERY_MAX_FAILED_ATTEMPTS", "5"))
 DELIVERY_LOCKOUT_SECONDS = int(os.environ.get("DELIVERY_LOCKOUT_SECONDS", "3600"))
+DELIVERY_MAX_ATTEMPTS_PER_IP = int(os.environ.get("DELIVERY_MAX_ATTEMPTS_PER_IP", "20"))
+DELIVERY_IP_LOCKOUT_SECONDS = int(os.environ.get("DELIVERY_IP_LOCKOUT_SECONDS", "3600"))
 
-# In-memory rate limiter: { task_id: (fail_count, first_fail_timestamp) }
+# In-memory rate limiters
+# { task_id: (fail_count, first_fail_timestamp) }
 _delivery_rate_limits: dict[str, tuple[int, float]] = {}
+# { ip_address: (attempt_count, first_attempt_timestamp) }
+_delivery_ip_rate_limits: dict[str, tuple[int, float]] = {}
 
 
 def _check_delivery_rate_limit(task_id: str) -> bool:
     """
     Check if a task_id is rate-limited for delivery attempts.
-
     Returns True if the request is allowed, False if rate-limited.
     """
     entry = _delivery_rate_limits.get(task_id)
@@ -119,14 +187,41 @@ def _check_delivery_rate_limit(task_id: str) -> bool:
     return fail_count < DELIVERY_MAX_FAILED_ATTEMPTS
 
 
-def _record_delivery_failure(task_id: str) -> None:
+def _check_delivery_ip_rate_limit(ip_address: str) -> bool:
+    """
+    Check if an IP address is rate-limited for delivery attempts.
+    Returns True if the request is allowed, False if rate-limited.
+    """
+    entry = _delivery_ip_rate_limits.get(ip_address)
+    if entry is None:
+        return True
+
+    attempt_count, first_attempt_ts = entry
+    # Reset if lockout window has passed
+    if _time.time() - first_attempt_ts > DELIVERY_IP_LOCKOUT_SECONDS:
+        del _delivery_ip_rate_limits[ip_address]
+        return True
+
+    return attempt_count < DELIVERY_MAX_ATTEMPTS_PER_IP
+
+
+def _record_delivery_failure(task_id: str, ip_address: str) -> None:
     """Record a failed delivery attempt for rate limiting."""
+    # Record task-level failure
     entry = _delivery_rate_limits.get(task_id)
     if entry is None:
         _delivery_rate_limits[task_id] = (1, _time.time())
     else:
         fail_count, first_fail_ts = entry
         _delivery_rate_limits[task_id] = (fail_count + 1, first_fail_ts)
+
+    # Record IP-level failure
+    ip_entry = _delivery_ip_rate_limits.get(ip_address)
+    if ip_entry is None:
+        _delivery_ip_rate_limits[ip_address] = (1, _time.time())
+    else:
+        attempt_count, first_attempt_ts = ip_entry
+        _delivery_ip_rate_limits[ip_address] = (attempt_count + 1, first_attempt_ts)
 
 
 def _should_escalate_task(task, retry_count: int, error_message: str = None) -> tuple:
@@ -1334,83 +1429,141 @@ async def get_secure_delivery(
     token: str,
     request: Request,
     db: Session = Depends(get_db)
-):
+) -> DeliveryResponse:
     """
-    Secure delivery link endpoint (hardened — Issue #18).
+    Secure delivery link endpoint with comprehensive validation (Issue #18).
 
-    Security checks:
-    1. Rate limiting per task_id (max 5 failed attempts per hour)
-    2. Token verification (constant-time comparison via secrets.compare_digest)
-    3. Token expiration check
-    4. One-time use: token is invalidated after successful download
-    5. Audit logging for all attempts
+    Security Measures:
+    1. Input Validation: Pydantic model validates task_id (UUID) and token format
+    2. IP-based Rate Limiting: Max 20 attempts per IP per hour
+    3. Task-based Rate Limiting: Max 5 failed attempts per task per hour
+    4. Token Verification: Constant-time comparison to prevent timing attacks
+    5. Token Expiration: Configurable TTL (default 1 hour)
+    6. One-Time Use: Token invalidated after successful download
+    7. Status Validation: Task must be COMPLETED
+    8. Audit Logging: All attempts logged for security analysis
+    9. Input Sanitization: String fields sanitized for injection prevention
+
+    Args:
+        task_id: UUID format task identifier
+        token: Delivery token (alphanumeric, hyphens, underscores)
+        request: FastAPI Request object for IP tracking
+        db: Database session
+
+    Returns:
+        DeliveryResponse with task data and delivery URLs
+
+    Raises:
+        HTTPException 400: Task not completed
+        HTTPException 403: Invalid/expired token or already used
+        HTTPException 404: Task not found
+        HTTPException 429: Rate limit exceeded
     """
     logger = get_logger(__name__)
     client_ip = request.client.host if request.client else "unknown"
 
-    # 1. Rate limiting
-    if not _check_delivery_rate_limit(task_id):
-        logger.warning(f"[DELIVERY] Rate limited: task={task_id} ip={client_ip}")
-        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
+    # 1. INPUT VALIDATION - Pydantic validation with strict rules
+    try:
+        validated = DeliveryTokenRequest(task_id=task_id, token=token)
+        validated_task_id = validated.task_id
+        validated_token = validated.token
+    except Exception as e:
+        logger.warning(f"[DELIVERY] Validation failed: {str(e)} ip={client_ip}")
+        _record_delivery_failure(task_id, client_ip)
+        raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
 
-    task = db.query(Task).filter(Task.id == task_id).first()
+    # 2. IP-BASED RATE LIMITING (prevents distributed brute force)
+    if not _check_delivery_ip_rate_limit(client_ip):
+        logger.warning(f"[DELIVERY] IP rate limited: ip={client_ip}")
+        raise HTTPException(
+            status_code=429,
+            detail="Too many delivery requests from your IP. Try again later."
+        )
 
+    # 3. TASK-BASED RATE LIMITING (prevents targeted attacks)
+    if not _check_delivery_rate_limit(validated_task_id):
+        logger.warning(f"[DELIVERY] Task rate limited: task={validated_task_id} ip={client_ip}")
+        _record_delivery_failure(validated_task_id, client_ip)
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts for this task. Try again later."
+        )
+
+    # 4. TASK LOOKUP
+    task = db.query(Task).filter(Task.id == validated_task_id).first()
     if not task:
-        _record_delivery_failure(task_id)
-        logger.warning(f"[DELIVERY] Not found: task={task_id} ip={client_ip}")
+        _record_delivery_failure(validated_task_id, client_ip)
+        logger.warning(f"[DELIVERY] Not found: task={validated_task_id} ip={client_ip}")
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # 2. Token verification (constant-time comparison)
-    if not task.delivery_token or not secrets.compare_digest(task.delivery_token, token):
-        _record_delivery_failure(task_id)
-        logger.warning(f"[DELIVERY] Invalid token: task={task_id} ip={client_ip}")
-        raise HTTPException(status_code=403, detail="Invalid delivery token")
-
-    # 3. Token expiration check
-    if task.delivery_token_expires_at:
-        expires_at = task.delivery_token_expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) > expires_at:
-            logger.warning(f"[DELIVERY] Expired token: task={task_id} ip={client_ip}")
-            raise HTTPException(status_code=403, detail="Delivery link has expired")
-
-    # 4. One-time use check
-    if task.delivery_token_used:
-        logger.warning(f"[DELIVERY] Already used token: task={task_id} ip={client_ip}")
-        raise HTTPException(status_code=403, detail="Delivery link has already been used")
-
-    # Verify the task is completed
+    # 5. STATUS VALIDATION (task must be completed)
     if task.status != TaskStatus.COMPLETED:
+        _record_delivery_failure(validated_task_id, client_ip)
+        logger.warning(
+            f"[DELIVERY] Not ready: task={validated_task_id} status={task.status} "
+            f"ip={client_ip}"
+        )
         raise HTTPException(
             status_code=400,
             detail=f"Task is not ready for delivery. Current status: {task.status.value}"
         )
 
-    # 5. Invalidate token (one-time use)
+    # 6. ONE-TIME USE CHECK (prevent token replay)
+    if task.delivery_token_used:
+        _record_delivery_failure(validated_task_id, client_ip)
+        logger.warning(f"[DELIVERY] Already used: task={validated_task_id} ip={client_ip}")
+        raise HTTPException(status_code=403, detail="Delivery link has already been used")
+
+    # 7. TOKEN EXPIRATION CHECK (prevent stale token usage)
+    if task.delivery_token_expires_at:
+        expires_at = task.delivery_token_expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expires_at:
+            _record_delivery_failure(validated_task_id, client_ip)
+            logger.warning(
+                f"[DELIVERY] Expired token: task={validated_task_id} "
+                f"expires_at={expires_at} ip={client_ip}"
+            )
+            raise HTTPException(status_code=403, detail="Delivery link has expired")
+
+    # 8. TOKEN VERIFICATION (constant-time comparison prevents timing attacks)
+    if not task.delivery_token or not secrets.compare_digest(
+        task.delivery_token, validated_token
+    ):
+        _record_delivery_failure(validated_task_id, client_ip)
+        logger.warning(
+            f"[DELIVERY] Invalid token: task={validated_task_id} ip={client_ip}"
+        )
+        raise HTTPException(status_code=403, detail="Invalid delivery token")
+
+    # 9. INVALIDATE TOKEN (one-time use enforcement)
     task.delivery_token_used = True
     db.commit()
 
-    logger.info(f"[DELIVERY] Success: task={task_id} ip={client_ip}")
+    logger.info(
+        f"[DELIVERY] Success: task={validated_task_id} ip={client_ip} "
+        f"result_type={task.result_type}"
+    )
 
-    # Return the delivery data with diverse output types
+    # 10. BUILD RESPONSE WITH SANITIZED OUTPUT
     result_url = None
     if task.result_type in ["docx", "pdf"]:
-        result_url = task.result_document_url
+        result_url = _sanitize_string(task.result_document_url) if task.result_document_url else None
     elif task.result_type == "xlsx":
-        result_url = task.result_spreadsheet_url
+        result_url = _sanitize_string(task.result_spreadsheet_url) if task.result_spreadsheet_url else None
     else:
-        result_url = task.result_image_url
+        result_url = _sanitize_string(task.result_image_url) if task.result_image_url else None
 
     return {
         "task_id": task.id,
-        "title": task.title,
-        "domain": task.domain,
+        "title": _sanitize_string(task.title),
+        "domain": _sanitize_string(task.domain),
         "result_type": task.result_type,
         "result_url": result_url,
-        "result_image_url": task.result_image_url,
-        "result_document_url": task.result_document_url,
-        "result_spreadsheet_url": task.result_spreadsheet_url,
+        "result_image_url": _sanitize_string(task.result_image_url) if task.result_image_url else None,
+        "result_document_url": _sanitize_string(task.result_document_url) if task.result_document_url else None,
+        "result_spreadsheet_url": _sanitize_string(task.result_spreadsheet_url) if task.result_spreadsheet_url else None,
         "delivered_at": datetime.now(timezone.utc).isoformat()
     }
 
