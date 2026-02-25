@@ -20,6 +20,13 @@ import re
 from typing import Optional
 from datetime import datetime
 
+# Import error categorization (Issue #37)
+from src.agent_execution.errors import (
+    categorize_exception,
+    should_retry,
+    TransientError,
+)
+
 # E2B Code Interpreter SDK (fallback)
 from e2b_code_interpreter import Sandbox
 
@@ -2992,6 +2999,61 @@ def _capture_for_distillation(
         logger.warning(f"Warning: Failed to capture for distillation: {e}")
 
 
+def _should_retry_execution(error_message: str) -> bool:
+    """
+    Determine if a sandbox execution error is retryable.
+
+    This implements smart retry logic that only retries errors that are likely
+    to be fixed by LLM intervention or temporary failures.
+
+    Args:
+        error_message: Error message from sandbox execution
+
+    Returns:
+        True if error should trigger a retry, False otherwise
+    """
+    # Transient/retryable errors
+    retryable_keywords = [
+        "timeout",
+        "connection",
+        "network",
+        "temporarily",
+        "try again",
+        "resource",
+        "memory",
+        "disk",
+    ]
+
+    # Permanent errors that LLM can fix
+    fixable_by_llm = [
+        "syntaxerror",
+        "nameerror",
+        "importerror",
+        "indexerror",
+        "keyerror",
+        "typeerror",
+        "valueerror",
+        "attributeerror",
+        "indentationerror",
+    ]
+
+    error_lower = error_message.lower()
+
+    # Check for transient keywords
+    for keyword in retryable_keywords:
+        if keyword in error_lower:
+            logger.info(f"Transient error detected: {keyword}")
+            return True
+
+    # Check for LLM-fixable errors
+    for keyword in fixable_by_llm:
+        if keyword in error_lower:
+            logger.info(f"LLM-fixable error detected: {keyword}")
+            return True
+
+    return False
+
+
 def execute_data_visualization(
     csv_data: str,
     user_request: str,
@@ -3227,6 +3289,13 @@ def execute_data_visualization(
             # Execution failed - this is an error we can potentially fix
             last_error = result_or_error
             retry_count += 1
+
+            # Smart retry: Only retry if error is transient or LLM-fixable (Issue #37)
+            if not _should_retry_execution(last_error):
+                logger.warning(
+                    f"Code execution failed with non-retryable error: {last_error}"
+                )
+                break
 
             # If we've exhausted retries, break out
             if retry_count > max_retries:

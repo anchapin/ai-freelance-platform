@@ -12,6 +12,7 @@ from sqlalchemy import (
     Boolean,
     JSON,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import declarative_base
 
@@ -152,6 +153,13 @@ class ClientProfile(Base):
 
 class Task(Base):
     __tablename__ = "tasks"
+    
+    # Performance indexes (Issue #38)
+    __table_args__ = (
+        Index("idx_task_client_email", "client_email"),
+        Index("idx_task_status", "status"),
+        Index("idx_task_created_at", "created_at"),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     title = Column(String, nullable=False)
@@ -332,6 +340,9 @@ class Bid(Base):
         UniqueConstraint(
             "marketplace", "job_id", "status", name="unique_active_bid_per_posting"
         ),
+        # Performance indexes (Issue #38)
+        Index("idx_bid_posting_id", "job_id"),
+        Index("idx_bid_agent_id", "marketplace"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
