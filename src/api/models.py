@@ -414,3 +414,64 @@ class ArenaCompetition(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
+
+
+class EscalationLog(Base):
+    """
+    Escalation Log for tracking human-in-the-loop (HITL) escalations.
+    
+    Provides idempotency for escalation notifications and audit trail
+    for escalation events. Prevents duplicate Telegram notifications
+    when retries occur.
+    
+    Pillar 1.7 - Human-in-the-Loop (HITL) Escalation Idempotency
+    """
+    __tablename__ = "escalation_logs"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    
+    # Task reference
+    task_id = Column(String, nullable=False, index=True)
+    
+    # Escalation details
+    reason = Column(String, nullable=False)  # e.g., "max_retries_exceeded", "high_value_task_failed"
+    error_message = Column(Text, nullable=True)  # Optional error context
+    
+    # Notification tracking
+    notification_sent = Column(Boolean, default=False)  # Whether Telegram notification was sent
+    notification_attempt_count = Column(Integer, default=0)  # Number of notification attempts
+    last_notification_attempt_at = Column(DateTime, nullable=True)
+    notification_error = Column(Text, nullable=True)  # Error message if notification failed
+    
+    # Idempotency key (prevents duplicate notifications on retry)
+    # Format: "task_id_escalation_reason"
+    idempotency_key = Column(String, nullable=False, unique=True, index=True)
+    
+    # Task metadata at time of escalation
+    amount_paid = Column(Integer, nullable=True)  # Amount in cents
+    domain = Column(String, nullable=True)
+    client_email = Column(String, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)  # When human reviewer resolved the escalation
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "task_id": self.task_id,
+            "reason": self.reason,
+            "error_message": self.error_message,
+            "notification_sent": self.notification_sent,
+            "notification_attempt_count": self.notification_attempt_count,
+            "last_notification_attempt_at": self.last_notification_attempt_at.isoformat() if self.last_notification_attempt_at else None,
+            "notification_error": self.notification_error,
+            "idempotency_key": self.idempotency_key,
+            "amount_paid": self.amount_paid,
+            "domain": self.domain,
+            "client_email": self.client_email,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+        }
