@@ -23,11 +23,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 # =============================================================================
 # PYTEST CONFIGURATION
 # =============================================================================
-
-# NOTE: Removed custom event_loop fixture - pytest-asyncio 0.21+ handles this automatically
-# This fixture was causing "There is no current event loop" errors in CI.
-# The default pytest-asyncio behavior is now used with function-scoped loops.
-
+# Note: pytest-asyncio in strict mode manages event loops automatically,
+# so we don't need a custom event_loop fixture.
 
 # =============================================================================
 # STRIPE API MOCKS

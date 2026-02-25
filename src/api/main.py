@@ -13,7 +13,7 @@ import stripe
 
 from datetime import datetime
 from .database import get_db, init_db
-from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus, EscalationLog
+from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus
 from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
 
@@ -138,44 +138,32 @@ async def _escalate_task(db: Session, task: Task, reason: str, error_message: st
     # Get logger instance
     logger = get_logger(__name__)
     
-    try:
-        # Create idempotency key to prevent duplicate notifications
-        idempotency_key = f"{task.id}_{reason}"
-        
-        # Check if escalation log already exists (indicating previous escalation)
-        existing_log = db.query(EscalationLog).filter(
-            EscalationLog.idempotency_key == idempotency_key
-        ).first()
-        
-        # Determine if this is a high-value task
-        amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
-        is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
-        
-        # =====================================================================
-        # ATOMIC UPDATE: Update task status + create escalation log in transaction
-        # =====================================================================
-        
-        # Update task status (must happen even if notification fails)
-        task.status = TaskStatus.ESCALATION
-        task.escalation_reason = reason
-        task.escalated_at = datetime.utcnow()
-        task.last_error = error_message
-        task.review_status = ReviewStatus.PENDING
-        
-        logger.warning(f"[ESCALATION] Task {task.id} escalated: {reason}")
-        logger.warning(f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}")
-        
-        if error_message:
-            logger.warning(f"[ESCALATION] Error: {error_message[:200]}...")
-        
-        # =====================================================================
-        # Create or update escalation log for audit trail + idempotency
-        # =====================================================================
-        
-        if not existing_log:
-            # First escalation - create new log
-            escalation_log = EscalationLog(
-                id=str(uuid.uuid4()),
+    task.status = TaskStatus.ESCALATION
+    task.escalation_reason = reason
+    task.escalated_at = datetime.utcnow()
+    task.last_error = error_message
+    task.review_status = ReviewStatus.PENDING
+    
+    # Log the escalation for profit protection
+    amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
+    is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
+    
+    logger.warning(f"[ESCALATION] Task {task.id} escalated: {reason}")
+    logger.warning(f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}")
+    logger.warning("[ESCALATION] Human reviewer notification required to prevent refund")
+    
+    if error_message:
+        logger.warning(f"[ESCALATION] Error: {error_message[:200]}...")
+    
+    # Send Telegram notification for high-value tasks (profit protection)
+    if is_high_value:
+        try:
+            notifier = TelegramNotifier()
+            context = f"Reason: {reason}"
+            if error_message:
+                context += f"\nError: {error_message[:200]}"
+            
+            await notifier.request_human_help(
                 task_id=task.id,
                 reason=reason,
                 error_message=error_message,
