@@ -77,12 +77,13 @@ class BrowserPool:
             logger.info(f"Browser pool started (max: {self.max_browsers})")
         except Exception as e:
             logger.error(f"Failed to start browser pool: {e}")
+            self._playwright = None
             raise
 
     async def stop(self):
         """Shutdown the browser pool and cleanup resources."""
         async with self._lock:
-            for browser_id, pooled in self._browsers.items():
+            for browser_id, pooled in list(self._browsers.items()):
                 try:
                     await pooled.browser.close()
                     logger.debug(f"Browser {browser_id} closed")
@@ -93,6 +94,7 @@ class BrowserPool:
 
         if self._playwright:
             await self._playwright.stop()
+            self._playwright = None
             logger.info("Browser pool stopped")
 
     async def acquire_browser(self) -> Any:
@@ -112,7 +114,7 @@ class BrowserPool:
 
         async with self._lock:
             # Try to reuse existing healthy browser
-            for browser_id, pooled in self._browsers.items():
+            for browser_id, pooled in list(self._browsers.items()):
                 if not pooled.in_use:
                     # Check health and error count
                     if await self._is_browser_healthy(pooled.browser):

@@ -592,8 +592,10 @@ async def process_task_async(task_id: str, use_planning_workflow: bool = True):
     # Initialize logger
     logger = get_logger(__name__)
 
-    db = SessionLocal()
+    db = None
     try:
+        db = SessionLocal()
+
         # Retrieve the task from the database
         task = db.query(Task).filter(Task.id == task_id).first()
 
@@ -1034,10 +1036,19 @@ Support,180"""
                     task.status = TaskStatus.FAILED
                     task.review_feedback = error_message
                     db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Unexpected error in process_paid_task: {e}")
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception as rollback_error:
+                    logger.warning(f"Error rolling back transaction: {rollback_error}")
     finally:
-        db.close()
+        if db is not None:
+            try:
+                db.close()
+            except Exception as close_error:
+                logger.warning(f"Error closing database session: {close_error}")
 
 
 # Configure Stripe (use environment variable in production)
@@ -2597,9 +2608,10 @@ async def run_autonomous_loop():
                 logger.info(f"[AUTONOMOUS] Found {len(suitable_jobs)} suitable jobs")
 
                 # Get database session
-                db = SessionLocal()
-
+                db = None
                 try:
+                    db = SessionLocal()
+
                     # Get all existing job IDs/URLs we've already bid on
                     existing_bids = (
                         db.query(Bid)
@@ -2698,8 +2710,19 @@ Reply with APPROVE to submit bid or REJECT to skip."""
                             f"[AUTONOMOUS] Sent notification for approval: {job_title}"
                         )
 
+                except Exception as e:
+                    if db is not None:
+                        try:
+                            db.rollback()
+                        except Exception as rollback_error:
+                            logger.warning(f"Error rolling back transaction: {rollback_error}")
+                    logger.error(f"[AUTONOMOUS] Error processing bids: {e}")
                 finally:
-                    db.close()
+                    if db is not None:
+                        try:
+                            db.close()
+                        except Exception as close_error:
+                            logger.warning(f"Error closing database session: {close_error}")
 
         except Exception as e:
             logger.error(f"[AUTONOMOUS] Error in scan loop: {e}")

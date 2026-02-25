@@ -54,6 +54,7 @@ class AsyncRAGCircuitBreaker:
         self.success_count = 0
         self.last_failure_time = None
         self.open_at = None
+        self._state_lock = None  # Will be initialized when needed for thread-safety
 
     def is_allowed(self) -> bool:
         """Check if request should be allowed."""
@@ -76,6 +77,7 @@ class AsyncRAGCircuitBreaker:
 
     def record_success(self):
         """Record successful operation."""
+        old_state = self.state
         if self.state == CircuitBreakerState.HALF_OPEN:
             self.success_count += 1
             if self.success_count >= self.config.success_threshold:
@@ -87,6 +89,7 @@ class AsyncRAGCircuitBreaker:
 
     def record_failure(self):
         """Record failed operation."""
+        old_state = self.state
         self.failure_count += 1
         self.last_failure_time = time.time()
 
@@ -105,18 +108,32 @@ class AsyncRAGCircuitBreaker:
                 f"({self.failure_count} failures)"
             )
 
+    def state_changed(self) -> bool:
+        """Check if circuit breaker state has changed during this operation."""
+        # Used to detect state transitions for cache invalidation
+        return self.state != getattr(self, "_last_state", self.state)
+
 
 @dataclass
 class CachedFewShotQuery:
-    """Cached few-shot query result."""
+    """Cached few-shot query result with integrity validation."""
 
     examples: List[FewShotExample]
     cached_at: datetime
+    version: int = 1  # Cache version for invalidation tracking
+    circuit_breaker_state: str = "closed"  # State when cached
 
     def is_expired(self, ttl_minutes: int = 60) -> bool:
         """Check if cache has expired."""
         age = (datetime.now(timezone.utc) - self.cached_at).total_seconds() / 60
         return age > ttl_minutes
+
+    def is_valid(self, circuit_breaker_state: str) -> bool:
+        """Check if cache is valid given current circuit breaker state."""
+        # Invalidate cache if circuit breaker state changed
+        if self.circuit_breaker_state != circuit_breaker_state:
+            return False
+        return not self.is_expired()
 
 
 class AsyncRAGService:
@@ -170,15 +187,21 @@ class AsyncRAGService:
         """
         self.queries_attempted += 1
         cache_key = (hash(user_request) % 1000000, domain)
+        current_breaker_state = self.circuit_breaker.state.value
 
-        # Check cache first
+        # Check cache first with circuit breaker state validation
         async with self._cache_lock:
             if cache_key in self._query_cache:
                 cached = self._query_cache[cache_key]
-                if not cached.is_expired(self.cache_ttl_minutes):
+                # Validate cache is still valid (not expired and circuit breaker state unchanged)
+                if cached.is_valid(current_breaker_state):
                     self.cache_hits += 1
                     logger.debug(f"RAG cache hit for {domain}")
                     return cached.examples
+                else:
+                    # Invalidate stale cache entry
+                    del self._query_cache[cache_key]
+                    logger.debug(f"RAG cache invalidated for {domain}")
 
         # Check circuit breaker
         if not self.circuit_breaker.is_allowed():
@@ -195,11 +218,21 @@ class AsyncRAGService:
             self.queries_succeeded += 1
             self.circuit_breaker.record_success()
 
-            # Cache result
+            # Cache result atomically with circuit breaker state
+            # Ensure complete entry is written before making it available
+            cache_entry = CachedFewShotQuery(
+                examples=examples,
+                cached_at=datetime.now(timezone.utc),
+                version=1,
+                circuit_breaker_state=self.circuit_breaker.state.value,
+            )
+
             async with self._cache_lock:
-                self._query_cache[cache_key] = CachedFewShotQuery(
-                    examples=examples, cached_at=datetime.now(timezone.utc)
-                )
+                # Atomic write: verify entry is complete before storing
+                if cache_entry.examples is not None and cache_entry.cached_at is not None:
+                    self._query_cache[cache_key] = cache_entry
+                else:
+                    logger.warning(f"Incomplete cache entry for {domain}, not caching")
 
             logger.debug(f"RAG query succeeded: {len(examples)} examples for {domain}")
             return examples
