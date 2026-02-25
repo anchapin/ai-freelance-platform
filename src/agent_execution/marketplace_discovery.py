@@ -425,6 +425,8 @@ class MarketplaceDiscovery:
         """
         Evaluate a marketplace by visiting it with Playwright.
         
+        Uses async context managers for proper resource cleanup.
+        
         Args:
             url: Marketplace URL to evaluate
             timeout: Page load timeout in seconds
@@ -442,13 +444,18 @@ class MarketplaceDiscovery:
                 "error": "Playwright not available"
             }
         
+        playwright = None
+        browser = None
+        page = None
+        
         try:
+            # Use async context manager for playwright
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(headless=True)
                 page = await browser.new_page()
                 
                 try:
-                    # Navigate to marketplace
+                    # Navigate to marketplace with timeout
                     response = await page.goto(
                         url,
                         wait_until="domcontentloaded",
@@ -456,7 +463,6 @@ class MarketplaceDiscovery:
                     )
                     
                     if not response or response.status >= 400:
-                        await browser.close()
                         return {
                             "url": url,
                             "accessible": False,
@@ -477,8 +483,6 @@ class MarketplaceDiscovery:
                     
                     job_count = len(job_elements) if job_elements else 0
                     
-                    await browser.close()
-                    
                     return {
                         "url": url,
                         "accessible": True,
@@ -487,9 +491,18 @@ class MarketplaceDiscovery:
                         "evaluated_at": datetime.now().isoformat()
                     }
                 
+                except asyncio.TimeoutError:
+                    logger.warning(f"Marketplace evaluation timeout for {url}")
+                    return {
+                        "url": url,
+                        "accessible": False,
+                        "job_count": 0,
+                        "avg_budget": 0,
+                        "error": "Page load timeout"
+                    }
+                
                 except Exception as e:
                     logger.warning(f"Failed to evaluate marketplace {url}: {e}")
-                    await browser.close()
                     return {
                         "url": url,
                         "accessible": False,
@@ -507,6 +520,20 @@ class MarketplaceDiscovery:
                 "avg_budget": 0,
                 "error": str(e)
             }
+        
+        finally:
+            # Explicit cleanup (redundant with async context manager but defensive)
+            if page:
+                try:
+                    await page.close()
+                except Exception as e:
+                    logger.warning(f"Error closing page for {url}: {e}")
+            
+            if browser:
+                try:
+                    await browser.close()
+                except Exception as e:
+                    logger.warning(f"Error closing browser for {url}: {e}")
     
     async def discover_and_update(self) -> Dict[str, Any]:
         """

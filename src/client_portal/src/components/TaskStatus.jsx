@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import './TaskStatus.css';
 
@@ -21,9 +21,13 @@ function TaskStatus() {
   // Polling configuration with exponential backoff
   const POLL_INTERVALS = [2000, 3000, 5000, 8000, 10000]; // 2s, 3s, 5s, 8s, 10s
   const STOP_POLLING_STATES = ['COMPLETED', 'FAILED', 'CANCELLED'];
+  
+  // AbortController refs for cleanup
+  const dashboardAbortControllerRef = useRef(null);
+  const taskPollAbortControllerRef = useRef(null);
 
   // Fetch dashboard data when email is provided (requires authentication token)
-  const fetchDashboardData = async (email) => {
+  const fetchDashboardData = async (email, abortSignal) => {
     if (!email || !email.includes('@')) return;
     
     try {
@@ -40,7 +44,9 @@ function TaskStatus() {
         return;
       }
       
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        signal: abortSignal
+      });
       if (response.ok) {
         const data = await response.json();
         setDashboardData(data);
@@ -48,15 +54,27 @@ function TaskStatus() {
         console.error('Invalid or missing authentication token for dashboard access');
       }
     } catch (err) {
-      console.error('Failed to fetch dashboard data:', err);
+      // Don't log abort errors as they're expected on cleanup
+      if (err.name !== 'AbortError') {
+        console.error('Failed to fetch dashboard data:', err);
+      }
     }
   };
 
   useEffect(() => {
     if (clientEmail) {
       setEmailInput(clientEmail);
-      fetchDashboardData(clientEmail);
+      // Create abort controller for dashboard fetch
+      dashboardAbortControllerRef.current = new AbortController();
+      fetchDashboardData(clientEmail, dashboardAbortControllerRef.current.signal);
     }
+    
+    // Cleanup on unmount or email change
+    return () => {
+      if (dashboardAbortControllerRef.current) {
+        dashboardAbortControllerRef.current.abort();
+      }
+    };
   }, [clientEmail]);
 
   useEffect(() => {
@@ -67,10 +85,14 @@ function TaskStatus() {
 
     let pollIndex = 0;
     let timeoutId = null;
+    // Create abort controller for task polling
+    taskPollAbortControllerRef.current = new AbortController();
 
     const fetchTask = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`);
+        const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
+          signal: taskPollAbortControllerRef.current.signal
+        });
         
         if (!response.ok) {
           if (response.status === 404) {
@@ -86,7 +108,6 @@ function TaskStatus() {
         // Stop polling if task is in a terminal state
         if (STOP_POLLING_STATES.includes(data.status)) {
           setLoading(false);
-          if (timeoutId) clearTimeout(timeoutId);
           return;
         }
 
@@ -96,8 +117,11 @@ function TaskStatus() {
         
         timeoutId = setTimeout(fetchTask, nextInterval);
       } catch (err) {
-        setError(err.message);
-        setLoading(false);
+        // Don't log abort errors as they're expected on cleanup
+        if (err.name !== 'AbortError') {
+          setError(err.message);
+          setLoading(false);
+        }
       }
     };
 
@@ -106,7 +130,12 @@ function TaskStatus() {
 
     // Cleanup on unmount
     return () => {
+      // Clear the timeout
       if (timeoutId) clearTimeout(timeoutId);
+      // Abort all pending fetch requests
+      if (taskPollAbortControllerRef.current) {
+        taskPollAbortControllerRef.current.abort();
+      }
     };
   }, [taskId]);
 
@@ -114,7 +143,9 @@ function TaskStatus() {
   const handleEmailSubmit = (e) => {
     e.preventDefault();
     if (emailInput && emailInput.includes('@')) {
-      fetchDashboardData(emailInput);
+      // Create new abort controller for this fetch
+      dashboardAbortControllerRef.current = new AbortController();
+      fetchDashboardData(emailInput, dashboardAbortControllerRef.current.signal);
       setShowDashboard(true);
     }
   };

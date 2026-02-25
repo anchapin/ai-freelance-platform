@@ -18,9 +18,14 @@ function Success() {
       return;
     }
 
+    // Create abort controller for session fetch
+    const abortController = new AbortController();
+
     const fetchTaskId = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/session/${sessionId}`);
+        const response = await fetch(`${API_BASE_URL}/api/session/${sessionId}`, {
+          signal: abortController.signal
+        });
         
         if (!response.ok) {
           if (response.status === 404) {
@@ -47,12 +52,20 @@ function Success() {
         }
         navigate(redirectUrl);
       } catch (err) {
-        setError(err.message);
-        setLoading(false);
+        // Don't log abort errors as they're expected on cleanup
+        if (err.name !== 'AbortError') {
+          setError(err.message);
+          setLoading(false);
+        }
       }
     };
 
     fetchTaskId();
+    
+    // Cleanup on unmount
+    return () => {
+      abortController.abort();
+    };
   }, [navigate]);
 
   if (loading) {

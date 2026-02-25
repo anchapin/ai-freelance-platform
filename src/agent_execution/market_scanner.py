@@ -209,8 +209,9 @@ class MarketScanner:
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
+        """Async context manager exit - always cleanup even on exception."""
         await self.stop()
+        return False  # Don't suppress exceptions
     
     async def start(self):
         """

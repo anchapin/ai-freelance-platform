@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import './TaskSubmissionForm.css';
 
 // Domain base rates (from API - could be fetched dynamically)
@@ -49,9 +49,22 @@ function TaskSubmissionForm() {
   const [discountInfo, setDiscountInfo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  
+  // AbortController ref for discount info fetch
+  const discountAbortControllerRef = useRef(null);
+  
+  // Cleanup pending requests on unmount
+  useEffect(() => {
+    return () => {
+      // Abort any pending discount info fetch
+      if (discountAbortControllerRef.current) {
+        discountAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // Fetch discount info when client email is entered (requires auth token)
-  const fetchDiscountInfo = async (email) => {
+  const fetchDiscountInfo = async (email, abortSignal) => {
     if (!email || !email.includes('@')) {
       setDiscountInfo(null);
       return;
@@ -66,7 +79,9 @@ function TaskSubmissionForm() {
         url += `&token=${encodeURIComponent(storedToken)}`;
       }
       
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        signal: abortSignal
+      });
       if (response.ok) {
         const data = await response.json();
         setDiscountInfo(data);
@@ -76,8 +91,11 @@ function TaskSubmissionForm() {
         setDiscountInfo(null);
       }
     } catch (err) {
-      console.error('Failed to fetch discount info:', err);
-      setDiscountInfo(null);
+      // Don't log abort errors as they're expected on cleanup
+      if (err.name !== 'AbortError') {
+        console.error('Failed to fetch discount info:', err);
+        setDiscountInfo(null);
+      }
     }
   };
 
@@ -98,7 +116,13 @@ function TaskSubmissionForm() {
     
     // Fetch discount info when client email changes
     if (name === 'clientEmail') {
-      fetchDiscountInfo(value);
+      // Cancel any pending discount fetch
+      if (discountAbortControllerRef.current) {
+        discountAbortControllerRef.current.abort();
+      }
+      // Create new abort controller for this fetch
+      discountAbortControllerRef.current = new AbortController();
+      fetchDiscountInfo(value, discountAbortControllerRef.current.signal);
     }
     
     // Recalculate price when domain, complexity, or urgency changes
