@@ -30,7 +30,7 @@ class JobStatus(Enum):
 
 @dataclass
 class Job:
-    """Represents a background job."""
+    """Represents a background job with timeout and fallback support."""
 
     job_id: str
     job_type: str  # "rag_enrichment", "distillation", etc
@@ -44,6 +44,8 @@ class Job:
     error: Optional[str] = None
     retry_count: int = 0
     max_retries: int = 3
+    timeout_seconds: Optional[float] = None  # Job-specific timeout
+    fallback_func: Optional[Callable] = None  # Fallback on timeout/failure
 
 
 class BackgroundJobQueue:
@@ -110,9 +112,11 @@ class BackgroundJobQueue:
         task_kwargs: dict = None,
         job_id: Optional[str] = None,
         max_retries: int = 3,
+        timeout_seconds: Optional[float] = None,
+        fallback_func: Optional[Callable] = None,
     ) -> str:
         """
-        Queue a background job.
+        Queue a background job with optional timeout and fallback.
 
         Args:
             job_type: Type of job (for tracking)
@@ -121,6 +125,8 @@ class BackgroundJobQueue:
             task_kwargs: Keyword arguments for task_func
             job_id: Optional job ID (auto-generated if not provided)
             max_retries: Maximum retry attempts on failure
+            timeout_seconds: Optional timeout for job execution
+            fallback_func: Optional fallback callable on timeout/failure
 
         Returns:
             Job ID
@@ -137,6 +143,8 @@ class BackgroundJobQueue:
             task_kwargs=task_kwargs or {},
             created_at=datetime.now(timezone.utc),
             max_retries=max_retries,
+            timeout_seconds=timeout_seconds,
+            fallback_func=fallback_func,
         )
 
         try:
@@ -166,16 +174,56 @@ class BackgroundJobQueue:
             try:
                 logger.debug(f"Worker {worker_id}: executing {job.job_id}")
 
-                # Execute the task
-                await job.task_func(*job.task_args, **job.task_kwargs)
+                # Execute the task with optional timeout
+                try:
+                    if job.timeout_seconds:
+                        await asyncio.wait_for(
+                            job.task_func(*job.task_args, **job.task_kwargs),
+                            timeout=job.timeout_seconds,
+                        )
+                    else:
+                        await job.task_func(*job.task_args, **job.task_kwargs)
 
-                # Mark as succeeded
-                job.status = JobStatus.SUCCEEDED
-                job.completed_at = datetime.now(timezone.utc)
-                self.completed_jobs[job.job_id] = job
-                self.jobs_succeeded += 1
+                    # Mark as succeeded
+                    job.status = JobStatus.SUCCEEDED
+                    job.completed_at = datetime.now(timezone.utc)
+                    self.completed_jobs[job.job_id] = job
+                    self.jobs_succeeded += 1
 
-                logger.debug(f"Worker {worker_id}: job {job.job_id} succeeded")
+                    logger.debug(f"Worker {worker_id}: job {job.job_id} succeeded")
+
+                except asyncio.TimeoutError:
+                    # Handle timeout with fallback
+                    timeout_error = (
+                        f"Job execution timeout after {job.timeout_seconds}s"
+                    )
+                    logger.warning(
+                        f"Worker {worker_id}: job {job.job_id} timed out: {timeout_error}"
+                    )
+
+                    # Try fallback if available
+                    if job.fallback_func:
+                        try:
+                            logger.info(
+                                f"Worker {worker_id}: executing fallback for {job.job_id}"
+                            )
+                            await job.fallback_func(
+                                *job.task_args, **job.task_kwargs
+                            )
+                            job.status = JobStatus.SUCCEEDED
+                            job.completed_at = datetime.now(timezone.utc)
+                            job.error = timeout_error + " (fallback executed)"
+                            self.completed_jobs[job.job_id] = job
+                            logger.info(
+                                f"Worker {worker_id}: fallback for {job.job_id} succeeded"
+                            )
+                        except Exception as fallback_error:
+                            logger.error(
+                                f"Worker {worker_id}: fallback for {job.job_id} failed: {fallback_error}"
+                            )
+                            raise TimeoutError(timeout_error) from fallback_error
+                    else:
+                        raise TimeoutError(timeout_error)
 
             except Exception as e:
                 logger.error(
