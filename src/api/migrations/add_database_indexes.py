@@ -3,6 +3,7 @@
 from sqlalchemy import text
 from src.api.database import engine
 
+
 def add_indexes():
     """Add indexes on frequently queried columns"""
     indexes = [
@@ -12,13 +13,14 @@ def add_indexes():
         "CREATE INDEX IF NOT EXISTS idx_bid_posting_id ON bid(posting_id);",
         "CREATE INDEX IF NOT EXISTS idx_bid_agent_id ON bid(agent_id);",
     ]
-    
+
     with engine.connect() as conn:
         for idx_sql in indexes:
             conn.execute(text(idx_sql))
         conn.commit()
-    
+
     print("Database indexes created successfully")
+
 
 if __name__ == "__main__":
     add_indexes()

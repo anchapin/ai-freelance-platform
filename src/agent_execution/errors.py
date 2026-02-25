@@ -123,12 +123,17 @@ ERROR_CLASSIFICATION: dict[Type[Exception], Type[AgentError]] = {
     TimeoutError: TimeoutError,
     InterruptedError: TransientError,
     OSError: TransientError,
-    # Permanent/User Errors
+    # Permanent/User Errors (Code errors that LLM can fix)
     ValueError: ValidationError,
     TypeError: ValidationError,
     KeyError: ValidationError,
     AttributeError: ValidationError,
     IndexError: ValidationError,
+    SyntaxError: ValidationError,
+    NameError: ValidationError,
+    ImportError: ValidationError,
+    IndentationError: ValidationError,
+    # Other Permanent Errors
     KeyboardInterrupt: PermanentError,
     RuntimeError: PermanentError,
     NotImplementedError: PermanentError,

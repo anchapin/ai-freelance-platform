@@ -229,7 +229,10 @@ class AsyncRAGService:
 
             async with self._cache_lock:
                 # Atomic write: verify entry is complete before storing
-                if cache_entry.examples is not None and cache_entry.cached_at is not None:
+                if (
+                    cache_entry.examples is not None
+                    and cache_entry.cached_at is not None
+                ):
                     self._query_cache[cache_key] = cache_entry
                 else:
                     logger.warning(f"Incomplete cache entry for {domain}, not caching")
