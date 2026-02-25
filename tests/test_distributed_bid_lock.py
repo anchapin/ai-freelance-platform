@@ -15,7 +15,6 @@ Verifies:
 
 import asyncio
 import time
-import uuid
 import pytest
 import sys
 import os
@@ -31,7 +30,6 @@ from src.agent_execution.bid_lock_manager import BidLockManager
 from src.agent_execution.bid_deduplication import (
     should_bid,
     create_bid_atomically,
-    get_active_bids_for_posting,
 )
 
 
