@@ -341,6 +341,7 @@ class TestClientDashboard:
         """Test getting client history with no tasks."""
         from src.api.main import app
         from src.api.database import get_db
+        from src.utils.client_auth import generate_client_token
         
         client = TestClient(app)
         
@@ -352,10 +353,13 @@ class TestClientDashboard:
         # Override the dependency
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
+        email = "new@example.com"
+        token = generate_client_token(email)
+        
         try:
             response = client.get(
                 "/api/client/history",
-                params={"email": "new@example.com"}
+                params={"email": email, "token": token}
             )
             assert response.status_code == 200
             data = response.json()
@@ -368,6 +372,7 @@ class TestClientDashboard:
         """Test getting client discount information."""
         from src.api.main import app
         from src.api.database import get_db
+        from src.utils.client_auth import generate_client_token
         
         client = TestClient(app)
         
@@ -378,10 +383,13 @@ class TestClientDashboard:
         # Override the dependency
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
+        email = "vip@example.com"
+        token = generate_client_token(email)
+        
         try:
             response = client.get(
                 "/api/client/discount-info",
-                params={"email": "vip@example.com"}
+                params={"email": email, "token": token}
             )
             assert response.status_code == 200
             data = response.json()
