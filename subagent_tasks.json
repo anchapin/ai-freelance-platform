@@ -1,0 +1,26 @@
+{
+  "issue_8": {
+    "worktree": "/home/alexc/Projects/ArbitrageAI/main-issue-8",
+    "branch": "feature/distributed-lock-dedup",
+    "task": "Issue #8 - Implement distributed lock and deduplication for marketplace bids",
+    "details": "Add Redis distributed lock for bid placement. Extend Bid model with status field (ACTIVE/WITHDRAWN/REJECTED). Implement deduplication logic. Add bid withdrawal mechanism. Update models.py, market_scanner.py. Test prevents duplicate bids on same posting within 5-minute window."
+  },
+  "issue_6": {
+    "worktree": "/home/alexc/Projects/ArbitrageAI/main-issue-6",
+    "branch": "feature/vector-db-decouple",
+    "task": "Issue #6 - Decouple Experience Vector Database from task execution flow",
+    "details": "Refactor experience_vector_db.py with async RAG layer and lazy initialization. Move RAG queries to background async task. Move distillation capture to async queue (don't block task completion). Implement circuit breaker for ChromaDB. Update executor.py integration. Add metrics for RAG hit/fallback rates."
+  },
+  "issue_5": {
+    "worktree": "/home/alexc/Projects/ArbitrageAI/main-issue-5",
+    "branch": "feature/task-composition",
+    "task": "Issue #5 - Refactor overloaded Task model using composition pattern",
+    "details": "Create TaskExecution, TaskPlanning, TaskReview, TaskArena, TaskOutput entities. Reduce Task model to <15 fields. Add state machine validation. Create database migration script. Update src/api/main.py. Ensure backward compatibility. 100% test coverage."
+  },
+  "issue_4": {
+    "worktree": "/home/alexc/Projects/ArbitrageAI/main-issue-4",
+    "branch": "feature/playwright-resource-leak",
+    "task": "Issue #4 - Fix async Playwright resource leaks in market scanner",
+    "details": "Wrap all Playwright browser/page operations with async context managers. Implement browser connection pooling. Add circuit breaker for failing URLs. Implement exponential backoff for retries. Update market_scanner.py (lines 200-500) and marketplace_discovery.py (lines 419-505). Verify 1000+ tasks don't exhaust resources."
+  }
+}

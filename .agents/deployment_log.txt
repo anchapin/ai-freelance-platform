@@ -1,0 +1,4 @@
+Subagent 5: worktree=main-issue-5, task=.agents/subagent_issue_5.md
+Subagent 6: worktree=main-issue-6, task=.agents/subagent_issue_6.md
+Subagent 8: worktree=main-issue-8, task=.agents/subagent_issue_8.md
+Subagent 4: worktree=main-issue-4, task=.agents/subagent_issue_4.md
