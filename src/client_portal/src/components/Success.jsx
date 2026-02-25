@@ -31,8 +31,21 @@ function Success() {
         
         const data = await response.json();
         
-        // Redirect to task status page with the task_id
-        navigate(`/task-status?task_id=${data.task_id}`);
+        // Store client authentication token in localStorage (Issue #17)
+        // This token is required for authenticated dashboard access
+        if (data.client_email && data.client_auth_token) {
+          localStorage.setItem(
+            `client_token_${data.client_email}`,
+            data.client_auth_token
+          );
+        }
+        
+        // Redirect to task status page with the task_id and email
+        let redirectUrl = `/task-status?task_id=${data.task_id}`;
+        if (data.client_email) {
+          redirectUrl += `&email=${encodeURIComponent(data.client_email)}`;
+        }
+        navigate(redirectUrl);
       } catch (err) {
         setError(err.message);
         setLoading(false);

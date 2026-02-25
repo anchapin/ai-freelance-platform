@@ -22,15 +22,30 @@ function TaskStatus() {
   const POLL_INTERVALS = [2000, 3000, 5000, 8000, 10000]; // 2s, 3s, 5s, 8s, 10s
   const STOP_POLLING_STATES = ['COMPLETED', 'FAILED', 'CANCELLED'];
 
-  // Fetch dashboard data when email is provided
+  // Fetch dashboard data when email is provided (requires authentication token)
   const fetchDashboardData = async (email) => {
     if (!email || !email.includes('@')) return;
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/client/history?email=${encodeURIComponent(email)}`);
+      // Get stored token from localStorage (generated at checkout)
+      const storedToken = localStorage.getItem(`client_token_${email}`);
+      
+      // Build URL with email and token (token is required for authentication)
+      let url = `${API_BASE_URL}/api/client/history?email=${encodeURIComponent(email)}`;
+      if (storedToken) {
+        url += `&token=${encodeURIComponent(storedToken)}`;
+      } else {
+        // If no token, request will be rejected with 403
+        console.warn(`No authentication token found for ${email}. Dashboard access denied.`);
+        return;
+      }
+      
+      const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
         setDashboardData(data);
+      } else if (response.status === 403) {
+        console.error('Invalid or missing authentication token for dashboard access');
       }
     } catch (err) {
       console.error('Failed to fetch dashboard data:', err);

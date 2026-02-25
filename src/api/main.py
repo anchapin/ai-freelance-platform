@@ -1147,17 +1147,31 @@ async def get_task(task_id: str, db: Session = Depends(get_db)):
 @app.get("/api/session/{session_id}")
 async def get_task_by_session(session_id: str, db: Session = Depends(get_db)):
     """
-    Get task ID by Stripe checkout session ID.
+    Get task ID and authentication token by Stripe checkout session ID.
     
     This endpoint is used by the Success component after Stripe redirects
     back to the application with the session_id in the URL.
+    
+    Returns task ID and client authentication token (if email was provided)
+    so the frontend can store the token for authenticated dashboard requests.
+    
+    Security: Issue #17 - Client authentication for dashboard access
     """
     task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
     
     if not task:
         raise HTTPException(status_code=404, detail="Task not found for this session")
     
-    return {"task_id": task.id}
+    # Generate client auth token if email was provided
+    client_token = None
+    if task.client_email:
+        client_token = generate_client_token(task.client_email)
+    
+    return {
+        "task_id": task.id,
+        "client_email": task.client_email,
+        "client_auth_token": client_token
+    }
 
 
 # =============================================================================
