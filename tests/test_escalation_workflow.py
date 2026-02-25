@@ -14,7 +14,7 @@ Closes #3
 
 import pytest
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.api.models import Task, TaskStatus, ReviewStatus, EscalationLog
 
