@@ -216,13 +216,23 @@ class TestBidDeduplication:
         mock_bid = MagicMock()
         mock_bid.id = "bid_123"
         mock_bid.status = BidStatus.ACTIVE
-        mock_session.query.return_value.filter.return_value.first.return_value = mock_bid
+        
+        # Mock the WITH_FOR_UPDATE call properly
+        mock_query = MagicMock()
+        mock_query.with_for_update.return_value.first.return_value = mock_bid
+        mock_session.query.return_value.filter.return_value = mock_query
+        
+        # Mock nested transaction (savepoint)
+        mock_savepoint = MagicMock()
+        mock_savepoint.__enter__ = MagicMock(return_value=mock_savepoint)
+        mock_savepoint.__exit__ = MagicMock(return_value=None)
+        mock_session.begin_nested.return_value = mock_savepoint
         
         result = await mark_bid_withdrawn(mock_session, "bid_123", "Job closed")
         assert result is True
         assert mock_bid.status == BidStatus.WITHDRAWN
         assert mock_bid.withdrawn_reason == "Job closed"
-        assert mock_session.commit.called
+        assert mock_savepoint.commit.called
 
 
 class TestConcurrentBidScenarios:

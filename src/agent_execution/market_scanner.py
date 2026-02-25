@@ -246,13 +246,13 @@ class MarketScanner:
         try:
             # Clean up any existing resources first
             await self.stop()
-            
+
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(headless=self.headless)
-            
+
             # Note: page will be created per operation in fetch_job_postings
             # to ensure proper resource cleanup after each operation
-            
+
             logger.info("MarketScanner browser started successfully")
         except Exception as e:
             logger.error(f"Failed to start browser: {e}")
@@ -262,7 +262,7 @@ class MarketScanner:
     async def stop(self):
         """
         Stop the Playwright browser and cleanup all resources.
-        
+
         Ensures proper cleanup order:
         1. Close any open pages
         2. Close browser
@@ -274,19 +274,19 @@ class MarketScanner:
                     await self.page.close()
                 except Exception as e:
                     logger.warning(f"Error closing page: {e}")
-            
+
             if self.browser:
                 try:
                     await self.browser.close()
                 except Exception as e:
                     logger.warning(f"Error closing browser: {e}")
-            
+
             if self.playwright:
                 try:
                     await self.playwright.stop()
                 except Exception as e:
                     logger.warning(f"Error stopping playwright: {e}")
-            
+
             logger.info("MarketScanner browser stopped and resources cleaned up")
         except Exception as e:
             logger.warning(f"Error stopping browser: {e}")

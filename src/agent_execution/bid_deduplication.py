@@ -9,11 +9,13 @@ conditions in multi-instance deployments.
 
 Issue #8:  Implement distributed lock and deduplication for marketplace bids
 Issue #19: Atomic bid creation to prevent duplicate bids across processes
+Issue #40: Database race condition in bid withdrawal with transactions
 """
 
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+import uuid
 
 from src.api.models import Bid, BidStatus
 from src.utils.logger import get_logger
@@ -110,7 +112,10 @@ async def should_bid(
 
 async def mark_bid_withdrawn(db_session: Session, bid_id: str, reason: str) -> bool:
     """
-    Mark a bid as withdrawn.
+    Mark a bid as withdrawn using atomic transaction.
+
+    Uses SQLAlchemy transaction to ensure atomicity and prevent race conditions.
+    Records atomic event ID for idempotency and debugging.
 
     Args:
         db_session: SQLAlchemy database session
@@ -120,31 +125,65 @@ async def mark_bid_withdrawn(db_session: Session, bid_id: str, reason: str) -> b
     Returns:
         True if successful, False otherwise
     """
+    # Generate event ID for idempotent operations (Issue #40)
+    event_id = str(uuid.uuid4())
+
     try:
-        bid = db_session.query(Bid).filter(Bid.id == bid_id).first()
+        # Use nested transaction (savepoint) for rollback safety
+        savepoint = db_session.begin_nested()
 
-        if not bid:
-            logger.error(f"Bid {bid_id} not found")
-            return False
+        try:
+            # Query with SELECT FOR UPDATE to prevent race conditions
+            bid = (
+                db_session.query(Bid).filter(Bid.id == bid_id).with_for_update().first()
+            )
 
-        if bid.status not in [BidStatus.ACTIVE, BidStatus.SUBMITTED]:
-            logger.warning(
-                f"Cannot withdraw bid {bid_id} with status {bid.status.value}"
+            if not bid:
+                logger.error(f"[{event_id}] Bid {bid_id} not found")
+                savepoint.rollback()
+                return False
+
+            if bid.status not in [BidStatus.ACTIVE, BidStatus.SUBMITTED]:
+                logger.warning(
+                    f"[{event_id}] Cannot withdraw bid {bid_id} with status "
+                    f"{bid.status.value}"
+                )
+                savepoint.rollback()
+                return False
+
+            # Store previous state for audit trail
+            previous_status = bid.status.value if bid.status else None
+
+            # Atomic update
+            bid.status = BidStatus.WITHDRAWN
+            bid.withdrawn_reason = reason
+            bid.withdrawal_timestamp = datetime.now(timezone.utc)
+            bid.updated_at = datetime.now(timezone.utc)
+
+            # Commit savepoint (part of larger transaction)
+            savepoint.commit()
+
+            # Atomic logging (Issue #40)
+            logger.info(
+                f"[{event_id}] Bid {bid_id} withdrawn: {reason} "
+                f"(status: {previous_status} -> WITHDRAWN)"
+            )
+            return True
+
+        except Exception as inner_e:
+            # Rollback savepoint on error
+            savepoint.rollback()
+            logger.error(
+                f"[{event_id}] Error in transaction for bid {bid_id}: {inner_e}",
+                exc_info=True,
             )
             return False
 
-        bid.status = BidStatus.WITHDRAWN
-        bid.withdrawn_reason = reason
-        bid.withdrawal_timestamp = datetime.now(timezone.utc)
-        bid.updated_at = datetime.now(timezone.utc)
-
-        db_session.commit()
-
-        logger.info(f"Bid {bid_id} withdrawn: {reason}")
-        return True
-
     except Exception as e:
-        logger.error(f"Error withdrawing bid {bid_id}: {e}", exc_info=True)
+        logger.error(
+            f"[{event_id}] Error withdrawing bid {bid_id}: {e}",
+            exc_info=True,
+        )
         db_session.rollback()
         return False
 

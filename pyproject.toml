@@ -53,3 +53,8 @@ package-dir = {"" = "src"}
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    # Suppress Pydantic v2 deprecation warnings from external dependencies (traceloop, etc)
+    # These are from third-party libraries that haven't fully migrated to Pydantic v2
+    "ignore::pydantic.warnings.PydanticDeprecatedSince20",
+]

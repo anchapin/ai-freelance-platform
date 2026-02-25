@@ -14,10 +14,7 @@ Tests cover:
 """
 
 import pytest
-import asyncio
 import psutil
-import gc
-from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.agent_execution.market_scanner import MarketScanner
@@ -72,11 +69,10 @@ class TestMarketScannerResourceCleanup:
     @pytest.mark.asyncio
     async def test_market_scanner_exception_during_context(self):
         """Test that cleanup happens even when exception occurs in context."""
-        scanner = None
         exception_raised = False
         
         try:
-            async with MarketScanner() as scanner:
+            async with MarketScanner():
                 # Simulate an exception
                 raise ValueError("Test exception")
         except ValueError:
@@ -398,7 +394,6 @@ class TestResourceCleanupDocumentation:
     @pytest.mark.asyncio
     async def test_market_scanner_cleanup_documented(self):
         """Test MarketScanner cleanup is documented."""
-        import inspect
         
         scanner = MarketScanner()
         
@@ -414,7 +409,6 @@ class TestResourceCleanupDocumentation:
     @pytest.mark.asyncio
     async def test_marketplace_discovery_context_manager_documented(self):
         """Test evaluate_marketplace context manager is documented."""
-        import inspect
         
         discovery = MarketplaceDiscovery()
         doc = discovery.evaluate_marketplace.__doc__ or ""

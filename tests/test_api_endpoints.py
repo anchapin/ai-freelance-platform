@@ -838,7 +838,6 @@ class TestDeliveryEndpoint:
         from src.api.main import app, _delivery_rate_limits
         from src.api.database import get_db
         from src.api.models import TaskStatus
-        import time as _time
         
         _delivery_rate_limits.clear()
         client = TestClient(app)
@@ -898,7 +897,7 @@ class TestDeliveryEndpoint:
                 assert response.status_code in [400, 404]  # Invalid input or not found
             
             # 21st attempt should be rate limited
-            response = client.get(f"/api/delivery/550e8400-e29b-41d4-a716-446655440999/wrong_token_1234567890ab")
+            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440999/wrong_token_1234567890ab")
             assert response.status_code == 429
             assert "Too many delivery requests from your IP" in response.json()["detail"]
         finally:
@@ -994,7 +993,7 @@ class TestDeliveryEndpoint:
             assert "delivered_at" in data
             
             # Verify token was invalidated (one-time use)
-            assert mock_task.delivery_token_used == True
+            assert mock_task.delivery_token_used
             mock_db.commit.assert_called()
         finally:
             app.dependency_overrides.clear()
