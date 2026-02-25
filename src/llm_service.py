@@ -13,7 +13,7 @@ Features:
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
-import time
+import asyncio
 import random
 from typing import Optional, Dict, Any
 
@@ -302,7 +302,24 @@ class LLMService:
         # Stealth mode: add random delay to mimic human typing speed
         if stealth_mode:
             delay = random.uniform(2.0, 5.0)
-            time.sleep(delay)
+            # WARNING: This uses time.sleep which blocks the event loop if called from async.
+            # Use complete_async() from async contexts instead.
+            try:
+                # Check if we're in an async context - if so, log warning
+                asyncio.get_running_loop()
+                # If here, we're in async context - this will block!
+                import warnings
+                warnings.warn(
+                    "complete() with stealth_mode called from async context - "
+                    "will block event loop. Use complete_async() instead.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            except RuntimeError:
+                # No running event loop, safe to proceed
+                pass
+            import time as time_module
+            time_module.sleep(delay)
 
         messages = []
 
@@ -329,6 +346,44 @@ class LLMService:
             },
             "stealth_mode_used": stealth_mode,
         }
+
+    async def complete_async(
+        self,
+        prompt: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        system_prompt: Optional[str] = None,
+        stealth_mode: bool = False,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Async version of complete() - uses asyncio.sleep instead of blocking.
+
+        Args:
+            prompt: The user prompt/input
+            temperature: Sampling temperature (0.0 to 2.0). Higher = more creative
+            max_tokens: Maximum tokens to generate
+            system_prompt: Optional system prompt to set context
+            stealth_mode: If True, adds random delay (2-5 seconds) to mimic human typing
+            **kwargs: Additional parameters passed to the API
+
+        Returns:
+            Dictionary containing the response text and metadata
+        """
+        # Stealth mode: add random delay to mimic human typing speed
+        if stealth_mode:
+            delay = random.uniform(2.0, 5.0)
+            await asyncio.sleep(delay)
+
+        # Use sync complete method (OpenAI client handles the I/O)
+        return self.complete(
+            prompt=prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+            stealth_mode=False,  # We already handled the delay above
+            **kwargs,
+        )
 
     def complete_streaming(
         self,
