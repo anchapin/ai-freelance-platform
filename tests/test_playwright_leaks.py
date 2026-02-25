@@ -261,3 +261,6 @@ class TestPlaywrightPatterns:
         
         asyncio.run(run_test())
 
+
+logger = get_logger(__name__)
+

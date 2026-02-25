@@ -316,12 +316,12 @@ class TestBackgroundJobQueue:
             await asyncio.sleep(1)
         
         # Queue max jobs
-        await queue.queue_job(job_type="test", task_func=dummy_task)
-        await queue.queue_job(job_type="test", task_func=dummy_task)
+        _ = await queue.queue_job(job_type="test", task_func=dummy_task)
+        _ = await queue.queue_job(job_type="test", task_func=dummy_task)
         
         # This should raise QueueFull
         with pytest.raises(asyncio.QueueFull):
-            await queue.queue_job(job_type="test", task_func=dummy_task)
+            _ = await queue.queue_job(job_type="test", task_func=dummy_task)
         
         await queue.stop()
     
