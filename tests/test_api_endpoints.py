@@ -477,18 +477,195 @@ class TestArenaEndpoints:
 
 
 # =============================================================================
+# DELIVERY VALIDATION MODELS TESTS (Issue #18)
+# =============================================================================
+
+class TestDeliveryValidationModels:
+    """Tests for Pydantic validation models for delivery data."""
+    
+    def test_address_validation_valid(self):
+        """Test valid delivery address."""
+        from src.api.main import AddressValidationModel
+        
+        valid_address = AddressValidationModel(
+            address="123 Main St, Apt 4B",
+            city="New York",
+            postal_code="10001",
+            country="US"
+        )
+        assert valid_address.address == "123 Main St, Apt 4B"
+        assert valid_address.city == "New York"
+        assert valid_address.country == "US"
+    
+    def test_address_validation_invalid_chars(self):
+        """Test address with invalid characters."""
+        from src.api.main import AddressValidationModel
+        from pydantic import ValidationError
+        
+        with pytest.raises(ValidationError):
+            AddressValidationModel(
+                address="123 Main St; DROP TABLE",  # Injection attempt
+                city="New York",
+                postal_code="10001",
+                country="US"
+            )
+    
+    def test_address_validation_invalid_city(self):
+        """Test city with numeric characters."""
+        from src.api.main import AddressValidationModel
+        from pydantic import ValidationError
+        
+        with pytest.raises(ValidationError):
+            AddressValidationModel(
+                address="123 Main St",
+                city="New York123",  # Numbers not allowed
+                postal_code="10001",
+                country="US"
+            )
+    
+    def test_address_validation_invalid_country(self):
+        """Test invalid country code (not ISO 3166-1 alpha-2)."""
+        from src.api.main import AddressValidationModel
+        from pydantic import ValidationError
+        
+        with pytest.raises(ValidationError):
+            AddressValidationModel(
+                address="123 Main St",
+                city="New York",
+                postal_code="10001",
+                country="USA"  # Should be 2 letters
+            )
+    
+    def test_amount_validation_valid(self):
+        """Test valid delivery amount."""
+        from src.api.main import DeliveryAmountModel
+        
+        valid_amount = DeliveryAmountModel(
+            amount_cents=5000,
+            currency="USD"
+        )
+        assert valid_amount.amount_cents == 5000
+        assert valid_amount.currency == "USD"
+    
+    def test_amount_validation_negative(self):
+        """Test negative amount (should be rejected)."""
+        from src.api.main import DeliveryAmountModel
+        from pydantic import ValidationError
+        
+        with pytest.raises(ValidationError):
+            DeliveryAmountModel(
+                amount_cents=-100,
+                currency="USD"
+            )
+    
+    def test_amount_validation_exceeds_maximum(self):
+        """Test amount exceeding maximum limit."""
+        from src.api.main import DeliveryAmountModel
+        from pydantic import ValidationError
+        
+        with pytest.raises(ValidationError):
+            DeliveryAmountModel(
+                amount_cents=1000000000,  # Over max
+                currency="USD"
+            )
+    
+    def test_amount_validation_invalid_currency(self):
+        """Test invalid currency code."""
+        from src.api.main import DeliveryAmountModel
+        from pydantic import ValidationError
+        
+        with pytest.raises(ValidationError):
+            DeliveryAmountModel(
+                amount_cents=5000,
+                currency="USDA"  # Should be 3 letters
+            )
+    
+    def test_timestamp_validation_created_in_future(self):
+        """Test created_at in future (should be rejected)."""
+        from src.api.main import DeliveryTimestampModel
+        from pydantic import ValidationError
+        from datetime import datetime, timedelta, timezone
+        
+        future_time = datetime.now(timezone.utc) + timedelta(hours=1)
+        
+        with pytest.raises(ValidationError):
+            DeliveryTimestampModel(
+                created_at=future_time,
+                expires_at=future_time + timedelta(hours=1)
+            )
+    
+    def test_timestamp_validation_expires_in_past(self):
+        """Test expires_at in past (should be rejected)."""
+        from src.api.main import DeliveryTimestampModel
+        from pydantic import ValidationError
+        from datetime import datetime, timedelta, timezone
+        
+        now = datetime.now(timezone.utc)
+        past_time = now - timedelta(hours=1)
+        
+        with pytest.raises(ValidationError):
+            DeliveryTimestampModel(
+                created_at=now - timedelta(hours=2),
+                expires_at=past_time
+            )
+    
+    def test_timestamp_validation_expires_too_far(self):
+        """Test expires_at too far in future (max 365 days)."""
+        from src.api.main import DeliveryTimestampModel
+        from pydantic import ValidationError
+        from datetime import datetime, timedelta, timezone
+        
+        now = datetime.now(timezone.utc)
+        too_far = now + timedelta(days=400)
+        
+        with pytest.raises(ValidationError):
+            DeliveryTimestampModel(
+                created_at=now,
+                expires_at=too_far
+            )
+    
+    def test_timestamp_validation_logical_ordering(self):
+        """Test that created_at must be before expires_at."""
+        from src.api.main import DeliveryTimestampModel
+        from pydantic import ValidationError
+        from datetime import datetime, timedelta, timezone
+        
+        now = datetime.now(timezone.utc)
+        
+        with pytest.raises(ValidationError):
+            DeliveryTimestampModel(
+                created_at=now + timedelta(hours=2),
+                expires_at=now  # Created after expiration
+            )
+    
+    def test_timestamp_validation_valid(self):
+        """Test valid timestamp configuration."""
+        from src.api.main import DeliveryTimestampModel
+        from datetime import datetime, timedelta, timezone
+        
+        now = datetime.now(timezone.utc)
+        valid = DeliveryTimestampModel(
+            created_at=now - timedelta(hours=1),
+            expires_at=now + timedelta(hours=23)
+        )
+        assert valid.expires_at > valid.created_at
+
+
+# =============================================================================
 # DELIVERY ENDPOINT TESTS
 # =============================================================================
 
 class TestDeliveryEndpoint:
-    """Tests for secure delivery endpoints."""
+    """Tests for secure delivery endpoints (Issue #18)."""
     
     def test_delivery_invalid_token(self):
         """Test delivery with invalid token."""
-        from src.api.main import app
+        from src.api.main import app, _delivery_rate_limits
         from src.api.database import get_db
         from src.api.models import TaskStatus
+        from datetime import datetime, timedelta, timezone
         
+        _delivery_rate_limits.clear()
         client = TestClient(app)
         
         # Create mock database
@@ -497,6 +674,8 @@ class TestDeliveryEndpoint:
         mock_task = Mock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440100"
         mock_task.delivery_token = "correct_token_string_1234567890abcdefgh"
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_used = False
         mock_task.status = TaskStatus.COMPLETED
         
         mock_db.query.return_value.filter.return_value.first.return_value = mock_task
@@ -507,8 +686,10 @@ class TestDeliveryEndpoint:
         try:
             response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440100/wrong_token_string_1234567890abcdef")
             assert response.status_code == 403
+            assert "Invalid" in response.json()["detail"]
         finally:
             app.dependency_overrides.clear()
+            _delivery_rate_limits.clear()
     
     def test_delivery_task_not_completed(self):
         """Test delivery when task is not completed."""
@@ -538,5 +719,282 @@ class TestDeliveryEndpoint:
         try:
             response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440101/correct_token_string_1234567890abcdefgh")
             assert response.status_code == 400
+            assert "not ready for delivery" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+    
+    def test_delivery_invalid_task_id_format(self):
+        """Test delivery with invalid task_id format (non-UUID)."""
+        from src.api.main import app, _delivery_rate_limits
+        
+        _delivery_rate_limits.clear()
+        client = TestClient(app)
+        
+        # Try with invalid UUID format
+        response = client.get("/api/delivery/not-a-uuid-string/some_valid_token_1234567890ab")
+        assert response.status_code == 400
+        assert "Invalid input" in response.json()["detail"]
+    
+    def test_delivery_invalid_token_format(self):
+        """Test delivery with invalid token format (contains invalid chars)."""
+        from src.api.main import app, _delivery_rate_limits
+        
+        _delivery_rate_limits.clear()
+        client = TestClient(app)
+        
+        # Valid UUID but invalid token (contains spaces and special chars)
+        response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440100/token with spaces!@#$%")
+        assert response.status_code == 400
+        assert "Invalid input" in response.json()["detail"]
+    
+    def test_delivery_task_not_found(self):
+        """Test delivery when task does not exist."""
+        from src.api.main import app, _delivery_rate_limits
+        from src.api.database import get_db
+        
+        _delivery_rate_limits.clear()
+        client = TestClient(app)
+        
+        # Create mock database that returns None
+        mock_db = Mock()
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        
+        # Override the dependency
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+        
+        try:
+            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440999/valid_token_string_1234567890abcdef")
+            assert response.status_code == 404
+            assert "Task not found" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+    
+    def test_delivery_token_already_used(self):
+        """Test delivery when token has already been used (one-time use)."""
+        from src.api.main import app, _delivery_rate_limits
+        from src.api.database import get_db
+        from src.api.models import TaskStatus
+        from datetime import datetime, timedelta, timezone
+        
+        _delivery_rate_limits.clear()
+        client = TestClient(app)
+        
+        # Create mock database
+        mock_db = Mock()
+        
+        mock_task = Mock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440102"
+        mock_task.delivery_token = "correct_token_string_1234567890abcdefgh"
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_used = True  # Already used
+        mock_task.status = TaskStatus.COMPLETED
+        
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_task
+        
+        # Override the dependency
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+        
+        try:
+            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440102/correct_token_string_1234567890abcdefgh")
+            assert response.status_code == 403
+            assert "already been used" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+    
+    def test_delivery_token_expired(self):
+        """Test delivery when token has expired."""
+        from src.api.main import app, _delivery_rate_limits
+        from src.api.database import get_db
+        from src.api.models import TaskStatus
+        from datetime import datetime, timedelta, timezone
+        
+        _delivery_rate_limits.clear()
+        client = TestClient(app)
+        
+        # Create mock database
+        mock_db = Mock()
+        
+        mock_task = Mock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440103"
+        mock_task.delivery_token = "correct_token_string_1234567890abcdefgh"
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) - timedelta(hours=1)  # Expired
+        mock_task.delivery_token_used = False
+        mock_task.status = TaskStatus.COMPLETED
+        
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_task
+        
+        # Override the dependency
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+        
+        try:
+            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440103/correct_token_string_1234567890abcdefgh")
+            assert response.status_code == 403
+            assert "expired" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+    
+    def test_delivery_rate_limiting_task_level(self):
+        """Test task-level rate limiting (max 5 failed attempts per hour)."""
+        from src.api.main import app, _delivery_rate_limits
+        from src.api.database import get_db
+        from src.api.models import TaskStatus
+        import time as _time
+        
+        _delivery_rate_limits.clear()
+        client = TestClient(app)
+        
+        task_id = "550e8400-e29b-41d4-a716-446655440104"
+        
+        # Create mock database
+        mock_db = Mock()
+        
+        mock_task = Mock()
+        mock_task.id = task_id
+        mock_task.delivery_token = "correct_token_string_1234567890abcdefgh"
+        mock_task.delivery_token_expires_at = None
+        mock_task.delivery_token_used = False
+        mock_task.status = TaskStatus.COMPLETED
+        
+        mock_db.query.return_value.filter.return_value.first.return_value = None  # Task not found
+        
+        # Override the dependency
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+        
+        try:
+            # Make 5 failed attempts with wrong token
+            for i in range(5):
+                response = client.get(f"/api/delivery/{task_id}/wrong_token_1234567890abcdefgh")
+                assert response.status_code == 404
+            
+            # 6th attempt should be rate limited
+            response = client.get(f"/api/delivery/{task_id}/wrong_token_1234567890abcdefgh")
+            assert response.status_code == 429
+            assert "Too many failed attempts" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+            _delivery_rate_limits.clear()
+    
+    def test_delivery_rate_limiting_ip_level(self):
+        """Test IP-level rate limiting (max 20 attempts per IP per hour)."""
+        from src.api.main import app, _delivery_ip_rate_limits
+        from src.api.database import get_db
+        
+        _delivery_ip_rate_limits.clear()
+        client = TestClient(app)
+        
+        # Create mock database
+        mock_db = Mock()
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        
+        # Override the dependency
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+        
+        try:
+            # Make 20 failed attempts
+            task_id_base = "550e8400-e29b-41d4-a716-44665544"
+            for i in range(20):
+                task_id = f"{task_id_base}{i:04d}"
+                response = client.get(f"/api/delivery/{task_id}/wrong_token_1234567890abcdefgh")
+                assert response.status_code in [400, 404]  # Invalid input or not found
+            
+            # 21st attempt should be rate limited
+            response = client.get(f"/api/delivery/550e8400-e29b-41d4-a716-446655440999/wrong_token_1234567890ab")
+            assert response.status_code == 429
+            assert "Too many delivery requests from your IP" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+            _delivery_ip_rate_limits.clear()
+    
+    def test_delivery_security_headers(self):
+        """Test that security headers are present in delivery response."""
+        from src.api.main import app
+        from src.api.database import get_db
+        from src.api.models import TaskStatus
+        from datetime import datetime, timedelta, timezone
+        
+        client = TestClient(app)
+        
+        # Create mock database
+        mock_db = Mock()
+        
+        mock_task = Mock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440105"
+        mock_task.title = "Test Task"
+        mock_task.domain = "test"
+        mock_task.result_type = "image"
+        mock_task.result_image_url = "https://example.com/image.png"
+        mock_task.result_document_url = None
+        mock_task.result_spreadsheet_url = None
+        mock_task.delivery_token = "correct_token_string_1234567890abcdefgh"
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_used = False
+        mock_task.status = TaskStatus.COMPLETED
+        
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_task
+        mock_db.commit = Mock()
+        
+        # Override the dependency
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+        
+        try:
+            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440105/correct_token_string_1234567890abcdefgh")
+            
+            # Verify security headers are present
+            assert response.headers.get("X-Content-Type-Options") == "nosniff"
+            assert response.headers.get("X-XSS-Protection") == "1; mode=block"
+            assert response.headers.get("X-Frame-Options") == "DENY"
+            assert "no-store" in response.headers.get("Cache-Control", "")
+            assert "no-cache" in response.headers.get("Cache-Control", "")
+        finally:
+            app.dependency_overrides.clear()
+    
+    def test_delivery_successful_response(self):
+        """Test successful delivery with valid token and completed task."""
+        from src.api.main import app, _delivery_rate_limits
+        from src.api.database import get_db
+        from src.api.models import TaskStatus
+        from datetime import datetime, timedelta, timezone
+        
+        _delivery_rate_limits.clear()
+        client = TestClient(app)
+        
+        # Create mock database
+        mock_db = Mock()
+        
+        mock_task = Mock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440106"
+        mock_task.title = "Market Research"
+        mock_task.domain = "research"
+        mock_task.result_type = "xlsx"
+        mock_task.result_image_url = None
+        mock_task.result_document_url = None
+        mock_task.result_spreadsheet_url = "https://example.com/results.xlsx"
+        mock_task.delivery_token = "correct_token_string_1234567890abcdefgh"
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_used = False
+        mock_task.status = TaskStatus.COMPLETED
+        
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_task
+        mock_db.commit = Mock()
+        
+        # Override the dependency
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+        
+        try:
+            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440106/correct_token_string_1234567890abcdefgh")
+            
+            # Verify success response
+            assert response.status_code == 200
+            data = response.json()
+            assert data["task_id"] == "550e8400-e29b-41d4-a716-446655440106"
+            assert data["title"] == "Market Research"
+            assert data["domain"] == "research"
+            assert data["result_type"] == "xlsx"
+            assert data["result_url"] == "https://example.com/results.xlsx"
+            assert "delivered_at" in data
+            
+            # Verify token was invalidated (one-time use)
+            assert mock_task.delivery_token_used == True
+            mock_db.commit.assert_called()
         finally:
             app.dependency_overrides.clear()

@@ -10,7 +10,8 @@ import secrets
 import time as _time
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, validator
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, validator, root_validator
 from sqlalchemy.orm import Session
 import stripe
 
@@ -141,6 +142,123 @@ class DeliveryResponse(BaseModel):
     result_document_url: Optional[str] = None
     result_spreadsheet_url: Optional[str] = None
     delivered_at: str
+
+    class Config:
+        """Pydantic config for DeliveryResponse."""
+        schema_extra = {
+            "example": {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "title": "Market Research Analysis",
+                "domain": "research",
+                "result_type": "xlsx",
+                "result_url": "https://storage.example.com/results/file.xlsx",
+                "delivered_at": "2026-02-24T12:00:00+00:00"
+            }
+        }
+
+
+class AddressValidationModel(BaseModel):
+    """Strict validation model for delivery addresses (Issue #18)."""
+    
+    address: str = Field(..., min_length=5, max_length=255)
+    city: str = Field(..., min_length=2, max_length=100)
+    postal_code: str = Field(..., min_length=2, max_length=20)
+    country: str = Field(..., min_length=2, max_length=2)  # ISO 3166-1 alpha-2
+
+    @validator("address", pre=True)
+    def validate_address(cls, v):
+        """Validate delivery address - no special injection chars."""
+        v = v.strip() if isinstance(v, str) else v
+        # Allow alphanumerics, spaces, periods, commas, hyphens
+        if not re.match(r"^[a-zA-Z0-9\s\.,\-#&'()]+$", v):
+            raise ValueError("Address contains invalid characters")
+        return v
+
+    @validator("city", pre=True)
+    def validate_city(cls, v):
+        """Validate city name - alphanumerics and spaces only."""
+        v = v.strip() if isinstance(v, str) else v
+        if not re.match(r"^[a-zA-Z\s\-']+$", v):
+            raise ValueError("City contains invalid characters")
+        return v
+
+    @validator("postal_code", pre=True)
+    def validate_postal_code(cls, v):
+        """Validate postal code - alphanumerics and spaces only."""
+        v = v.strip() if isinstance(v, str) else v
+        if not re.match(r"^[a-zA-Z0-9\s\-]+$", v):
+            raise ValueError("Postal code contains invalid characters")
+        return v
+
+    @validator("country", pre=True)
+    def validate_country(cls, v):
+        """Validate country code - must be ISO 3166-1 alpha-2."""
+        v = v.strip().upper() if isinstance(v, str) else v
+        if not re.match(r"^[A-Z]{2}$", v):
+            raise ValueError("Country must be 2-letter ISO code (e.g., US, GB, DE)")
+        return v
+
+
+class DeliveryAmountModel(BaseModel):
+    """Strict validation model for delivery amounts (Issue #18)."""
+    
+    amount_cents: int = Field(..., ge=0, le=999999999)  # Max $9,999,999.99
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+
+    @validator("amount_cents")
+    def validate_amount(cls, v):
+        """Validate amount is non-negative and reasonable."""
+        if v < 0:
+            raise ValueError("Amount cannot be negative")
+        if v > 999999999:  # More than $9.9M
+            raise ValueError("Amount exceeds maximum limit")
+        return v
+
+    @validator("currency", pre=True)
+    def validate_currency(cls, v):
+        """Validate currency code - must be ISO 4217."""
+        v = v.strip().upper() if isinstance(v, str) else v
+        if not re.match(r"^[A-Z]{3}$", v):
+            raise ValueError("Currency must be 3-letter ISO code (e.g., USD, EUR, GBP)")
+        return v
+
+
+class DeliveryTimestampModel(BaseModel):
+    """Strict validation model for delivery timestamps (Issue #18)."""
+    
+    created_at: datetime = Field(...)
+    expires_at: datetime = Field(...)
+
+    @validator("created_at", pre=True)
+    def validate_created_at(cls, v):
+        """Validate created_at is not in the future."""
+        if isinstance(v, str):
+            v = datetime.fromisoformat(v.replace('Z', '+00:00'))
+        if v > datetime.now(timezone.utc):
+            raise ValueError("created_at cannot be in the future")
+        return v
+
+    @validator("expires_at", pre=True)
+    def validate_expires_at(cls, v):
+        """Validate expires_at is reasonable (not too far in future)."""
+        if isinstance(v, str):
+            v = datetime.fromisoformat(v.replace('Z', '+00:00'))
+        now = datetime.now(timezone.utc)
+        if v <= now:
+            raise ValueError("expires_at must be in the future")
+        max_expiry = now + timedelta(days=365)
+        if v > max_expiry:
+            raise ValueError("expires_at is too far in the future (max 365 days)")
+        return v
+
+    @root_validator(skip_on_failure=True)
+    def validate_logical_ordering(cls, values):
+        """Validate that created_at < expires_at."""
+        created = values.get("created_at")
+        expires = values.get("expires_at")
+        if created and expires and created >= expires:
+            raise ValueError("created_at must be before expires_at")
+        return values
 
 
 def _sanitize_string(value: str, max_length: int = 500) -> str:
@@ -1032,6 +1150,42 @@ async def lifespan(app: FastAPI):
 
 # Update your FastAPI initialization to use the lifespan
 app = FastAPI(title="ArbitrageAI API", lifespan=lifespan)
+
+# =============================================================================
+# CORS & SECURITY HEADERS (Issue #18)
+# =============================================================================
+
+# Add CORS middleware with security headers
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(","),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+)
+
+# Custom middleware to add security headers to all responses (Issue #18)
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to prevent common web vulnerabilities."""
+    response = await call_next(request)
+    
+    # Prevent MIME type sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    
+    # Enable XSS protection in older browsers
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    
+    # Prevent clickjacking
+    response.headers["X-Frame-Options"] = "DENY"
+    
+    # Disable client-side caching for sensitive endpoints
+    if "/api/delivery/" in request.url.path:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    
+    return response
 
 
 @app.get("/")

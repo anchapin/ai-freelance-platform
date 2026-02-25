@@ -310,6 +310,8 @@ async def test_sequential_lock_reacquisition(lock_manager):
 @pytest.mark.asyncio
 async def test_multiple_different_locks(lock_manager):
     """Test that different postings can have independent locks."""
+    # Use short TTL to avoid expiration during test
+    lock_manager.ttl = 5
     postings = ["job_1", "job_2", "job_3"]
 
     # Acquire locks for all postings
@@ -322,13 +324,13 @@ async def test_multiple_different_locks(lock_manager):
         assert result is True
 
     # All should be held by holder_1
-    # Trying to acquire again should fail
+    # Trying to acquire again should fail (with short timeout)
     for posting_id in postings:
         result = await lock_manager.acquire_lock(
             marketplace_id="upwork",
             posting_id=posting_id,
             holder_id="holder_2",
-            timeout=0.5,
+            timeout=0.3,
         )
         assert result is False
 

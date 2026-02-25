@@ -94,3 +94,32 @@ def get_max_bid_amount() -> int:
 def get_min_bid_amount() -> int:
     """Get min bid amount in cents from environment."""
     return int(os.getenv("MIN_BID_AMOUNT", "1000"))  # $10 default
+
+
+def should_use_redis_locks() -> bool:
+    """
+    Determine if Redis-backed distributed locks should be used.
+    
+    Priority:
+    1. USE_REDIS_LOCKS env variable (explicit override)
+    2. REDIS_URL availability (try to auto-detect)
+    3. Default: True for production, False for development
+    
+    Returns:
+        True if Redis locks should be used, False for in-memory fallback
+    """
+    # Explicit override
+    use_redis = os.getenv("USE_REDIS_LOCKS")
+    if use_redis is not None:
+        return use_redis.lower() in ("true", "1", "yes")
+    
+    # Check if REDIS_URL or Redis config is available
+    if os.getenv("REDIS_URL"):
+        return True
+    
+    if os.getenv("REDIS_HOST") or os.getenv("REDIS_PORT"):
+        return True
+    
+    # Default: use Redis unless in development mode
+    is_dev = os.getenv("ENV", "development").lower() == "development"
+    return not is_dev

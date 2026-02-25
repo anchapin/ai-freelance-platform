@@ -26,4 +26,25 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  {
+    files: ['src/**/*.test.{js,jsx}', 'vitest.setup.js', 'vitest.config.js'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        describe: 'readonly',
+        it: 'readonly',
+        expect: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+        vi: 'readonly',
+        fetch: 'writable',
+        global: 'writable',
+      },
+    },
+    rules: {
+      'no-undef': 'off',
+      'no-redeclare': 'off',
+    },
+  },
 ])

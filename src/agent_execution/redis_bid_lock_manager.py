@@ -333,7 +333,7 @@ class RedisBidLockManager:
     async def close(self) -> None:
         """Close Redis connection pool."""
         if self._redis_pool:
-            await self._redis_pool.close()
+            await self._redis_pool.aclose()
             logger.info("Redis connection pool closed")
 
 

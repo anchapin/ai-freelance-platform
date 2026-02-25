@@ -235,6 +235,7 @@ class MarketScanner:
         Start the Playwright browser.
 
         Must be called before scanning if not using context manager.
+        Creates a persistent browser instance for the scanner session.
         """
         if not PLAYWRIGHT_AVAILABLE:
             logger.error(
@@ -243,25 +244,50 @@ class MarketScanner:
             raise RuntimeError("Playwright is not installed")
 
         try:
+            # Clean up any existing resources first
+            await self.stop()
+            
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(headless=self.headless)
-            self.page = await self.browser.new_page()
-            await self.page.set_default_timeout(self.timeout)
+            
+            # Note: page will be created per operation in fetch_job_postings
+            # to ensure proper resource cleanup after each operation
+            
             logger.info("MarketScanner browser started successfully")
         except Exception as e:
             logger.error(f"Failed to start browser: {e}")
+            await self.stop()  # Cleanup on failure
             raise
 
     async def stop(self):
-        """Stop the Playwright browser and cleanup."""
+        """
+        Stop the Playwright browser and cleanup all resources.
+        
+        Ensures proper cleanup order:
+        1. Close any open pages
+        2. Close browser
+        3. Stop playwright
+        """
         try:
             if self.page:
-                await self.page.close()
+                try:
+                    await self.page.close()
+                except Exception as e:
+                    logger.warning(f"Error closing page: {e}")
+            
             if self.browser:
-                await self.browser.close()
+                try:
+                    await self.browser.close()
+                except Exception as e:
+                    logger.warning(f"Error closing browser: {e}")
+            
             if self.playwright:
-                await self.playwright.stop()
-            logger.info("MarketScanner browser stopped")
+                try:
+                    await self.playwright.stop()
+                except Exception as e:
+                    logger.warning(f"Error stopping playwright: {e}")
+            
+            logger.info("MarketScanner browser stopped and resources cleaned up")
         except Exception as e:
             logger.warning(f"Error stopping browser: {e}")
         finally:
@@ -275,6 +301,8 @@ class MarketScanner:
         """
         Fetch job postings from the marketplace.
 
+        Creates and properly closes a page for each fetch operation to prevent leaks.
+
         Args:
             max_posts: Maximum number of postings to fetch
             marketplace_url: Optional marketplace URL (uses default if not provided)
@@ -282,7 +310,7 @@ class MarketScanner:
         Returns:
             List of JobPosting objects
         """
-        if not self.page:
+        if not self.browser:
             await self.start()
 
         # Use provided URL or fall back to single URL override or first configured URL
@@ -297,12 +325,17 @@ class MarketScanner:
         )
 
         job_postings = []
+        page = None
 
         try:
+            # Create a fresh page for this operation
+            page = await self.browser.new_page()
+            await page.set_default_timeout(self.timeout)
+
             logger.info(f"Navigating to marketplace: {url}")
 
             # Navigate to the marketplace
-            response = await self.page.goto(url, wait_until="domcontentloaded")
+            response = await page.goto(url, wait_until="domcontentloaded")
 
             if response and response.status >= 400:
                 logger.warning(f"Marketplace returned status {response.status}")
@@ -310,11 +343,11 @@ class MarketScanner:
                 return self._get_mock_job_postings(max_posts)
 
             # Wait for job listings to load
-            await self.page.wait_for_load_state("networkidle", timeout=self.timeout)
+            await page.wait_for_load_state("networkidle", timeout=self.timeout)
 
             # Try to extract job postings (common selectors)
             # This is a generic approach - may need adjustment for specific marketplaces
-            job_elements = await self.page.query_selector_all(
+            job_elements = await page.query_selector_all(
                 [
                     ".job-listing",
                     ".job-card",
@@ -349,6 +382,14 @@ class MarketScanner:
             logger.error(f"Error fetching job postings: {e}")
             # Return mock data for graceful degradation
             return self._get_mock_job_postings(max_posts)
+
+        finally:
+            # Always close the page to prevent resource leaks
+            if page:
+                try:
+                    await page.close()
+                except Exception as e:
+                    logger.warning(f"Error closing page during cleanup: {e}")
 
         return job_postings
 
