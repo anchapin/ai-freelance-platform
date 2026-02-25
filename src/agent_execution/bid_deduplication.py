@@ -4,10 +4,15 @@ Bid Deduplication and Placement Logic
 This module implements deduplication checks to prevent placing bids on
 marketplace postings where we've already placed bids.
 
-Issue #8: Implement distributed lock and deduplication for marketplace bids
+Includes atomic bid creation (compare-and-set) to prevent TOCTOU race
+conditions in multi-instance deployments.
+
+Issue #8:  Implement distributed lock and deduplication for marketplace bids
+Issue #19: Atomic bid creation to prevent duplicate bids across processes
 """
 
 from datetime import datetime, timedelta, timezone
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.api.models import Bid, BidStatus
@@ -206,3 +211,79 @@ def get_bids_by_status(
             exc_info=True
         )
         return []
+
+
+async def create_bid_atomically(
+    db_session: Session,
+    posting_id: str,
+    marketplace_id: str,
+    job_title: str,
+    job_description: str,
+    bid_amount: int,
+    proposal: str = None,
+    job_url: str = None,
+    evaluation_reasoning: str = None,
+    evaluation_confidence: int = None,
+    skills_matched: list = None,
+) -> Bid | None:
+    """
+    Atomically create a bid, preventing duplicates via the unique constraint.
+
+    If another process already inserted an ACTIVE bid for the same
+    (marketplace, job_id, status), the IntegrityError is caught and None
+    is returned instead of raising.
+
+    Args:
+        db_session: SQLAlchemy database session
+        posting_id: Marketplace posting ID
+        marketplace_id: Marketplace identifier
+        job_title: Title of the job
+        job_description: Description of the job
+        bid_amount: Bid amount in cents
+        proposal: Generated proposal text
+        job_url: URL to the job posting
+        evaluation_reasoning: Reasoning from LLM evaluation
+        evaluation_confidence: Confidence score 0-100
+        skills_matched: List of matched skills
+
+    Returns:
+        The created Bid object, or None if a duplicate was detected
+    """
+    bid = Bid(
+        job_title=job_title,
+        job_description=job_description,
+        job_url=job_url,
+        job_id=posting_id,
+        bid_amount=bid_amount,
+        proposal=proposal,
+        status=BidStatus.ACTIVE,
+        is_suitable=True,
+        evaluation_reasoning=evaluation_reasoning,
+        evaluation_confidence=evaluation_confidence,
+        marketplace=marketplace_id,
+        skills_matched=skills_matched,
+        posting_cached_at=datetime.now(timezone.utc),
+    )
+
+    try:
+        db_session.add(bid)
+        db_session.commit()
+        logger.info(
+            f"Atomic bid created: {bid.id} for "
+            f"{marketplace_id}:{posting_id}"
+        )
+        return bid
+    except IntegrityError:
+        db_session.rollback()
+        logger.warning(
+            f"Duplicate bid prevented (atomic): "
+            f"{marketplace_id}:{posting_id} already has an ACTIVE bid"
+        )
+        return None
+    except Exception as e:
+        db_session.rollback()
+        logger.error(
+            f"Error creating atomic bid for {marketplace_id}:{posting_id}: {e}",
+            exc_info=True,
+        )
+        return None

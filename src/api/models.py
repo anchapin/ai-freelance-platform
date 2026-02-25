@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
-from sqlalchemy import Column, String, Text, Integer, Enum, DateTime, Boolean, JSON, UniqueConstraint
+from sqlalchemy import Column, String, Text, Integer, Float, Enum, DateTime, Boolean, JSON, UniqueConstraint
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -474,4 +474,33 @@ class EscalationLog(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+        }
+
+
+class DistributedLock(Base):
+    """
+    Database-backed distributed lock for cross-process synchronization.
+    
+    Uses a unique constraint on lock_key to implement atomic compare-and-set.
+    A lock is considered held if it exists and has not expired (expires_at > now).
+    
+    Issue #19: Replace in-memory asyncio.Lock with DB-backed distributed lock.
+    """
+    __tablename__ = "distributed_locks"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    lock_key = Column(String, nullable=False, unique=True, index=True)
+    holder_id = Column(String, nullable=False)
+    acquired_at = Column(Float, nullable=False)  # Unix timestamp for precision
+    expires_at = Column(Float, nullable=False)  # Unix timestamp (acquired_at + ttl)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "lock_key": self.lock_key,
+            "holder_id": self.holder_id,
+            "acquired_at": self.acquired_at,
+            "expires_at": self.expires_at,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
