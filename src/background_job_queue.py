@@ -68,16 +68,21 @@ class BackgroundJobQueue:
         self.running_jobs: Dict[str, Job] = {}
         self.completed_jobs: Dict[str, Job] = {}
         self.failed_jobs: Dict[str, Job] = {}
+        self.dead_letter_queue: Dict[str, Job] = {}  # Permanently failed jobs
 
         # Metrics
         self.jobs_queued = 0
         self.jobs_succeeded = 0
         self.jobs_failed = 0
         self.jobs_retried = 0
+        self.jobs_dead_lettered = 0
 
         # Worker tasks
         self._workers = []
         self._running = False
+
+        # State tracking for job completion
+        self._job_state_lock = asyncio.Lock()
 
     async def start(self):
         """Start background workers."""
@@ -237,10 +242,16 @@ class BackgroundJobQueue:
                     job.error = str(e)
                     self.jobs_retried += 1
 
-                    # Re-queue with backoff
-                    await asyncio.sleep(
-                        0.5 * (2**job.retry_count)
-                    )  # Exponential backoff
+                    # Calculate backoff with jitter to prevent thundering herd
+                    backoff_seconds = 0.5 * (2**job.retry_count)
+                    logger.warning(
+                        f"Worker {worker_id}: job {job.job_id} failed, "
+                        f"retrying after {backoff_seconds:.2f}s "
+                        f"({job.retry_count}/{job.max_retries}): {e}"
+                    )
+
+                    # Re-queue with exponential backoff
+                    await asyncio.sleep(backoff_seconds)
                     await self.pending_queue.put(job)
 
                     logger.debug(
@@ -248,20 +259,49 @@ class BackgroundJobQueue:
                         f"({job.retry_count}/{job.max_retries})"
                     )
                 else:
-                    # Mark as failed
+                    # Move to dead-letter queue - permanently failed job
                     job.status = JobStatus.FAILED
                     job.completed_at = datetime.now(timezone.utc)
                     job.error = str(e)
-                    self.failed_jobs[job.job_id] = job
+
+                    async with self._job_state_lock:
+                        self.dead_letter_queue[job.job_id] = job
+                        self.jobs_dead_lettered += 1
+
                     self.jobs_failed += 1
 
                     logger.error(
-                        f"Worker {worker_id}: job {job.job_id} failed permanently"
+                        f"Worker {worker_id}: job {job.job_id} failed permanently "
+                        f"after {job.retry_count} retries: {e}"
                     )
 
             finally:
                 # Remove from running jobs
                 self.running_jobs.pop(job.job_id, None)
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get queue metrics and health status."""
+        return {
+            "jobs_queued": self.jobs_queued,
+            "jobs_succeeded": self.jobs_succeeded,
+            "jobs_failed": self.jobs_failed,
+            "jobs_retried": self.jobs_retried,
+            "jobs_dead_lettered": self.jobs_dead_lettered,
+            "pending_jobs": self.pending_queue.qsize(),
+            "running_jobs": len(self.running_jobs),
+            "completed_jobs": len(self.completed_jobs),
+            "failed_jobs": len(self.failed_jobs),
+            "dead_letter_jobs": len(self.dead_letter_queue),
+            "success_rate_percent": (
+                self.jobs_succeeded / self.jobs_queued * 100
+                if self.jobs_queued > 0
+                else 0.0
+            ),
+        }
+
+    def get_dead_letter_jobs(self) -> Dict[str, Job]:
+        """Get all permanently failed jobs from dead-letter queue."""
+        return dict(self.dead_letter_queue)
 
     def get_job_status(self, job_id: str) -> Optional[JobStatus]:
         """Get the status of a job."""
@@ -271,20 +311,9 @@ class BackgroundJobQueue:
             return self.completed_jobs[job_id].status
         if job_id in self.failed_jobs:
             return self.failed_jobs[job_id].status
+        if job_id in self.dead_letter_queue:
+            return self.dead_letter_queue[job_id].status
         return None
-
-    def get_metrics(self) -> Dict[str, Any]:
-        """Get queue metrics."""
-        return {
-            "jobs_queued": self.jobs_queued,
-            "jobs_succeeded": self.jobs_succeeded,
-            "jobs_failed": self.jobs_failed,
-            "jobs_retried": self.jobs_retried,
-            "pending_jobs": self.pending_queue.qsize(),
-            "running_jobs": len(self.running_jobs),
-            "completed_jobs": len(self.completed_jobs),
-            "failed_jobs": len(self.failed_jobs),
-        }
 
 
 # Global instance
