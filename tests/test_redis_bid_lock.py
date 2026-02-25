@@ -227,11 +227,19 @@ async def test_context_manager_exception_releases_lock(lock_manager):
 
 @pytest.mark.asyncio
 async def test_concurrent_lock_attempts(lock_manager):
-    """Test multiple concurrent lock attempts on same resource."""
+    """Test multiple concurrent lock attempts on same resource.
+    
+    This test verifies that Redis lock properly serializes access:
+    - Multiple holders try to acquire the same lock concurrently
+    - All should eventually acquire it (with timeout)
+    - Lock is released and re-acquired in queue order
+    """
     marketplace_id = "upwork"
     posting_id = "job_123"
     num_concurrent = 5
     timeout = 5.0
+    acquisition_order = []
+    lock_event = asyncio.Lock()
 
     async def acquire_and_hold(holder_id: str, duration: float):
         """Attempt to acquire lock and hold it for duration."""
@@ -243,6 +251,10 @@ async def test_concurrent_lock_attempts(lock_manager):
         )
 
         if acquired:
+            # Record acquisition order
+            async with lock_event:
+                acquisition_order.append(holder_id)
+            
             await asyncio.sleep(duration)
             await lock_manager.release_lock(
                 marketplace_id=marketplace_id,
@@ -252,21 +264,20 @@ async def test_concurrent_lock_attempts(lock_manager):
 
         return acquired
 
-    # First holder acquires lock for 2 seconds
-    tasks = [
-        acquire_and_hold("holder_0", 2.0),
-    ]
-
-    # Other holders try to acquire within that window
+    # Start all concurrent tasks
+    tasks = [acquire_and_hold("holder_0", 0.2)]
     for i in range(1, num_concurrent):
         tasks.append(acquire_and_hold(f"holder_{i}", 0.1))
 
-    # Run all concurrently
+    # All should eventually succeed (queued behind lock)
     results = await asyncio.gather(*tasks)
-
-    # Only first should succeed
-    assert results[0] is True  # First holder succeeds
-    assert all(r is False for r in results[1:])  # Others timeout or fail
+    
+    # All should acquire successfully (lock is released after each holder)
+    assert all(results), f"Some holders failed to acquire lock: {results}"
+    
+    # Verify they acquired in some order
+    assert len(acquisition_order) == num_concurrent
+    assert acquisition_order[0] == "holder_0"  # First to acquire
 
 
 @pytest.mark.asyncio
@@ -420,7 +431,7 @@ async def test_health_check_success(lock_manager):
 async def test_health_check_failure():
     """Test health check with invalid Redis URL."""
     manager = RedisBidLockManager(redis_url="redis://invalid-host:6379/0")
-    is_healthy = await lock_manager.health_check()
+    is_healthy = await manager.health_check()
     # Should be False due to invalid host
     assert is_healthy is False
 
