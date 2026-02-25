@@ -13,7 +13,7 @@ import stripe
 
 from datetime import datetime
 from .database import get_db, init_db
-from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus
+from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus, EscalationLog
 from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
 
@@ -116,9 +116,18 @@ def _should_escalate_task(task, retry_count: int, error_message: str = None) -> 
     return False, None
 
 
-async def _escalate_task(db, task, reason: str, error_message: str = None):
+async def _escalate_task(db: Session, task: Task, reason: str, error_message: str = None):
     """
-    Escalate a task to human review.
+    Escalate a task to human review with idempotency guarantees.
+    
+    This function ensures that escalation notifications are sent at most once,
+    preventing duplicate Telegram alerts if the function is retried.
+    
+    Implementation:
+    1. Create idempotency key from task_id + reason
+    2. Check if escalation log exists (if so, skip notification)
+    3. Create/update task status atomically with escalation log
+    4. Send notification only on first escalation
     
     Args:
         db: Database session
@@ -129,43 +138,117 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
     # Get logger instance
     logger = get_logger(__name__)
     
-    task.status = TaskStatus.ESCALATION
-    task.escalation_reason = reason
-    task.escalated_at = datetime.utcnow()
-    task.last_error = error_message
-    task.review_status = ReviewStatus.PENDING
-    
-    # Log the escalation for profit protection
-    amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
-    is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
-    
-    logger.warning(f"[ESCALATION] Task {task.id} escalated: {reason}")
-    logger.warning(f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}")
-    logger.warning("[ESCALATION] Human reviewer notification required to prevent refund")
-    
-    if error_message:
-        logger.warning(f"[ESCALATION] Error: {error_message[:200]}...")
-    
-    # Send Telegram notification for high-value tasks (profit protection)
-    if is_high_value:
-        try:
-            notifier = TelegramNotifier()
-            context = f"Reason: {reason}"
-            if error_message:
-                context += f"\nError: {error_message[:200]}"
-            
-            await notifier.request_human_help(
+    try:
+        # Create idempotency key to prevent duplicate notifications
+        idempotency_key = f"{task.id}_{reason}"
+        
+        # Check if escalation log already exists (indicating previous escalation)
+        existing_log = db.query(EscalationLog).filter(
+            EscalationLog.idempotency_key == idempotency_key
+        ).first()
+        
+        # Determine if this is a high-value task
+        amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
+        is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
+        
+        # =====================================================================
+        # ATOMIC UPDATE: Update task status + create escalation log in transaction
+        # =====================================================================
+        
+        # Update task status (must happen even if notification fails)
+        task.status = TaskStatus.ESCALATION
+        task.escalation_reason = reason
+        task.escalated_at = datetime.utcnow()
+        task.last_error = error_message
+        task.review_status = ReviewStatus.PENDING
+        
+        logger.warning(f"[ESCALATION] Task {task.id} escalated: {reason}")
+        logger.warning(f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}")
+        
+        if error_message:
+            logger.warning(f"[ESCALATION] Error: {error_message[:200]}...")
+        
+        # =====================================================================
+        # Create or update escalation log for audit trail + idempotency
+        # =====================================================================
+        
+        if not existing_log:
+            # First escalation - create new log
+            escalation_log = EscalationLog(
+                id=str(uuid.uuid4()),
                 task_id=task.id,
-                context=context,
+                reason=reason,
+                error_message=error_message,
+                idempotency_key=idempotency_key,
                 amount_paid=task.amount_paid,
                 domain=task.domain,
-                client_email=task.client_email
+                client_email=task.client_email,
+                notification_sent=False,
+                notification_attempt_count=0
             )
-            logger.info(f"[ESCALATION] Telegram notification sent for high-value task {task.id}")
-        except Exception as e:
-            logger.error(f"[ESCALATION] Failed to send Telegram notification: {e}")
-    
-    db.commit()
+            db.add(escalation_log)
+            logger.info(f"[ESCALATION] Created escalation log for task {task.id}")
+        else:
+            # Retry - update attempt count but skip notification
+            existing_log.notification_attempt_count += 1
+            existing_log.updated_at = datetime.utcnow()
+            escalation_log = existing_log
+            logger.warning(f"[ESCALATION] Task {task.id} already escalated, skipping duplicate notification")
+        
+        # Commit task + escalation log together (atomic)
+        db.commit()
+        
+        # =====================================================================
+        # SEND NOTIFICATION (only on first escalation for high-value tasks)
+        # =====================================================================
+        
+        should_send_notification = is_high_value and not escalation_log.notification_sent
+        
+        if should_send_notification:
+            try:
+                notifier = TelegramNotifier()
+                context = f"Reason: {reason}"
+                if error_message:
+                    context += f"\nError: {error_message[:200]}"
+                
+                await notifier.request_human_help(
+                    task_id=task.id,
+                    context=context,
+                    amount_paid=task.amount_paid,
+                    domain=task.domain,
+                    client_email=task.client_email
+                )
+                
+                # Mark notification as sent (in separate transaction)
+                escalation_log.notification_sent = True
+                escalation_log.last_notification_attempt_at = datetime.utcnow()
+                escalation_log.updated_at = datetime.utcnow()
+                db.commit()
+                
+                logger.info(f"[ESCALATION] Telegram notification sent for high-value task {task.id}")
+                
+            except Exception as e:
+                logger.error(f"[ESCALATION] Failed to send Telegram notification: {e}")
+                
+                # Log the error but don't fail the escalation (task is already escalated)
+                escalation_log.notification_attempt_count += 1
+                escalation_log.notification_error = str(e)[:500]
+                escalation_log.last_notification_attempt_at = datetime.utcnow()
+                escalation_log.updated_at = datetime.utcnow()
+                db.commit()
+        else:
+            logger.info(f"[ESCALATION] Skipping notification (high-value: {is_high_value}, already_sent: {escalation_log.notification_sent})")
+        
+        logger.warning("[ESCALATION] Human reviewer notification required to prevent refund")
+        
+    except Exception as e:
+        logger.error(f"[ESCALATION] Unexpected error during escalation: {e}")
+        # Don't rollback - task status update is more important than notification
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
 
 
 async def process_task_async(task_id: str, use_planning_workflow: bool = True):
