@@ -205,14 +205,45 @@ class DistillationDataCollector:
 
     def _append_to_jsonl(self, filepath: str, record: Dict[str, Any]) -> None:
         """
-        Append a record to a JSONL file.
+        Append a record to a JSONL file with atomic write semantics.
 
         Args:
             filepath: Path to the JSONL file
             record: The record to append
+
+        Raises:
+            IOError: If write fails (caller should implement fallback)
         """
-        with open(filepath, "a") as f:
-            f.write(json.dumps(record) + "\n")
+        import tempfile
+        
+        # Write to temporary file first to ensure atomic operation
+        try:
+            # Create temp file in same directory to ensure same filesystem
+            temp_dir = os.path.dirname(filepath) or "."
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=temp_dir,
+                delete=False,
+                suffix=".tmp"
+            ) as tmp:
+                tmp.write(json.dumps(record) + "\n")
+                temp_path = tmp.name
+            
+            # Append temp file to actual file atomically
+            with open(filepath, "a") as f:
+                with open(temp_path, "r") as tmp:
+                    f.write(tmp.read())
+            
+            # Clean up temp file
+            os.unlink(temp_path)
+        except Exception as e:
+            # Clean up temp file if it exists
+            if 'temp_path' in locals():
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+            raise IOError(f"Failed to write to {filepath}: {e}") from e
 
     def get_dataset_stats(self) -> Dict[str, Any]:
         """
