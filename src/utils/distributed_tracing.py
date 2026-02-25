@@ -46,7 +46,8 @@ _span_id_context: contextvars.ContextVar[str] = contextvars.ContextVar(
 
 # ContextVar for storing the trace flags (sampled flag)
 _trace_flags_context: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "trace_flags", default="01"  # Default: sampled=true
+    "trace_flags",
+    default="01",  # Default: sampled=true
 )
 
 
@@ -75,7 +76,9 @@ def generate_span_id() -> str:
     return span_id
 
 
-def init_trace_context(trace_id: Optional[str] = None, span_id: Optional[str] = None) -> str:
+def init_trace_context(
+    trace_id: Optional[str] = None, span_id: Optional[str] = None
+) -> str:
     """
     Initialize a new trace context for the current async task.
 
@@ -251,7 +254,9 @@ class TraceContextFilter(logging.Filter):
         return True
 
 
-def setup_trace_logging(logger: logging.Logger, pattern: str = "[%(trace_id)s] [%(span_id)s]") -> None:
+def setup_trace_logging(
+    logger: logging.Logger, pattern: str = "[%(trace_id)s] [%(span_id)s]"
+) -> None:
     """
     Setup a logger with trace context logging.
 

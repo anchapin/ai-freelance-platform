@@ -260,12 +260,14 @@ def log_webhook_verification_attempt(
         additional_context: Additional context to log
     """
     context = additional_context or {}
-    context.update({
-        "component": "webhook_verification",
-        "success": success,
-        "event_type": event_type,
-        "event_id": event_id[:12] + "..." if event_id else None,
-    })
+    context.update(
+        {
+            "component": "webhook_verification",
+            "success": success,
+            "event_type": event_type,
+            "event_id": event_id[:12] + "..." if event_id else None,
+        }
+    )
 
     if error_type:
         context["error_type"] = error_type

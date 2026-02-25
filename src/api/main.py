@@ -40,6 +40,16 @@ from ..utils.logger import get_logger
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
 
+# Import webhook security utilities (Issue #35)
+from ..utils.webhook_security import (
+    verify_webhook_signature,
+    WebhookVerificationError,
+    InvalidSignatureError,
+    ReplayAttackError,
+    MissingHeaderError,
+    log_webhook_verification_attempt,
+)
+
 # Import notifications for Telegram alerts
 from ..utils.notifications import TelegramNotifier
 
@@ -1619,9 +1629,7 @@ async def stripe_webhook(
                     content={"error": "Missing session ID in webhook"},
                 )
 
-            task = (
-                db.query(Task).filter(Task.stripe_session_id == session_id).first()
-            )
+            task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
 
             if task:
                 old_status = task.status

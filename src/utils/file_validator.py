@@ -127,9 +127,7 @@ def validate_file_extension(filename: str, allowed_types: Optional[list] = None)
     # Check if extension is in whitelist
     if ext not in ALLOWED_EXTENSIONS:
         allowed = ", ".join(ALLOWED_EXTENSIONS.keys())
-        raise ValueError(
-            f"File type '{ext}' not allowed. Allowed types: {allowed}"
-        )
+        raise ValueError(f"File type '{ext}' not allowed. Allowed types: {allowed}")
 
     # If specific types are required, check against them
     if allowed_types:
@@ -199,14 +197,14 @@ def validate_file_signature(file_content: bytes, ext: str) -> bool:
 
     # Some file types don't have reliable magic bytes (CSV, TXT, JSON)
     if expected_magic is None:
-        logger.info(f"File type '{ext}' has no magic bytes check, skipping signature validation")
+        logger.info(
+            f"File type '{ext}' has no magic bytes check, skipping signature validation"
+        )
         return True
 
     # Check if file starts with expected magic bytes
     if len(file_content) < len(expected_magic):
-        raise ValueError(
-            f"File too small to validate signature for type '{ext}'"
-        )
+        raise ValueError(f"File too small to validate signature for type '{ext}'")
 
     if not file_content.startswith(expected_magic):
         raise ValueError(

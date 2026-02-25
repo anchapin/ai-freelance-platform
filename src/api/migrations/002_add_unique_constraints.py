@@ -8,11 +8,11 @@ Added Constraints:
 1. ClientProfile.client_email - UNIQUE
    - Each client email should have exactly one profile
    - Prevents duplicate client profiles and profile fragmentation
-   
+
 2. Task.stripe_session_id - UNIQUE
    - Each Stripe payment session should be associated with at most one task
    - Prevents double-charging and payment confusion
-   
+
 3. Task.delivery_token - UNIQUE
    - Each delivery token should be unique for secure one-time delivery access
    - Implements secure, traceable result delivery (Issue #18)
@@ -167,7 +167,9 @@ def downgrade(db_session):
             print(f"Warning: Could not drop index on client_email: {e}")
 
         try:
-            connection.execute(text("DROP INDEX IF EXISTS idx_stripe_session_id_unique"))
+            connection.execute(
+                text("DROP INDEX IF EXISTS idx_stripe_session_id_unique")
+            )
             print("✓ Dropped unique index on tasks.stripe_session_id")
         except Exception as e:
             print(f"Warning: Could not drop index on stripe_session_id: {e}")
@@ -204,8 +206,7 @@ def downgrade(db_session):
         try:
             connection.execute(
                 text(
-                    "ALTER TABLE tasks "
-                    "DROP CONSTRAINT IF EXISTS unique_delivery_token"
+                    "ALTER TABLE tasks DROP CONSTRAINT IF EXISTS unique_delivery_token"
                 )
             )
             print("✓ Dropped UNIQUE constraint on tasks.delivery_token")
