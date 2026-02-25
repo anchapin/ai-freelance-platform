@@ -10,7 +10,7 @@ Issue #6: Decouple Experience Vector Database from task execution flow
 import asyncio
 from typing import Callable, Any, Optional, Dict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from src.utils.logger import get_logger
@@ -124,7 +124,7 @@ class BackgroundJobQueue:
             Job ID
         """
         if not job_id:
-            job_id = f"{job_type}_{datetime.utcnow().timestamp()}"
+            job_id = f"{job_type}_{datetime.now(timezone.utc).timestamp()}"
         
         job = Job(
             job_id=job_id,
@@ -133,7 +133,7 @@ class BackgroundJobQueue:
             task_func=task_func,
             task_args=task_args,
             task_kwargs=task_kwargs or {},
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             max_retries=max_retries
         )
         
@@ -161,7 +161,7 @@ class BackgroundJobQueue:
                 break
             
             job.status = JobStatus.RUNNING
-            job.started_at = datetime.utcnow()
+            job.started_at = datetime.now(timezone.utc)
             self.running_jobs[job.job_id] = job
             
             try:
@@ -172,7 +172,7 @@ class BackgroundJobQueue:
                 
                 # Mark as succeeded
                 job.status = JobStatus.SUCCEEDED
-                job.completed_at = datetime.utcnow()
+                job.completed_at = datetime.now(timezone.utc)
                 self.completed_jobs[job.job_id] = job
                 self.jobs_succeeded += 1
                 
@@ -202,7 +202,7 @@ class BackgroundJobQueue:
                 else:
                     # Mark as failed
                     job.status = JobStatus.FAILED
-                    job.completed_at = datetime.utcnow()
+                    job.completed_at = datetime.now(timezone.utc)
                     job.error = str(e)
                     self.failed_jobs[job.job_id] = job
                     self.jobs_failed += 1

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import stripe
 
-from datetime import datetime
+from datetime import datetime, timezone
 from .database import get_db, init_db
 from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus, EscalationLog
 from ..agent_execution.executor import execute_task, OutputFormat
@@ -136,7 +136,7 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
     # Update task status atomically with escalation log
     task.status = TaskStatus.ESCALATION
     task.escalation_reason = reason
-    task.escalated_at = datetime.utcnow()
+    task.escalated_at = datetime.now(timezone.utc)
     task.last_error = error_message
     task.review_status = ReviewStatus.PENDING
     
@@ -199,19 +199,19 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
                 # Mark notification as sent
                 escalation_log.notification_sent = True
                 escalation_log.notification_attempt_count += 1
-                escalation_log.last_notification_attempt_at = datetime.utcnow()
+                escalation_log.last_notification_attempt_at = datetime.now(timezone.utc)
                 
                 logger.info(f"[ESCALATION] Telegram notification sent for high-value task {task.id}")
             except Exception as e:
                 # Log error but don't raise - task status should still be updated
                 escalation_log.notification_attempt_count += 1
-                escalation_log.last_notification_attempt_at = datetime.utcnow()
+                escalation_log.last_notification_attempt_at = datetime.now(timezone.utc)
                 escalation_log.notification_error = str(e)[:500]
                 logger.error(f"[ESCALATION] Failed to send Telegram notification: {e}")
         else:
             # Not first notification or not high-value - just increment attempt count
             escalation_log.notification_attempt_count += 1
-            escalation_log.last_notification_attempt_at = datetime.utcnow()
+            escalation_log.last_notification_attempt_at = datetime.now(timezone.utc)
     
     except Exception as e:
         # If escalation log creation fails, still update task and commit
@@ -435,7 +435,7 @@ Support,180"""
                     work_plan = plan_result["plan"]
                     task.work_plan = json.dumps(work_plan)
                     task.plan_status = "APPROVED"
-                    task.plan_generated_at = datetime.utcnow()
+                    task.plan_generated_at = datetime.now(timezone.utc)
                     logger.info(f"Work plan generated - {work_plan.get('title', 'Untitled')}")
                 else:
                     task.plan_status = "REJECTED"

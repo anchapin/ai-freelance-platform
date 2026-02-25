@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Setup basic logging for the logger itself
 logging.basicConfig(level=logging.INFO)
@@ -50,7 +50,7 @@ class ExperienceLogger:
                 "metadata": {
                     "domain": task.domain,
                     "complexity": task.is_high_value,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 }
             }
 

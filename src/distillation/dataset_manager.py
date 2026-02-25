@@ -12,7 +12,7 @@ Features:
 
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List, Callable
 
 
@@ -216,7 +216,7 @@ class DistillationDatasetManager:
             Path to prepared dataset
         """
         if output_path is None:
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             output_path = os.path.join(DISTILLATION_DIR, f"unsloth_train_{timestamp}.json")
         
         # Load examples
@@ -259,7 +259,7 @@ class DistillationDatasetManager:
             Path to prepared dataset
         """
         if output_path is None:
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             output_path = os.path.join(DISTILLATION_DIR, f"ollama_train_{timestamp}.jsonl")
         
         # Load examples

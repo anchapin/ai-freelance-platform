@@ -15,7 +15,7 @@ The concept:
 import os
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
 
@@ -119,7 +119,7 @@ class DistillationDataCollector:
             "rating": rating,
             "model_used": model_used,
             "metadata": metadata or {},
-            "captured_at": datetime.utcnow().isoformat(),
+            "captured_at": datetime.now(timezone.utc).isoformat(),
             "curated": rating >= MIN_CURATION_RATING
         }
         
@@ -319,7 +319,7 @@ class DistillationDataCollector:
             Path to the exported file
         """
         if output_path is None:
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             output_path = os.path.join(self.output_dir, f"training_data_{timestamp}.json")
         
         examples = self.get_curated_examples()

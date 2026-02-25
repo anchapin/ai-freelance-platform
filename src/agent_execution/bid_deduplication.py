@@ -7,7 +7,7 @@ marketplace postings where we've already placed bids.
 Issue #8: Implement distributed lock and deduplication for marketplace bids
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from src.api.models import Bid, BidStatus
@@ -71,12 +71,12 @@ async def should_bid(
         ).all()
         
         if stale_bids:
-            cutoff_time = datetime.utcnow() - timedelta(hours=ttl_hours)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
             for bid in stale_bids:
                 if bid.posting_cached_at and bid.posting_cached_at < cutoff_time:
                     logger.warning(
                         f"Posting freshness check: posting {marketplace_id}:{posting_id} "
-                        f"was cached {(datetime.utcnow() - bid.posting_cached_at).total_seconds() / 3600:.1f} hours ago, "
+                        f"was cached {(datetime.now(timezone.utc) - bid.posting_cached_at).total_seconds() / 3600:.1f} hours ago, "
                         f"exceeds TTL of {ttl_hours}h"
                     )
                     return False
@@ -127,8 +127,8 @@ async def mark_bid_withdrawn(
         
         bid.status = BidStatus.WITHDRAWN
         bid.withdrawn_reason = reason
-        bid.withdrawal_timestamp = datetime.utcnow()
-        bid.updated_at = datetime.utcnow()
+        bid.withdrawal_timestamp = datetime.now(timezone.utc)
+        bid.updated_at = datetime.now(timezone.utc)
         
         db_session.commit()
         

@@ -10,7 +10,7 @@ Issue #6: Decouple Experience Vector Database from task execution flow
 import asyncio
 import time
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
 
@@ -110,7 +110,7 @@ class CachedFewShotQuery:
     
     def is_expired(self, ttl_minutes: int = 60) -> bool:
         """Check if cache has expired."""
-        age = (datetime.utcnow() - self.cached_at).total_seconds() / 60
+        age = (datetime.now(timezone.utc) - self.cached_at).total_seconds() / 60
         return age > ttl_minutes
 
 
@@ -199,7 +199,7 @@ class AsyncRAGService:
             async with self._cache_lock:
                 self._query_cache[cache_key] = CachedFewShotQuery(
                     examples=examples,
-                    cached_at=datetime.utcnow()
+                    cached_at=datetime.now(timezone.utc)
                 )
             
             logger.debug(f"RAG query succeeded: {len(examples)} examples for {domain}")

@@ -17,7 +17,7 @@ cloud models (GPT-4o) and learn from their successes/failures.
 import asyncio
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from enum import Enum
 
@@ -475,7 +475,7 @@ class ArenaRouter:
             "winner": winner,
             "win_reason": win_reason,
             "winning_artifact_url": result_a.get("artifact_url") if winner == "agent_a" else result_b.get("artifact_url"),
-            "completed_at": datetime.utcnow().isoformat()
+            "completed_at": datetime.now(timezone.utc).isoformat()
         }
         
         logger.info(f"Winner: {winner} | Reason: {win_reason}")
@@ -625,7 +625,7 @@ class ArenaLearningLogger:
             
             # Metadata
             "profit_diff": winner_data["profit"]["profit"] - loser_data["profit"]["profit"],
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         # Append to DPO dataset

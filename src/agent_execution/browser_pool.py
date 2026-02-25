@@ -9,7 +9,7 @@ Issue #4: Fix async Playwright resource leaks in market scanner
 import asyncio
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 try:
     from playwright.async_api import async_playwright
@@ -124,7 +124,7 @@ class BrowserPool:
                     browser_id = f"browser_{len(self._browsers)}"
                     self._browsers[browser_id] = PooledBrowser(
                         browser=browser,
-                        created_at=datetime.utcnow(),
+                        created_at=datetime.now(timezone.utc),
                         in_use=True
                     )
                     self.browsers_created += 1

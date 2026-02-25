@@ -10,7 +10,7 @@ Coverage includes:
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.llm_health_check import (
     LLMHealthChecker,
@@ -71,7 +71,7 @@ class TestCircuitBreakerStateMachine:
         assert checker.should_allow_request(endpoint) is False
         
         # Simulate waiting
-        metrics.opened_at = datetime.utcnow() - timedelta(seconds=2)
+        metrics.opened_at = datetime.now(timezone.utc) - timedelta(seconds=2)
         
         # After timeout: should allow (transition to HALF_OPEN)
         assert checker.should_allow_request(endpoint) is True

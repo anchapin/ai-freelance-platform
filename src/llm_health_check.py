@@ -18,7 +18,7 @@ import asyncio
 import threading
 from enum import Enum
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
 from src.utils.logger import get_logger
@@ -136,7 +136,7 @@ class LLMHealthChecker:
         with self._lock:
             metrics.consecutive_failures = 0
             metrics.total_requests += 1
-            metrics.last_healthy_at = datetime.utcnow()
+            metrics.last_healthy_at = datetime.now(timezone.utc)
             
             # Track response time
             if response_time_ms > 0:
@@ -162,7 +162,7 @@ class LLMHealthChecker:
             if (metrics.consecutive_failures >= metrics.failure_threshold and
                 metrics.state == CircuitState.CLOSED):
                 metrics.state = CircuitState.OPEN
-                metrics.opened_at = datetime.utcnow()
+                metrics.opened_at = datetime.now(timezone.utc)
                 logger.warning(
                     f"[CIRCUIT] {endpoint} OPEN after {metrics.consecutive_failures} failures. "
                     f"Last error: {error[:100]}"
@@ -178,7 +178,7 @@ class LLMHealthChecker:
         elif metrics.state == CircuitState.OPEN:
             # Check if we should try recovery (half-open)
             if metrics.opened_at:
-                elapsed = datetime.utcnow() - metrics.opened_at
+                elapsed = datetime.now(timezone.utc) - metrics.opened_at
                 if elapsed.total_seconds() >= metrics.recovery_timeout_seconds:
                     with self._lock:
                         metrics.state = CircuitState.HALF_OPEN
@@ -235,7 +235,7 @@ class LLMHealthChecker:
             # Placeholder: actual implementation would test endpoint connectivity
             # For now, assume it's healthy if no recent failures
             if metrics.consecutive_failures == 0:
-                metrics.last_health_check_at = datetime.utcnow()
+                metrics.last_health_check_at = datetime.now(timezone.utc)
                 return True
             return False
         except Exception as e:

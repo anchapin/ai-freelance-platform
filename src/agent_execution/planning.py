@@ -20,7 +20,7 @@ CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap):
 """
 
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.llm_service import LLMService
 from src.agent_execution.file_parser import parse_file, detect_file_type
@@ -295,7 +295,7 @@ def save_client_preferences(
             else:
                 profile.failed_tasks = (profile.failed_tasks or 0) + 1
             
-            profile.last_task_at = datetime.utcnow()
+            profile.last_task_at = datetime.now(timezone.utc)
             
             # Extract and update preferences from feedback
             extracted = _extract_preferences_from_feedback(review_feedback)
@@ -337,7 +337,7 @@ def save_client_preferences(
                 "domain": domain,
                 "feedback": review_feedback,
                 "approved": review_approved,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
             # Keep only last 20 feedback entries
             profile.feedback_history = history[-20:]
@@ -648,7 +648,7 @@ Generate the work plan as JSON."""
             plan = self._parse_plan_json(content)
             
             if plan:
-                plan["generated_at"] = datetime.utcnow().isoformat()
+                plan["generated_at"] = datetime.now(timezone.utc).isoformat()
                 plan["domain"] = domain
                 plan["user_request"] = user_request
                 return {
@@ -767,7 +767,7 @@ class PlanExecutor:
         output_format = work_plan.get("output_format") or self._infer_output_format(work_plan)
         
         execution_log = {
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "steps_executed": [],
             "plan_title": work_plan.get("title", "")
         }
@@ -810,7 +810,7 @@ class PlanExecutor:
                     enable_pre_submission_review=True
                 )
             
-            execution_log["completed_at"] = datetime.utcnow().isoformat()
+            execution_log["completed_at"] = datetime.now(timezone.utc).isoformat()
             execution_log["steps_executed"] = work_plan.get("steps", [])
             execution_log["execution_result"] = result
             
@@ -822,7 +822,7 @@ class PlanExecutor:
             
         except Exception as e:
             execution_log["error"] = str(e)
-            execution_log["completed_at"] = datetime.utcnow().isoformat()
+            execution_log["completed_at"] = datetime.now(timezone.utc).isoformat()
             
             return {
                 "success": False,
@@ -948,7 +948,7 @@ Return your review in JSON format."""
                     "criteria_met": review_data.get("criteria_met", []),
                     "criteria_not_met": review_data.get("criteria_not_met", []),
                     "plan_adherence": review_data.get("plan_adherence", "medium"),
-                    "reviewed_at": datetime.utcnow().isoformat()
+                    "reviewed_at": datetime.now(timezone.utc).isoformat()
                 }
             
             # Default approval if parsing fails
@@ -1147,7 +1147,7 @@ class ResearchAndPlanOrchestrator:
         """
         workflow_result = {
             "workflow": "research_and_plan",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "steps": {}
         }
         
@@ -1262,7 +1262,7 @@ class ResearchAndPlanOrchestrator:
         }
         
         # Final result
-        workflow_result["completed_at"] = datetime.utcnow().isoformat()
+        workflow_result["completed_at"] = datetime.now(timezone.utc).isoformat()
         workflow_result["success"] = approved
         
         if approved:

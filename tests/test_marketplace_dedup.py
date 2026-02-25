@@ -15,7 +15,7 @@ Coverage:
 
 import pytest
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 from src.agent_execution.bid_lock_manager import (
@@ -236,7 +236,7 @@ class TestBidDeduplication:
         
         # But stale posting exists
         old_bid = MagicMock()
-        old_bid.posting_cached_at = datetime.utcnow() - timedelta(hours=25)
+        old_bid.posting_cached_at = datetime.now(timezone.utc) - timedelta(hours=25)
         old_bid.status = BidStatus.ACTIVE
         mock_session.query.return_value.filter.return_value.all.return_value = [old_bid]
         
