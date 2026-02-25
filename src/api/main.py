@@ -1238,6 +1238,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ArbitrageAI API", lifespan=lifespan)
 
 # =============================================================================
+# RATE LIMITING MIDDLEWARE (Issue #45)
+# =============================================================================
+
+# Import rate limiting middleware and admin routes
+from .rate_limit_middleware import RateLimitMiddleware
+from .admin_quotas import router as admin_router
+
+# Add rate limit middleware
+app.add_middleware(RateLimitMiddleware)
+
+# =============================================================================
 # CORS & SECURITY HEADERS (Issue #18)
 # =============================================================================
 
@@ -2815,6 +2826,13 @@ async def start_autonomous_loop():
         logger.info(
             "[STARTUP] Autonomous scanning is DISABLED (set AUTONOMOUS_SCAN_ENABLED=true to enable)"
         )
+
+
+# =============================================================================
+# INCLUDE ADMIN QUOTA ROUTES (Issue #45)
+# =============================================================================
+
+app.include_router(admin_router)
 
 
 if __name__ == "__main__":

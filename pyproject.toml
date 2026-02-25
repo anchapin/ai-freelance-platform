@@ -24,6 +24,15 @@ dependencies = [
     "arize-phoenix>=4.0.0",
     "opentelemetry-api>=1.24.0",
     "opentelemetry-sdk>=1.24.0",
+    # APM and distributed tracing (Issue #42)
+    "opentelemetry-exporter-jaeger>=1.24.0",
+    "opentelemetry-exporter-prometheus>=0.45b0",
+    "opentelemetry-exporter-otlp-proto-grpc>=0.45b0",
+    "opentelemetry-instrumentation-fastapi>=0.45b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.45b0",
+    "opentelemetry-instrumentation-httpx>=0.45b0",
+    "opentelemetry-instrumentation-requests>=0.45b0",
+    "prometheus-client>=0.19.0",
     # Docker Sandbox (replaces E2B for cost savings)
     "docker>=7.0.0",
     # Market Scanner (Playwright for web scraping)

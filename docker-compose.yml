@@ -1,0 +1,185 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Core Services
+  # ============================================================================
+
+  # Redis for distributed locks and caching
+  redis:
+    image: redis:7-alpine
+    container_name: arbitrage-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    environment:
+      - TZ=UTC
+
+  # Ollama for local LLM inference
+  ollama:
+    image: ollama/ollama:latest
+    container_name: arbitrage-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:11434/api/tags" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # APM and Observability Services (Issue #42)
+  # ============================================================================
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: arbitrage-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_OTLP_HOST_PORT=0.0.0.0:4317
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_VALUE=/badger/data
+      - BADGER_DIRECTORY_KEY=/badger/key
+    ports:
+      - "6831:6831/udp"  # Jaeger agent (compact thrift)
+      - "14250:14250"    # Jaeger gRPC
+      - "14268:14268"    # Jaeger HTTP collector
+      - "16686:16686"    # Jaeger UI (accessible at http://localhost:16686)
+      - "4317:4317"      # OTLP gRPC receiver
+      - "4318:4318"      # OTLP HTTP receiver
+    volumes:
+      - jaeger_data:/badger
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:16686/api/traces" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+      - --sampling.strategies-file=/etc/jaeger/sampling_strategies.json
+    networks:
+      - arbitrage-network
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: arbitrage-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    environment:
+      - TZ=UTC
+    healthcheck:
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arbitrage-network
+
+  # Grafana for visualization and dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: arbitrage-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+      - ./src/utils/apm_dashboard.json:/etc/grafana/provisioning/dashboards/apm_dashboard.json
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arbitrage-network
+
+  # OpenTelemetry Collector (optional, for advanced scenarios)
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: arbitrage-otel-collector
+    command: [ "--config=/etc/otel-collector-config.yml" ]
+    volumes:
+      - ./docker/otel-collector-config.yml:/etc/otel-collector-config.yml
+    ports:
+      - "4317:4317"      # OTLP gRPC receiver
+      - "4318:4318"      # OTLP HTTP receiver
+      - "8889:8889"      # Prometheus exporter metrics
+      - "8888:8888"      # Metrics listening endpoint
+    depends_on:
+      - jaeger
+    environment:
+      - TZ=UTC
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:13133" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arbitrage-network
+
+  # ============================================================================
+  # Application Container (placeholder for FastAPI)
+  # ============================================================================
+  # Uncomment when ready to run FastAPI in Docker
+  # fastapi:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: arbitrage-fastapi
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - ENVIRONMENT=production
+  #     - APM_ENABLED=true
+  #     - APM_BACKEND=jaeger
+  #     - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+  #     - DATABASE_URL=postgresql://user:password@postgres:5432/arbitrage_ai
+  #     - REDIS_URL=redis://redis:6379/0
+  #     - OLLAMA_URL=http://ollama:11434/v1
+  #   depends_on:
+  #     - redis
+  #     - ollama
+  #     - jaeger
+  #     - prometheus
+  #   networks:
+  #     - arbitrage-network
+
+volumes:
+  redis_data:
+  ollama_data:
+  jaeger_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  arbitrage-network:
+    driver: bridge

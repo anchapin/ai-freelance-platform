@@ -1,0 +1,45 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'arbitrage-ai'
+    service: 'apm'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Jaeger metrics
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+    metrics_path: '/metrics'
+
+  # FastAPI / OpenTelemetry Prometheus exporter
+  - job_name: 'arbitrage-ai'
+    static_configs:
+      - targets: ['localhost:8001']
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+    scrape_timeout: 5s
+
+  # Service discovery for containerized endpoints
+  - job_name: 'docker'
+    static_configs:
+      - targets:
+          - 'redis:6379'
+          - 'ollama:11434'
+          - 'jaeger:14269'
+          - 'prometheus:9090'

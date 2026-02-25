@@ -1,0 +1,70 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'otel-collector'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['localhost:8888']
+
+processors:
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  attributes:
+    actions:
+      - key: service.name
+        value: arbitrage-ai
+        action: insert
+      - key: service.version
+        value: 0.1.0
+        action: insert
+      - key: deployment.environment
+        value: production
+        action: insert
+
+  span:
+    name:
+      regex: ^.*$
+      action: update
+
+exporters:
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+  logging:
+    loglevel: debug
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, attributes, span]
+      exporters: [jaeger, logging]
+
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus, logging]
+
+  telemetry:
+    logs:
+      level: info

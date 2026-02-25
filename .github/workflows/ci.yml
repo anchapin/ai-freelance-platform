@@ -22,5 +22,14 @@ jobs:
       - name: Run Linter (Ruff)
         run: ruff check .
         
-      - name: Run Tests
-        run: pytest tests/
+      - name: Run Unit Tests
+        run: pytest tests/ --ignore=tests/e2e/ -v
+        
+      - name: Run E2E Tests
+        run: pytest tests/e2e/ -v --tb=short
+        
+      - name: Generate Coverage Report
+        run: |
+          pip install pytest-cov
+          pytest tests/e2e/ --cov=src --cov-report=term-summary
+        continue-on-error: true

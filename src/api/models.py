@@ -651,3 +651,183 @@ class DistributedLock(Base):
             "expires_at": self.expires_at,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class PricingTier(PyEnum):
+    """Pricing tiers for user quotas."""
+    FREE = "FREE"
+    PRO = "PRO"
+    ENTERPRISE = "ENTERPRISE"
+
+
+class UserQuota(Base):
+    """
+    User quota and rate limit configuration.
+    
+    Issue #45: API Rate Limiting, Quotas, and Usage Analytics
+    
+    Tracks per-user quotas across pricing tiers:
+    - Free: 10 tasks/month, 100 API calls/month, 60 compute minutes/month
+    - Pro: 1000 tasks/month, 10000 API calls/month, 600 compute minutes/month
+    - Enterprise: Unlimited
+    """
+    
+    __tablename__ = "user_quotas"
+    
+    __table_args__ = (
+        UniqueConstraint("user_id", name="unique_user_quota"),
+        Index("user_id_tier_idx", "user_id", "tier"),
+    )
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=False, unique=True, index=True)  # Email or user identifier
+    tier = Column(Enum(PricingTier), default=PricingTier.FREE, nullable=False)
+    
+    # Monthly limits (resets on billing cycle)
+    monthly_task_limit = Column(Integer, default=10)  # Free: 10, Pro: 1000, Enterprise: unlimited
+    monthly_api_calls_limit = Column(Integer, default=100)  # Free: 100, Pro: 10000, Enterprise: unlimited
+    monthly_compute_minutes_limit = Column(Integer, default=60)  # Free: 60, Pro: 600, Enterprise: unlimited
+    
+    # Rate limiting (requests per second + burst)
+    rate_limit_rps = Column(Integer, default=10)  # Requests per second
+    rate_limit_burst = Column(Integer, default=50)  # Burst capacity
+    
+    # Billing cycle tracking
+    billing_cycle_start = Column(DateTime, nullable=False, default=datetime.utcnow)
+    billing_cycle_end = Column(DateTime, nullable=False)
+    
+    # Quota thresholds for alerts
+    alert_threshold_percentage = Column(Integer, default=80)  # Alert at 80% usage
+    
+    # Override flags (admin)
+    override_rate_limit = Column(Boolean, default=False)
+    override_quota = Column(Boolean, default=False)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "tier": self.tier.value if self.tier else None,
+            "monthly_task_limit": self.monthly_task_limit,
+            "monthly_api_calls_limit": self.monthly_api_calls_limit,
+            "monthly_compute_minutes_limit": self.monthly_compute_minutes_limit,
+            "rate_limit_rps": self.rate_limit_rps,
+            "rate_limit_burst": self.rate_limit_burst,
+            "billing_cycle_start": self.billing_cycle_start.isoformat() if self.billing_cycle_start else None,
+            "billing_cycle_end": self.billing_cycle_end.isoformat() if self.billing_cycle_end else None,
+            "alert_threshold_percentage": self.alert_threshold_percentage,
+            "override_rate_limit": self.override_rate_limit,
+            "override_quota": self.override_quota,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class QuotaUsage(Base):
+    """
+    Monthly quota usage tracking per user.
+    
+    Issue #45: API Rate Limiting, Quotas, and Usage Analytics
+    
+    Tracks actual usage against quotas. Resets each billing cycle.
+    """
+    
+    __tablename__ = "quota_usage"
+    
+    __table_args__ = (
+        UniqueConstraint("user_id", "billing_month", name="unique_user_month_usage"),
+        Index("user_id_month_idx", "user_id", "billing_month"),
+    )
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=False, index=True)
+    billing_month = Column(String, nullable=False)  # YYYY-MM format
+    
+    # Tracked metrics
+    task_count = Column(Integer, default=0)
+    api_call_count = Column(Integer, default=0)
+    compute_minutes_used = Column(Float, default=0.0)
+    
+    # Status tracking
+    quota_exceeded = Column(Boolean, default=False)
+    alert_sent_at_80_percent = Column(DateTime, nullable=True)
+    alert_sent_at_100_percent = Column(DateTime, nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "billing_month": self.billing_month,
+            "task_count": self.task_count,
+            "api_call_count": self.api_call_count,
+            "compute_minutes_used": self.compute_minutes_used,
+            "quota_exceeded": self.quota_exceeded,
+            "alert_sent_at_80_percent": self.alert_sent_at_80_percent.isoformat() if self.alert_sent_at_80_percent else None,
+            "alert_sent_at_100_percent": self.alert_sent_at_100_percent.isoformat() if self.alert_sent_at_100_percent else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class RateLimitLog(Base):
+    """
+    Log of rate limit violations and enforcement.
+    
+    Issue #45: API Rate Limiting, Quotas, and Usage Analytics
+    
+    Tracks rate limit violations for debugging and analytics.
+    """
+    
+    __tablename__ = "rate_limit_logs"
+    
+    __table_args__ = (
+        Index("user_id_timestamp_idx", "user_id", "timestamp"),
+    )
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=False, index=True)
+    
+    # Request details
+    endpoint = Column(String, nullable=False)
+    method = Column(String, nullable=False)  # GET, POST, etc.
+    
+    # Rate limiting details
+    requests_in_window = Column(Integer, nullable=False)  # Current window request count
+    rate_limit_rps = Column(Integer, nullable=False)  # Limit at time of request
+    exceeded = Column(Boolean, default=False)  # Was limit exceeded?
+    
+    # Quota details
+    quota_type = Column(String, nullable=True)  # task, api_call, compute_minute, etc.
+    quota_used = Column(Integer, nullable=True)
+    quota_limit = Column(Integer, nullable=True)
+    quota_exceeded = Column(Boolean, default=False)
+    
+    # Response
+    status_code = Column(Integer, nullable=False)
+    response_time_ms = Column(Float, nullable=False)
+    
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "endpoint": self.endpoint,
+            "method": self.method,
+            "requests_in_window": self.requests_in_window,
+            "rate_limit_rps": self.rate_limit_rps,
+            "exceeded": self.exceeded,
+            "quota_type": self.quota_type,
+            "quota_used": self.quota_used,
+            "quota_limit": self.quota_limit,
+            "quota_exceeded": self.quota_exceeded,
+            "status_code": self.status_code,
+            "response_time_ms": self.response_time_ms,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+        }
