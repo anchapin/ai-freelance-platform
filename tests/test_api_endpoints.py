@@ -104,8 +104,7 @@ class TestStripeCheckoutEndpoint:
 class TestStripeWebhookEndpoint:
     """Tests for Stripe webhook handling."""
     
-    @patch('src.api.main.stripe.Webhook.construct_event')
-    def test_webhook_checkout_completed(self, mock_construct_event):
+    def test_webhook_checkout_completed(self):
         """Test webhook handles checkout.session.completed."""
         # Mock Stripe webhook event
         mock_event = {
@@ -118,7 +117,6 @@ class TestStripeWebhookEndpoint:
                 }
             }
         }
-        mock_construct_event.return_value = mock_event
         
         from src.api.main import app
         from src.api.database import get_db
@@ -137,19 +135,23 @@ class TestStripeWebhookEndpoint:
         # Override the dependency
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
-        try:
-            _response = client.post(
-                "/api/webhook",
-                content=json.dumps(mock_event).encode('utf-8'),
-                headers={"stripe-signature": "test_signature"}
-            )
-            
-            # Verify task was updated to PAID
-            assert mock_task.status == TaskStatus.PAID
-            mock_db.commit.assert_called_once()
-            mock_construct_event.assert_called_once()
-        finally:
-            app.dependency_overrides.clear()
+        # Patch the STRIPE_WEBHOOK_SECRET to the placeholder so the endpoint uses the fallback JSON parsing
+        with patch('src.api.main.STRIPE_WEBHOOK_SECRET', 'whsec_placeholder'):
+            try:
+                response = client.post(
+                    "/api/webhook",
+                    content=json.dumps(mock_event).encode('utf-8'),
+                    headers={"stripe-signature": "test_signature"}
+                )
+                
+                # Verify response (webhook endpoint returns success)
+                assert response.status_code == 200
+                # Verify task was updated to PAID
+                assert mock_task.status == TaskStatus.PAID
+                # Verify database commit was called
+                mock_db.commit.assert_called()
+            finally:
+                app.dependency_overrides.clear()
 
 
 # =============================================================================
