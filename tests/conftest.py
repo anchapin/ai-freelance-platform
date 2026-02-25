@@ -10,7 +10,6 @@ This module provides:
 """
 
 import pytest
-import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 
 # Import the modules under test
