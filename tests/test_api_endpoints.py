@@ -489,8 +489,8 @@ class TestDeliveryEndpoint:
         mock_db = Mock()
         
         mock_task = Mock()
-        mock_task.id = "test_task"
-        mock_task.delivery_token = "correct_token"
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440100"
+        mock_task.delivery_token = "correct_token_string_1234567890abcdefgh"
         mock_task.status = TaskStatus.COMPLETED
         
         mock_db.query.return_value.filter.return_value.first.return_value = mock_task
@@ -499,7 +499,7 @@ class TestDeliveryEndpoint:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
         try:
-            response = client.get("/api/delivery/test_task/wrong_token")
+            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440100/wrong_token_string_1234567890abcdef")
             assert response.status_code == 403
         finally:
             app.dependency_overrides.clear()
@@ -518,8 +518,8 @@ class TestDeliveryEndpoint:
         mock_db = Mock()
         
         mock_task = Mock()
-        mock_task.id = "test_task"
-        mock_task.delivery_token = "correct_token"
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440101"
+        mock_task.delivery_token = "correct_token_string_1234567890abcdefgh"
         mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
         mock_task.delivery_token_used = False
         mock_task.status = TaskStatus.PROCESSING
@@ -530,7 +530,7 @@ class TestDeliveryEndpoint:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
         try:
-            response = client.get("/api/delivery/test_task/correct_token")
+            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440101/correct_token_string_1234567890abcdefgh")
             assert response.status_code == 400
         finally:
             app.dependency_overrides.clear()
