@@ -7,7 +7,7 @@ def init_observability():
     """
     Initializes local tracing via Arize Phoenix and Traceloop.
     Captures LLM calls, token usage, and latency automatically.
-    
+
     Note: In production (ENVIRONMENT != "development"), Phoenix should be run
     as a standalone Docker container to avoid port conflicts with multiple workers.
     """
@@ -24,5 +24,5 @@ def init_observability():
     # 3. Initialize auto-instrumentation
     Traceloop.init(
         app_name="arbitrage_ai",
-        disable_batch=True  # Sends traces immediately for real-time debugging
+        disable_batch=True,  # Sends traces immediately for real-time debugging
     )

@@ -6,7 +6,6 @@ Supports both local development and production deployments.
 """
 
 import os
-from typing import Optional
 
 
 def get_redis_url() -> str:

@@ -155,8 +155,8 @@ class TestClientHistoryAuth:
         finally:
             app.dependency_overrides.clear()
 
-    def test_invalid_token_returns_403(self):
-        """Test that invalid token returns 403."""
+    def test_invalid_token_returns_401(self):
+        """Test that invalid token returns 401 Unauthorized."""
         client = TestClient(app)
         mock_db = Mock()
 
@@ -166,7 +166,7 @@ class TestClientHistoryAuth:
             response = client.get(
                 "/api/client/history?email=client@test.com&token=bad_token"
             )
-            assert response.status_code == 403
+            assert response.status_code == 401
             assert "authentication" in response.json()["detail"].lower()
         finally:
             app.dependency_overrides.clear()
@@ -184,8 +184,8 @@ class TestClientHistoryAuth:
         finally:
             app.dependency_overrides.clear()
 
-    def test_wrong_email_token_pair_returns_403(self):
-        """Test that token for different email returns 403."""
+    def test_wrong_email_token_pair_returns_401(self):
+        """Test that token for different email returns 401 Unauthorized."""
         client = TestClient(app)
         mock_db = Mock()
 
@@ -198,7 +198,7 @@ class TestClientHistoryAuth:
             response = client.get(
                 f"/api/client/history?email=bob@test.com&token={token}"
             )
-            assert response.status_code == 403
+            assert response.status_code == 401
         finally:
             app.dependency_overrides.clear()
 

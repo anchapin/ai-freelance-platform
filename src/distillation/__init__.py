@@ -10,7 +10,7 @@ Components:
 
 Usage:
     from src.distillation import DistillationDataCollector
-    
+
     # Capture a successful task
     collector = DistillationDataCollector()
     collector.capture_success(

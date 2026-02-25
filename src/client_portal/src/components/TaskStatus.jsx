@@ -18,13 +18,13 @@ function TaskStatus() {
   const [showDashboard, setShowDashboard] = useState(false);
   const [emailInput, setEmailInput] = useState(clientEmail || '');
 
-  // Polling configuration with exponential backoff
-  const POLL_INTERVALS = [2000, 3000, 5000, 8000, 10000]; // 2s, 3s, 5s, 8s, 10s
-  const STOP_POLLING_STATES = ['COMPLETED', 'FAILED', 'CANCELLED'];
-  
   // AbortController refs for cleanup
   const dashboardAbortControllerRef = useRef(null);
   const taskPollAbortControllerRef = useRef(null);
+  
+  // Polling configuration with exponential backoff (moved outside to avoid dependency warnings)
+  const POLL_INTERVALS = useRef([2000, 3000, 5000, 8000, 10000]); // 2s, 3s, 5s, 8s, 10s
+  const STOP_POLLING_STATES = useRef(['COMPLETED', 'FAILED', 'CANCELLED']);
 
   // Fetch dashboard data when email is provided (requires authentication token)
   const fetchDashboardData = async (email, abortSignal) => {
@@ -106,14 +106,14 @@ function TaskStatus() {
         setError(null);
 
         // Stop polling if task is in a terminal state
-        if (STOP_POLLING_STATES.includes(data.status)) {
+        if (STOP_POLLING_STATES.current.includes(data.status)) {
           setLoading(false);
           return;
         }
 
         // Exponential backoff: increase interval between polls
-        pollIndex = Math.min(pollIndex + 1, POLL_INTERVALS.length - 1);
-        const nextInterval = POLL_INTERVALS[pollIndex];
+        pollIndex = Math.min(pollIndex + 1, POLL_INTERVALS.current.length - 1);
+        const nextInterval = POLL_INTERVALS.current[pollIndex];
         
         timeoutId = setTimeout(fetchTask, nextInterval);
       } catch (err) {
@@ -316,7 +316,7 @@ function TaskStatus() {
           </div>
         );
       
-      case 'COMPLETED':
+      case 'COMPLETED': {
         const deliveryUrl = task.delivery_token 
           ? `/task-status?task_id=${task.id}&token=${task.delivery_token}`
           : null;
@@ -343,6 +343,7 @@ function TaskStatus() {
             <p className="task-id">Task ID: {task.id}</p>
           </div>
         );
+      }
       
       case 'FAILED':
         return (

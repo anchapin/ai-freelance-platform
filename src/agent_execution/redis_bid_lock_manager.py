@@ -24,7 +24,7 @@ from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
 from redis.asyncio.client import Redis
-from redis.exceptions import RedisError, LockError
+from redis.exceptions import RedisError
 
 from src.utils.logger import get_logger
 from src.config import get_redis_url
@@ -309,9 +309,7 @@ class RedisBidLockManager:
             deleted_count = 0
 
             while True:
-                cursor, keys = await redis_client.scan(
-                    cursor, match=pattern, count=100
-                )
+                cursor, keys = await redis_client.scan(cursor, match=pattern, count=100)
                 if keys:
                     deleted_count += await redis_client.delete(*keys)
 
@@ -327,7 +325,7 @@ class RedisBidLockManager:
         try:
             redis_client = await self._get_redis()
             pong = await redis_client.ping()
-            return pong == True
+            return bool(pong)
         except RedisError as e:
             logger.error(f"Redis health check failed: {e}")
             return False

@@ -1466,19 +1466,31 @@ async def get_client_task_history(
 
 @app.get("/api/client/discount-info")
 async def get_client_discount_info(
-    email: str, token: str, db: Session = Depends(get_db)
+    client: AuthenticatedClient = Depends(require_client_auth),
+    db: Session = Depends(get_db)
 ):
     """
     Get discount information for a client (authenticated — Issue #17).
 
     Requires a valid HMAC token proving ownership of the email address.
+
+    Query parameters:
+        email: Client email address
+        token: HMAC authentication token for this email
+
+    Returns:
+        Discount information and tier structure
+
+    Raises:
+        HTTPException 401: Missing or invalid authentication
     """
-    if not verify_client_token(email, token):
-        raise HTTPException(status_code=403, detail="Invalid authentication token")
     # Count completed tasks for this client
     completed_count = (
         db.query(Task)
-        .filter(Task.client_email == email, Task.status == TaskStatus.COMPLETED)
+        .filter(
+            Task.client_email == client.email,
+            Task.status == TaskStatus.COMPLETED
+        )
         .count()
     )
 
@@ -1495,7 +1507,7 @@ async def get_client_discount_info(
         next_tier_info = {"tasks_needed": 3, "discount": 0.15, "label": "15% off"}
 
     return {
-        "email": email,
+        "email": client.email,
         "completed_orders": completed_count,
         "current_tier": current_tier,
         "current_discount": current_discount,
@@ -1678,14 +1690,31 @@ async def calculate_price_with_discount(
     domain: str,
     complexity: str = "medium",
     urgency: str = "standard",
-    client_email: str | None = None,
+    client: AuthenticatedClient = Depends(optional_client_auth),
     db: Session = Depends(get_db),
 ):
     """
-    Calculate price with repeat-client discount applied.
+    Calculate price with repeat-client discount applied (authenticated).
 
-    If client_email is provided, calculates the discount based on
+    Query parameters:
+        domain: Task domain (required)
+        complexity: Task complexity level (optional, default: medium)
+        urgency: Task urgency level (optional, default: standard)
+        email: Client email (optional, for authenticated discount calculation)
+        token: HMAC authentication token (required if email provided)
+
+    If client is authenticated, calculates the discount based on
     the client's completed task history.
+
+    If client is not authenticated or both email/token are missing,
+    returns base price without discount.
+
+    Returns:
+        Price calculation with optional discount
+
+    Raises:
+        HTTPException 401: Email provided without token or vice versa
+        HTTPException 401: Invalid authentication token
     """
     # First calculate base price
     base_price = calculate_task_price(domain, complexity, urgency)
@@ -1700,12 +1729,13 @@ async def calculate_price_with_discount(
         "completed_orders": 0,
     }
 
-    # If client email provided, check for repeat-client discount
-    if client_email:
+    # If client is authenticated, check for repeat-client discount
+    if client.is_authenticated():
         completed_count = (
             db.query(Task)
             .filter(
-                Task.client_email == client_email, Task.status == TaskStatus.COMPLETED
+                Task.client_email == client.email,
+                Task.status == TaskStatus.COMPLETED
             )
             .count()
         )

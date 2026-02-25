@@ -13,6 +13,7 @@ from datetime import datetime, timezone, timedelta
 
 try:
     from playwright.async_api import async_playwright
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -25,6 +26,7 @@ logger = get_logger(__name__)
 @dataclass
 class PooledBrowser:
     """Represents a pooled browser instance."""
+
     browser: Any  # Browser type
     created_at: datetime
     in_use: bool = False
@@ -36,38 +38,38 @@ class PooledBrowser:
 class BrowserPool:
     """
     Connection pool for Playwright browsers.
-    
+
     Features:
     - Limits concurrent browser instances
     - Reuses browsers across multiple pages
     - Health checks for stale browsers
     - Automatic cleanup on shutdown
     """
-    
+
     def __init__(self, max_browsers: int = 3, headless: bool = True):
         """
         Initialize browser pool.
-        
+
         Args:
             max_browsers: Maximum concurrent browsers
             headless: Whether to run browsers in headless mode
         """
         self.max_browsers = max_browsers
         self.headless = headless
-        
+
         # Pool storage
         self._browsers: Dict[str, PooledBrowser] = {}
         self._browser_queue: asyncio.Queue = asyncio.Queue()
         self._lock = asyncio.Lock()
-        
+
         # Playwright instance
         self._playwright = None
-        
+
         # Metrics
         self.browsers_created = 0
         self.browsers_reused = 0
         self.pages_created = 0
-    
+
     async def start(self):
         """Initialize the browser pool."""
         try:
@@ -76,7 +78,7 @@ class BrowserPool:
         except Exception as e:
             logger.error(f"Failed to start browser pool: {e}")
             raise
-    
+
     async def stop(self):
         """Shutdown the browser pool and cleanup resources."""
         async with self._lock:
@@ -86,28 +88,28 @@ class BrowserPool:
                     logger.debug(f"Browser {browser_id} closed")
                 except Exception as e:
                     logger.warning(f"Error closing browser {browser_id}: {e}")
-            
+
             self._browsers.clear()
-        
+
         if self._playwright:
             await self._playwright.stop()
             logger.info("Browser pool stopped")
-    
+
     async def acquire_browser(self) -> Any:
         """
         Acquire a browser instance from the pool.
-        
+
         Reuses healthy browsers, creates new ones if needed.
-        
+
         Returns:
             Browser instance
-            
+
         Raises:
             RuntimeError: If pool is not initialized
         """
         if not self._playwright:
             raise RuntimeError("Browser pool not initialized. Call start() first.")
-        
+
         async with self._lock:
             # Try to reuse existing healthy browser
             for browser_id, pooled in self._browsers.items():
@@ -122,13 +124,15 @@ class BrowserPool:
                             logger.debug(f"Reusing browser {browser_id}")
                             return pooled.browser
                         else:
-                            logger.debug(f"Browser {browser_id} exceeded error threshold, removing")
+                            logger.debug(
+                                f"Browser {browser_id} exceeded error threshold, removing"
+                            )
                             try:
                                 await pooled.browser.close()
                             except Exception as e:
                                 logger.warning(f"Error closing failed browser: {e}")
                             del self._browsers[browser_id]
-            
+
             # Create new browser if under limit
             if len(self._browsers) < self.max_browsers:
                 try:
@@ -140,7 +144,7 @@ class BrowserPool:
                         browser=browser,
                         created_at=datetime.now(timezone.utc),
                         in_use=True,
-                        last_used=datetime.now(timezone.utc)
+                        last_used=datetime.now(timezone.utc),
                     )
                     self.browsers_created += 1
                     logger.debug(f"Created new browser {browser_id}")
@@ -148,16 +152,16 @@ class BrowserPool:
                 except Exception as e:
                     logger.error(f"Failed to create browser: {e}")
                     raise
-        
+
         # All browsers in use, wait for one to be released
         logger.warning("All browsers in use, waiting for availability")
         await asyncio.sleep(0.1)
         return await self.acquire_browser()
-    
+
     async def release_browser(self, browser: Any, error: bool = False):
         """
         Release a browser back to the pool.
-        
+
         Args:
             browser: Browser instance to release
             error: If True, marks that an error occurred on this browser
@@ -176,27 +180,27 @@ class BrowserPool:
                     else:
                         logger.debug(f"Released browser {browser_id}")
                     return
-    
+
     async def record_browser_error(self, browser: Any):
         """Record an error on a browser instance."""
         await self.release_browser(browser, error=True)
-    
+
     async def cleanup_stale_browsers(self, max_age_minutes: int = 60):
         """
         Remove browsers that haven't been used in a while.
-        
+
         Args:
             max_age_minutes: Maximum age for a browser (in minutes)
         """
         async with self._lock:
             now = datetime.now(timezone.utc)
             cutoff = now - timedelta(minutes=max_age_minutes)
-            
+
             stale_ids = []
             for browser_id, pooled in self._browsers.items():
                 if pooled.last_used and pooled.last_used < cutoff and not pooled.in_use:
                     stale_ids.append(browser_id)
-            
+
             for browser_id in stale_ids:
                 pooled = self._browsers[browser_id]
                 try:
@@ -205,14 +209,14 @@ class BrowserPool:
                     logger.info(f"Cleaned up stale browser {browser_id}")
                 except Exception as e:
                     logger.warning(f"Error cleaning up stale browser {browser_id}: {e}")
-    
+
     async def _is_browser_healthy(self, browser: Any) -> bool:
         """
         Check if a browser is still responsive.
-        
+
         Args:
             browser: Browser to check
-            
+
         Returns:
             True if browser is healthy
         """
@@ -222,12 +226,12 @@ class BrowserPool:
             return True
         except Exception:
             return False
-    
+
     def get_metrics(self) -> Dict[str, Any]:
         """Get pool metrics."""
         active_count = sum(1 for p in self._browsers.values() if p.in_use)
         total_errors = sum(p.error_count for p in self._browsers.values())
-        
+
         return {
             "max_browsers": self.max_browsers,
             "total_browsers": len(self._browsers),
@@ -239,7 +243,8 @@ class BrowserPool:
             "pages_created": self.pages_created,
             "reuse_ratio": (
                 self.browsers_reused / (self.browsers_created + 1)
-                if self.browsers_created > 0 else 0
+                if self.browsers_created > 0
+                else 0
             ),
         }
 

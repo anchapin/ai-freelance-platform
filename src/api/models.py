@@ -1,7 +1,18 @@
 import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
-from sqlalchemy import Column, String, Text, Integer, Float, Enum, DateTime, Boolean, JSON, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    String,
+    Text,
+    Integer,
+    Float,
+    Enum,
+    DateTime,
+    Boolean,
+    JSON,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -21,6 +32,7 @@ class TaskStatus(PyEnum):
 
 class ReviewStatus(PyEnum):
     """Status for human review of escalated tasks."""
+
     PENDING = "PENDING"
     IN_REVIEW = "IN_REVIEW"
     RESOLVED = "RESOLVED"
@@ -36,6 +48,7 @@ class PlanStatus(PyEnum):
 
 class ArenaCompetitionStatus(PyEnum):
     """Status for arena competitions."""
+
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
@@ -45,39 +58,46 @@ class ArenaCompetitionStatus(PyEnum):
 class ClientProfile(Base):
     """
     Client Preference Memory (Pillar 2.5 Gap)
-    
+
     Stores client preferences extracted from previous review feedback.
     This allows the agent to remember preferences like "Blue charts" or
     "Times New Roman font" to avoid failing ArtifactReviewer step.
-    
+
     Cost Savings:
     - If agent knows preferences upfront, it avoids failing ArtifactReviewer
     - Saves an entire LLM retry cycle and reduces token costs
     """
+
     __tablename__ = "client_profiles"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    client_email = Column(String, nullable=False, index=True)  # Client email (indexed for fast lookups)
-    
+    client_email = Column(
+        String, nullable=False, index=True
+    )  # Client email (indexed for fast lookups)
+
     # Extracted preferences from previous tasks
     preferred_colors = Column(JSON, nullable=True)  # e.g., ["blue", "green"]
     preferred_fonts = Column(JSON, nullable=True)  # e.g., ["Times New Roman", "Arial"]
     preferred_chart_types = Column(JSON, nullable=True)  # e.g., ["bar", "line"]
     preferred_output_formats = Column(JSON, nullable=True)  # e.g., ["image", "docx"]
-    
+
     # General preferences (style, tone, formatting)
-    style_preferences = Column(JSON, nullable=True)  # e.g., {"formal": true, "detailed": false}
-    domain_specific_preferences = Column(JSON, nullable=True)  # Domain-specific preferences
-    
+    style_preferences = Column(
+        JSON, nullable=True
+    )  # e.g., {"formal": true, "detailed": false}
+    domain_specific_preferences = Column(
+        JSON, nullable=True
+    )  # Domain-specific preferences
+
     # Feedback history (raw feedback for reference)
     feedback_history = Column(JSON, nullable=True)  # List of past review feedback
-    
+
     # Statistics
     total_tasks = Column(Integer, default=0)
     completed_tasks = Column(Integer, default=0)
     failed_tasks = Column(Integer, default=0)
     average_rating = Column(Integer, nullable=True)  # 1-5 rating if available
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -100,27 +120,33 @@ class ClientProfile(Base):
             "average_rating": self.average_rating,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "last_task_at": self.last_task_at.isoformat() if self.last_task_at else None,
+            "last_task_at": self.last_task_at.isoformat()
+            if self.last_task_at
+            else None,
         }
-    
+
     def get_preferences_summary(self) -> str:
         """Get a human-readable summary of preferences for LLM prompts."""
         parts = []
-        
+
         if self.preferred_colors:
             parts.append(f"Preferred colors: {', '.join(self.preferred_colors)}")
         if self.preferred_fonts:
             parts.append(f"Preferred fonts: {', '.join(self.preferred_fonts)}")
         if self.preferred_chart_types:
-            parts.append(f"Preferred chart types: {', '.join(self.preferred_chart_types)}")
+            parts.append(
+                f"Preferred chart types: {', '.join(self.preferred_chart_types)}"
+            )
         if self.preferred_output_formats:
-            parts.append(f"Preferred output formats: {', '.join(self.preferred_output_formats)}")
-        
+            parts.append(
+                f"Preferred output formats: {', '.join(self.preferred_output_formats)}"
+            )
+
         if self.style_preferences:
             for key, value in self.style_preferences.items():
                 if value:
                     parts.append(f"Style: {key}")
-        
+
         return " | ".join(parts) if parts else "No preferences recorded"
 
 
@@ -134,8 +160,12 @@ class Task(Base):
     status = Column(Enum(TaskStatus), default=TaskStatus.PENDING, nullable=False)
     stripe_session_id = Column(String, nullable=True)
     result_image_url = Column(String, nullable=True)  # For image/visualization outputs
-    result_document_url = Column(String, nullable=True)  # For document outputs (docx, pdf)
-    result_spreadsheet_url = Column(String, nullable=True)  # For spreadsheet outputs (xlsx)
+    result_document_url = Column(
+        String, nullable=True
+    )  # For document outputs (docx, pdf)
+    result_spreadsheet_url = Column(
+        String, nullable=True
+    )  # For spreadsheet outputs (xlsx)
     result_type = Column(String, nullable=True)  # Output type: image, docx, xlsx, pdf
     csv_data = Column(Text, nullable=True)
     # New fields for file uploads
@@ -146,45 +176,67 @@ class Task(Base):
     client_email = Column(String, nullable=True)  # Client email for history tracking
     amount_paid = Column(Integer, nullable=True)  # Amount paid in cents
     delivery_token = Column(String, nullable=True)  # Secure token for delivery links
-    delivery_token_expires_at = Column(DateTime, nullable=True)  # Token expiration (Issue #18)
-    delivery_token_used = Column(Boolean, default=False)  # One-time use flag (Issue #18)
+    delivery_token_expires_at = Column(
+        DateTime, nullable=True
+    )  # Token expiration (Issue #18)
+    delivery_token_used = Column(
+        Boolean, default=False
+    )  # One-time use flag (Issue #18)
     # Timestamp fields for tracking turnaround time
     created_at = Column(DateTime, default=datetime.utcnow)  # Task creation timestamp
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # Last update timestamp
-    
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )  # Last update timestamp
+
     # === NEW: Research & Plan Workflow Fields ===
     # Work plan fields
     work_plan = Column(Text, nullable=True)  # JSON string containing the work plan
     plan_status = Column(Enum(PlanStatus), default=PlanStatus.PENDING, nullable=False)
     plan_generated_at = Column(DateTime, nullable=True)  # When the plan was generated
-    
+
     # Analysis context from uploaded files
-    extracted_context = Column(JSON, nullable=True)  # Extracted context from PDF/Excel files
-    
+    extracted_context = Column(
+        JSON, nullable=True
+    )  # Extracted context from PDF/Excel files
+
     # Review fields for ArtifactReviewer
     review_feedback = Column(Text, nullable=True)  # Feedback from ArtifactReviewer
-    review_approved = Column(Boolean, default=False)  # Whether the artifact was approved
+    review_approved = Column(
+        Boolean, default=False
+    )  # Whether the artifact was approved
     review_attempts = Column(Integer, default=0)  # Number of review attempts
-    last_review_at = Column(DateTime, nullable=True)  # When the last review was performed
-    
+    last_review_at = Column(
+        DateTime, nullable=True
+    )  # When the last review was performed
+
     # Execution tracking
     execution_log = Column(JSON, nullable=True)  # Log of execution steps
     retry_count = Column(Integer, default=0)  # Number of retries attempted
 
     # === NEW: Escalation & Human-in-the-Loop (HITL) Fields (Pillar 1.7) ===
     # Escalation tracking
-    escalation_reason = Column(String, nullable=True)  # Why task was escalated (e.g., "max_retries_exceeded", "high_value_task_failed")
+    escalation_reason = Column(
+        String, nullable=True
+    )  # Why task was escalated (e.g., "max_retries_exceeded", "high_value_task_failed")
     escalated_at = Column(DateTime, nullable=True)  # When task was escalated
     last_error = Column(Text, nullable=True)  # The error that caused escalation
-    
+
     # Human review fields
-    review_status = Column(Enum(ReviewStatus), default=ReviewStatus.PENDING, nullable=False)  # Status of human review
-    human_review_notes = Column(Text, nullable=True)  # Notes from human reviewer after fixing
-    human_reviewer = Column(String, nullable=True)  # Email/name of who reviewed the escalated task
+    review_status = Column(
+        Enum(ReviewStatus), default=ReviewStatus.PENDING, nullable=False
+    )  # Status of human review
+    human_review_notes = Column(
+        Text, nullable=True
+    )  # Notes from human reviewer after fixing
+    human_reviewer = Column(
+        String, nullable=True
+    )  # Email/name of who reviewed the escalated task
     reviewed_at = Column(DateTime, nullable=True)  # When human review was completed
-    
+
     # Profit protection - indicates if this is a high-value task requiring special handling
-    is_high_value = Column(Boolean, default=False)  # True if task value >= HIGH_VALUE_THRESHOLD
+    is_high_value = Column(
+        Boolean, default=False
+    )  # True if task value >= HIGH_VALUE_THRESHOLD
 
     def to_dict(self):
         return {
@@ -192,7 +244,9 @@ class Task(Base):
             "title": self.title,
             "description": self.description,
             "domain": self.domain,
-            "status": self.status.value if isinstance(self.status, TaskStatus) else self.status,
+            "status": self.status.value
+            if isinstance(self.status, TaskStatus)
+            else self.status,
             "stripe_session_id": self.stripe_session_id,
             "result_image_url": self.result_image_url,
             "result_document_url": self.result_document_url,
@@ -205,26 +259,38 @@ class Task(Base):
             "amount_paid": self.amount_paid,
             "amount_dollars": (self.amount_paid / 100) if self.amount_paid else None,
             "delivery_token": self.delivery_token,
-            "delivery_token_expires_at": self.delivery_token_expires_at.isoformat() if self.delivery_token_expires_at else None,
+            "delivery_token_expires_at": self.delivery_token_expires_at.isoformat()
+            if self.delivery_token_expires_at
+            else None,
             "delivery_token_used": self.delivery_token_used,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             # New fields
             "work_plan": self.work_plan,
-            "plan_status": self.plan_status.value if isinstance(self.plan_status, PlanStatus) else self.plan_status,
-            "plan_generated_at": self.plan_generated_at.isoformat() if self.plan_generated_at else None,
+            "plan_status": self.plan_status.value
+            if isinstance(self.plan_status, PlanStatus)
+            else self.plan_status,
+            "plan_generated_at": self.plan_generated_at.isoformat()
+            if self.plan_generated_at
+            else None,
             "extracted_context": self.extracted_context,
             "review_feedback": self.review_feedback,
             "review_approved": self.review_approved,
             "review_attempts": self.review_attempts,
-            "last_review_at": self.last_review_at.isoformat() if self.last_review_at else None,
+            "last_review_at": self.last_review_at.isoformat()
+            if self.last_review_at
+            else None,
             "execution_log": self.execution_log,
             "retry_count": self.retry_count,
             # Escalation fields (Pillar 1.7)
             "escalation_reason": self.escalation_reason,
-            "escalated_at": self.escalated_at.isoformat() if self.escalated_at else None,
+            "escalated_at": self.escalated_at.isoformat()
+            if self.escalated_at
+            else None,
             "last_error": self.last_error,
-            "review_status": self.review_status.value if isinstance(self.review_status, ReviewStatus) else self.review_status,
+            "review_status": self.review_status.value
+            if isinstance(self.review_status, ReviewStatus)
+            else self.review_status,
             "human_review_notes": self.human_review_notes,
             "human_reviewer": self.human_reviewer,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
@@ -234,6 +300,7 @@ class Task(Base):
 
 class BidStatus(PyEnum):
     """Status for job bids."""
+
     PENDING = "PENDING"
     APPROVED = "APPROVED"  # User approved, bid submitted
     REJECTED = "REJECTED"  # User rejected the proposal
@@ -248,24 +315,22 @@ class BidStatus(PyEnum):
 class Bid(Base):
     """
     Bid Model for Autonomous Job Scanning
-    
+
     Stores bids made on freelance marketplace jobs.
     Used to track which jobs have already been bid on to avoid duplicates.
-    
+
     Implements deduplication and distributed lock pattern to prevent race conditions
     where multiple scanner instances bid on the same posting simultaneously.
     """
+
     __tablename__ = "bids"
-    
+
     # Unique constraint: only one ACTIVE bid per (marketplace, job_id)
     # Note: Will be enforced at application level via should_bid() check
     # since database-level conditional unique constraints are complex across databases
     __table_args__ = (
         UniqueConstraint(
-            'marketplace',
-            'job_id',
-            'status',
-            name='unique_active_bid_per_posting'
+            "marketplace", "job_id", "status", name="unique_active_bid_per_posting"
         ),
     )
 
@@ -275,26 +340,30 @@ class Bid(Base):
     job_description = Column(Text, nullable=False)
     job_url = Column(String, nullable=True)
     job_id = Column(String, nullable=True)  # External marketplace job ID
-    
+
     # Bid details
     bid_amount = Column(Integer, nullable=False)  # Bid amount in cents
     proposal = Column(Text, nullable=True)  # Generated proposal text
     status = Column(Enum(BidStatus), default=BidStatus.PENDING, nullable=False)
-    
+
     # Evaluation data from market scanner
     is_suitable = Column(Boolean, default=False)
     evaluation_reasoning = Column(Text, nullable=True)
     evaluation_confidence = Column(Integer, nullable=True)  # 0-100
-    
+
     # Market scanner data
     marketplace = Column(String, nullable=True)  # Which marketplace
     skills_matched = Column(JSON, nullable=True)  # List of matched skills
-    
+
     # Withdrawal tracking (Issue #8: Distributed lock & deduplication)
-    withdrawn_reason = Column(String, nullable=True)  # Reason for withdrawal (if status=WITHDRAWN)
+    withdrawn_reason = Column(
+        String, nullable=True
+    )  # Reason for withdrawal (if status=WITHDRAWN)
     withdrawal_timestamp = Column(DateTime, nullable=True)  # When bid was withdrawn
-    posting_cached_at = Column(DateTime, nullable=True)  # When posting was cached (for TTL validation)
-    
+    posting_cached_at = Column(
+        DateTime, nullable=True
+    )  # When posting was cached (for TTL validation)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -310,41 +379,54 @@ class Bid(Base):
             "bid_amount": self.bid_amount,
             "bid_amount_dollars": (self.bid_amount / 100) if self.bid_amount else None,
             "proposal": self.proposal,
-            "status": self.status.value if isinstance(self.status, BidStatus) else self.status,
+            "status": self.status.value
+            if isinstance(self.status, BidStatus)
+            else self.status,
             "is_suitable": self.is_suitable,
             "evaluation_reasoning": self.evaluation_reasoning,
             "evaluation_confidence": self.evaluation_confidence,
             "marketplace": self.marketplace,
             "skills_matched": self.skills_matched,
             "withdrawn_reason": self.withdrawn_reason,
-            "withdrawal_timestamp": self.withdrawal_timestamp.isoformat() if self.withdrawal_timestamp else None,
-            "posting_cached_at": self.posting_cached_at.isoformat() if self.posting_cached_at else None,
+            "withdrawal_timestamp": self.withdrawal_timestamp.isoformat()
+            if self.withdrawal_timestamp
+            else None,
+            "posting_cached_at": self.posting_cached_at.isoformat()
+            if self.posting_cached_at
+            else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "submitted_at": self.submitted_at.isoformat() if self.submitted_at else None,
+            "submitted_at": self.submitted_at.isoformat()
+            if self.submitted_at
+            else None,
         }
 
 
 class ArenaCompetition(Base):
     """
     Agent Arena Competition Model
-    
+
     Stores the results of A/B competitions between agent variants.
     Used for tracking which agent configurations perform better
     and for building the DPO (Direct Preference Optimization) dataset.
     """
+
     __tablename__ = "arena_competitions"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     task_id = Column(String, nullable=True)  # Associated task ID (if any)
     competition_type = Column(String, nullable=False)  # "model", "prompt", "tooling"
-    status = Column(Enum(ArenaCompetitionStatus), default=ArenaCompetitionStatus.PENDING, nullable=False)
-    
+    status = Column(
+        Enum(ArenaCompetitionStatus),
+        default=ArenaCompetitionStatus.PENDING,
+        nullable=False,
+    )
+
     # Task metadata for reference
     domain = Column(String, nullable=True)
     task_revenue = Column(Integer, nullable=True)  # Revenue in cents
     user_request = Column(Text, nullable=True)
-    
+
     # === Agent A Configuration & Results ===
     agent_a_name = Column(String, nullable=True)
     agent_a_model = Column(String, nullable=True)
@@ -356,7 +438,7 @@ class ArenaCompetition(Base):
     agent_a_tokens = Column(Integer, default=0)
     agent_a_cost = Column(Integer, default=0)  # In cents
     agent_a_profit = Column(Integer, default=0)  # In cents
-    
+
     # === Agent B Configuration & Results ===
     agent_b_name = Column(String, nullable=True)
     agent_b_model = Column(String, nullable=True)
@@ -368,15 +450,15 @@ class ArenaCompetition(Base):
     agent_b_tokens = Column(Integer, default=0)
     agent_b_cost = Column(Integer, default=0)
     agent_b_profit = Column(Integer, default=0)
-    
+
     # === Winner ===
     winner = Column(String, nullable=True)  # "agent_a" or "agent_b"
     win_reason = Column(Text, nullable=True)
     winning_artifact_url = Column(String, nullable=True)
-    
+
     # === Learning Data (for DPO) ===
     dpo_logged = Column(Boolean, default=False)  # Whether logged to DPO dataset
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
@@ -386,7 +468,9 @@ class ArenaCompetition(Base):
             "id": self.id,
             "task_id": self.task_id,
             "competition_type": self.competition_type,
-            "status": self.status.value if isinstance(self.status, ArenaCompetitionStatus) else self.status,
+            "status": self.status.value
+            if isinstance(self.status, ArenaCompetitionStatus)
+            else self.status,
             "domain": self.domain,
             "task_revenue": self.task_revenue,
             "user_request": self.user_request,
@@ -416,51 +500,64 @@ class ArenaCompetition(Base):
             "dpo_logged": self.dpo_logged,
             # Timestamps
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "completed_at": self.completed_at.isoformat()
+            if self.completed_at
+            else None,
         }
 
 
 class EscalationLog(Base):
     """
     Escalation Log for tracking human-in-the-loop (HITL) escalations.
-    
+
     Provides idempotency for escalation notifications and audit trail
     for escalation events. Prevents duplicate Telegram notifications
     when retries occur.
-    
+
     Pillar 1.7 - Human-in-the-Loop (HITL) Escalation Idempotency
     """
+
     __tablename__ = "escalation_logs"
-    
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    
+
     # Task reference
     task_id = Column(String, nullable=False, index=True)
-    
+
     # Escalation details
-    reason = Column(String, nullable=False)  # e.g., "max_retries_exceeded", "high_value_task_failed"
+    reason = Column(
+        String, nullable=False
+    )  # e.g., "max_retries_exceeded", "high_value_task_failed"
     error_message = Column(Text, nullable=True)  # Optional error context
-    
+
     # Notification tracking
-    notification_sent = Column(Boolean, default=False)  # Whether Telegram notification was sent
-    notification_attempt_count = Column(Integer, default=0)  # Number of notification attempts
+    notification_sent = Column(
+        Boolean, default=False
+    )  # Whether Telegram notification was sent
+    notification_attempt_count = Column(
+        Integer, default=0
+    )  # Number of notification attempts
     last_notification_attempt_at = Column(DateTime, nullable=True)
-    notification_error = Column(Text, nullable=True)  # Error message if notification failed
-    
+    notification_error = Column(
+        Text, nullable=True
+    )  # Error message if notification failed
+
     # Idempotency key (prevents duplicate notifications on retry)
     # Format: "task_id_escalation_reason"
     idempotency_key = Column(String, nullable=False, unique=True, index=True)
-    
+
     # Task metadata at time of escalation
     amount_paid = Column(Integer, nullable=True)  # Amount in cents
     domain = Column(String, nullable=True)
     client_email = Column(String, nullable=True)
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    resolved_at = Column(DateTime, nullable=True)  # When human reviewer resolved the escalation
-    
+    resolved_at = Column(
+        DateTime, nullable=True
+    )  # When human reviewer resolved the escalation
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -469,7 +566,9 @@ class EscalationLog(Base):
             "error_message": self.error_message,
             "notification_sent": self.notification_sent,
             "notification_attempt_count": self.notification_attempt_count,
-            "last_notification_attempt_at": self.last_notification_attempt_at.isoformat() if self.last_notification_attempt_at else None,
+            "last_notification_attempt_at": self.last_notification_attempt_at.isoformat()
+            if self.last_notification_attempt_at
+            else None,
             "notification_error": self.notification_error,
             "idempotency_key": self.idempotency_key,
             "amount_paid": self.amount_paid,
@@ -484,12 +583,13 @@ class EscalationLog(Base):
 class DistributedLock(Base):
     """
     Database-backed distributed lock for cross-process synchronization.
-    
+
     Uses a unique constraint on lock_key to implement atomic compare-and-set.
     A lock is considered held if it exists and has not expired (expires_at > now).
-    
+
     Issue #19: Replace in-memory asyncio.Lock with DB-backed distributed lock.
     """
+
     __tablename__ = "distributed_locks"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))

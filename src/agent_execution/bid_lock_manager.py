@@ -64,9 +64,9 @@ class BidLockManager:
     def _cleanup_expired_locks(self, db: Session) -> int:
         """Remove expired locks from the database."""
         now = time.time()
-        expired = db.query(DistributedLock).filter(
-            DistributedLock.expires_at < now
-        ).all()
+        expired = (
+            db.query(DistributedLock).filter(DistributedLock.expires_at < now).all()
+        )
 
         count = len(expired)
         for lock in expired:
@@ -83,7 +83,7 @@ class BidLockManager:
         marketplace_id: str,
         posting_id: str,
         timeout: float = 10.0,
-        holder_id: str = "default"
+        holder_id: str = "default",
     ) -> bool:
         """
         Try to acquire a distributed lock for bidding on a specific posting.
@@ -132,8 +132,7 @@ class BidLockManager:
                 # Lock acquired successfully
                 self._lock_successes += 1
                 logger.info(
-                    f"Lock acquired: {holder_id} locked {lock_key} "
-                    f"(TTL: {self.ttl}s)"
+                    f"Lock acquired: {holder_id} locked {lock_key} (TTL: {self.ttl}s)"
                 )
                 return True
 
@@ -142,9 +141,11 @@ class BidLockManager:
 
                 # Unique constraint violation — lock exists.
                 # Check if it's expired and can be replaced.
-                existing = db.query(DistributedLock).filter(
-                    DistributedLock.lock_key == lock_key
-                ).first()
+                existing = (
+                    db.query(DistributedLock)
+                    .filter(DistributedLock.lock_key == lock_key)
+                    .first()
+                )
 
                 if existing and existing.expires_at < time.time():
                     # Expired — delete and retry immediately
@@ -179,10 +180,7 @@ class BidLockManager:
                 db.close()
 
     async def release_lock(
-        self,
-        marketplace_id: str,
-        posting_id: str,
-        holder_id: str = "default"
+        self, marketplace_id: str, posting_id: str, holder_id: str = "default"
     ) -> bool:
         """
         Release a previously acquired lock.
@@ -199,9 +197,11 @@ class BidLockManager:
         db = self._get_db()
 
         try:
-            existing = db.query(DistributedLock).filter(
-                DistributedLock.lock_key == lock_key
-            ).first()
+            existing = (
+                db.query(DistributedLock)
+                .filter(DistributedLock.lock_key == lock_key)
+                .first()
+            )
 
             if not existing:
                 logger.warning(f"No lock found for {lock_key} (holder: {holder_id})")
@@ -233,7 +233,7 @@ class BidLockManager:
         marketplace_id: str,
         posting_id: str,
         timeout: float = 10.0,
-        holder_id: str = "default"
+        holder_id: str = "default",
     ):
         """
         Async context manager for acquiring and releasing locks.
@@ -251,7 +251,7 @@ class BidLockManager:
             marketplace_id=marketplace_id,
             posting_id=posting_id,
             timeout=timeout,
-            holder_id=holder_id
+            holder_id=holder_id,
         )
 
         if not acquired:
@@ -266,16 +266,18 @@ class BidLockManager:
             await self.release_lock(
                 marketplace_id=marketplace_id,
                 posting_id=posting_id,
-                holder_id=holder_id
+                holder_id=holder_id,
             )
 
     def get_metrics(self) -> Dict[str, int]:
         """Get lock manager metrics."""
         db = self._get_db()
         try:
-            active_locks = db.query(DistributedLock).filter(
-                DistributedLock.expires_at >= time.time()
-            ).count()
+            active_locks = (
+                db.query(DistributedLock)
+                .filter(DistributedLock.expires_at >= time.time())
+                .count()
+            )
         except Exception:
             active_locks = 0
         finally:
