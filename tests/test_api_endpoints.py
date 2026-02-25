@@ -212,9 +212,10 @@ class TestPricingEndpoint:
         assert response.status_code == 400
     
     def test_calculate_price_with_discount(self):
-        """Test price calculation with repeat-client discount."""
+        """Test price calculation with repeat-client discount (authenticated)."""
         from src.api.main import app
         from src.api.database import get_db
+        from src.utils.client_auth import generate_client_token
         
         client = TestClient(app)
         
@@ -225,6 +226,10 @@ class TestPricingEndpoint:
         # Override the dependency
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
+        # Generate valid authentication token
+        email = "repeat@example.com"
+        token = generate_client_token(email)
+        
         try:
             response = client.post(
                 "/api/client/calculate-price-with-discount",
@@ -232,7 +237,8 @@ class TestPricingEndpoint:
                     "domain": "accounting",
                     "complexity": "medium",
                     "urgency": "standard",
-                    "client_email": "repeat@example.com"
+                    "email": email,
+                    "token": token
                 }
             )
 
