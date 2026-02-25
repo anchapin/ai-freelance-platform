@@ -50,6 +50,9 @@ from ..utils.webhook_security import (
     log_webhook_verification_attempt,
 )
 
+# Import file upload validator (Issue #34)
+from ..utils.file_validator import validate_file_upload
+
 # Import notifications for Telegram alerts
 from ..utils.notifications import TelegramNotifier
 
@@ -1157,6 +1160,35 @@ class TaskSubmission(BaseModel):
     urgency: str = "standard"  # standard, rush, urgent
     # Client tracking
     client_email: str | None = None  # Client email for history tracking
+
+    # =================================================================
+    # FILE UPLOAD VALIDATORS (Issue #34)
+    # =================================================================
+
+    @model_validator(mode="after")
+    def validate_filename_present_with_content(self):
+        """Ensure filename is provided when file_content is present."""
+        if self.file_content and not self.filename:
+            raise ValueError("filename is required when file_content is provided")
+        return self
+
+    @model_validator(mode="after")
+    def validate_file_upload_content(self):
+        """Validate file upload at model instantiation time (Issue #34)."""
+        if self.file_content and self.filename:
+            try:
+                # Validate file using the comprehensive validator
+                _sanitized_name, _file_bytes, _ext = validate_file_upload(
+                    filename=self.filename,
+                    file_content_base64=self.file_content,
+                    file_type=self.file_type,
+                    scan_malware=True,
+                )
+                # File is valid, continue
+            except ValueError as e:
+                # File validation failed, raise validation error
+                raise ValueError(f"File validation failed: {str(e)}")
+        return self
 
 
 class CheckoutResponse(BaseModel):
@@ -2715,14 +2747,18 @@ Reply with APPROVE to submit bid or REJECT to skip."""
                         try:
                             db.rollback()
                         except Exception as rollback_error:
-                            logger.warning(f"Error rolling back transaction: {rollback_error}")
+                            logger.warning(
+                                f"Error rolling back transaction: {rollback_error}"
+                            )
                     logger.error(f"[AUTONOMOUS] Error processing bids: {e}")
                 finally:
                     if db is not None:
                         try:
                             db.close()
                         except Exception as close_error:
-                            logger.warning(f"Error closing database session: {close_error}")
+                            logger.warning(
+                                f"Error closing database session: {close_error}"
+                            )
 
         except Exception as e:
             logger.error(f"[AUTONOMOUS] Error in scan loop: {e}")

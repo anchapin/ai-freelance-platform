@@ -212,9 +212,7 @@ class BackgroundJobQueue:
                             logger.info(
                                 f"Worker {worker_id}: executing fallback for {job.job_id}"
                             )
-                            await job.fallback_func(
-                                *job.task_args, **job.task_kwargs
-                            )
+                            await job.fallback_func(*job.task_args, **job.task_kwargs)
                             job.status = JobStatus.SUCCEEDED
                             job.completed_at = datetime.now(timezone.utc)
                             job.error = timeout_error + " (fallback executed)"
