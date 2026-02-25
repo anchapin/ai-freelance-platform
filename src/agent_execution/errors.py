@@ -176,6 +176,11 @@ def should_retry(exception: Exception) -> bool:
     Returns:
         True if the error is retryable, False otherwise
     """
+    # If it's already an AgentError, check its retryable property directly
+    if isinstance(exception, AgentError):
+        return exception.retryable
+
+    # Otherwise, categorize and check the categorized error class
     error_class, _ = categorize_exception(exception)
     return error_class.retryable
 
