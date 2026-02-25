@@ -47,3 +47,6 @@ exclude = [".agents/"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"

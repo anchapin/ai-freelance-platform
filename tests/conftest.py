@@ -10,7 +10,6 @@ This module provides:
 """
 
 import pytest
-import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 
 # Import the modules under test
@@ -24,14 +23,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 # =============================================================================
 # PYTEST CONFIGURATION
 # =============================================================================
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
+# Note: pytest-asyncio in strict mode manages event loops automatically,
+# so we don't need a custom event_loop fixture.
 
 # =============================================================================
 # STRIPE API MOCKS
