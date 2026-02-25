@@ -50,7 +50,7 @@ function TaskSubmissionForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Fetch discount info when client email is entered
+  // Fetch discount info when client email is entered (requires auth token)
   const fetchDiscountInfo = async (email) => {
     if (!email || !email.includes('@')) {
       setDiscountInfo(null);
@@ -58,10 +58,22 @@ function TaskSubmissionForm() {
     }
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/client/discount-info?email=${encodeURIComponent(email)}`);
+      // Get stored token from localStorage (generated at checkout)
+      const storedToken = localStorage.getItem(`client_token_${email}`);
+      
+      let url = `${API_BASE_URL}/api/client/discount-info?email=${encodeURIComponent(email)}`;
+      if (storedToken) {
+        url += `&token=${encodeURIComponent(storedToken)}`;
+      }
+      
+      const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
         setDiscountInfo(data);
+      } else if (response.status === 403) {
+        // Token invalid or missing - treat as unauthenticated
+        console.warn('No valid authentication token for discount info');
+        setDiscountInfo(null);
       }
     } catch (err) {
       console.error('Failed to fetch discount info:', err);
