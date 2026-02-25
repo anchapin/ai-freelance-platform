@@ -11,7 +11,13 @@ import time as _time
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+    ConfigDict,
+)
 from sqlalchemy.orm import Session
 import stripe
 
@@ -102,10 +108,20 @@ from typing import Optional
 class DeliveryTokenRequest(BaseModel):
     """Validated request model for delivery endpoint (Issue #18)."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "token": "some_secure_token_string",
+            }
+        }
+    )
+
     task_id: str = Field(..., min_length=1, max_length=64, description="Task ID")
     token: str = Field(..., min_length=20, max_length=256, description="Delivery token")
 
-    @validator("task_id", pre=True)
+    @field_validator("task_id", mode="before")
+    @classmethod
     def validate_task_id(cls, v):
         """Sanitize task_id - allow UUID format only."""
         v = v.lower().strip() if isinstance(v, str) else v
@@ -113,7 +129,8 @@ class DeliveryTokenRequest(BaseModel):
             raise ValueError("Invalid task_id format (must be UUID)")
         return v
 
-    @validator("token", pre=True)
+    @field_validator("token", mode="before")
+    @classmethod
     def validate_token(cls, v):
         """Sanitize token - alphanumeric, hyphens, underscores only."""
         v = v.strip() if isinstance(v, str) else v
@@ -121,17 +138,22 @@ class DeliveryTokenRequest(BaseModel):
             raise ValueError("Invalid token format (contains invalid characters)")
         return v
 
-    class Config:
-        schema_extra = {
-            "example": {
-                "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "token": "some_secure_token_string",
-            }
-        }
-
 
 class DeliveryResponse(BaseModel):
     """Validated response model for delivery endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "title": "Market Research Analysis",
+                "domain": "research",
+                "result_type": "xlsx",
+                "result_url": "https://storage.example.com/results/file.xlsx",
+                "delivered_at": "2026-02-24T12:00:00+00:00"
+            }
+        }
+    )
 
     task_id: str
     title: str
@@ -143,19 +165,6 @@ class DeliveryResponse(BaseModel):
     result_spreadsheet_url: Optional[str] = None
     delivered_at: str
 
-    class Config:
-        """Pydantic config for DeliveryResponse."""
-        schema_extra = {
-            "example": {
-                "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "title": "Market Research Analysis",
-                "domain": "research",
-                "result_type": "xlsx",
-                "result_url": "https://storage.example.com/results/file.xlsx",
-                "delivered_at": "2026-02-24T12:00:00+00:00"
-            }
-        }
-
 
 class AddressValidationModel(BaseModel):
     """Strict validation model for delivery addresses (Issue #18)."""
@@ -165,7 +174,8 @@ class AddressValidationModel(BaseModel):
     postal_code: str = Field(..., min_length=2, max_length=20)
     country: str = Field(..., min_length=2, max_length=2)  # ISO 3166-1 alpha-2
 
-    @validator("address", pre=True)
+    @field_validator("address", mode="before")
+    @classmethod
     def validate_address(cls, v):
         """Validate delivery address - no special injection chars."""
         v = v.strip() if isinstance(v, str) else v
@@ -174,7 +184,8 @@ class AddressValidationModel(BaseModel):
             raise ValueError("Address contains invalid characters")
         return v
 
-    @validator("city", pre=True)
+    @field_validator("city", mode="before")
+    @classmethod
     def validate_city(cls, v):
         """Validate city name - alphanumerics and spaces only."""
         v = v.strip() if isinstance(v, str) else v
@@ -182,7 +193,8 @@ class AddressValidationModel(BaseModel):
             raise ValueError("City contains invalid characters")
         return v
 
-    @validator("postal_code", pre=True)
+    @field_validator("postal_code", mode="before")
+    @classmethod
     def validate_postal_code(cls, v):
         """Validate postal code - alphanumerics and spaces only."""
         v = v.strip() if isinstance(v, str) else v
@@ -190,7 +202,8 @@ class AddressValidationModel(BaseModel):
             raise ValueError("Postal code contains invalid characters")
         return v
 
-    @validator("country", pre=True)
+    @field_validator("country", mode="before")
+    @classmethod
     def validate_country(cls, v):
         """Validate country code - must be ISO 3166-1 alpha-2."""
         v = v.strip().upper() if isinstance(v, str) else v
@@ -205,7 +218,8 @@ class DeliveryAmountModel(BaseModel):
     amount_cents: int = Field(..., ge=0, le=999999999)  # Max $9,999,999.99
     currency: str = Field(default="USD", min_length=3, max_length=3)
 
-    @validator("amount_cents")
+    @field_validator("amount_cents")
+    @classmethod
     def validate_amount(cls, v):
         """Validate amount is non-negative and reasonable."""
         if v < 0:
@@ -214,7 +228,8 @@ class DeliveryAmountModel(BaseModel):
             raise ValueError("Amount exceeds maximum limit")
         return v
 
-    @validator("currency", pre=True)
+    @field_validator("currency", mode="before")
+    @classmethod
     def validate_currency(cls, v):
         """Validate currency code - must be ISO 4217."""
         v = v.strip().upper() if isinstance(v, str) else v
@@ -229,7 +244,8 @@ class DeliveryTimestampModel(BaseModel):
     created_at: datetime = Field(...)
     expires_at: datetime = Field(...)
 
-    @validator("created_at", pre=True)
+    @field_validator("created_at", mode="before")
+    @classmethod
     def validate_created_at(cls, v):
         """Validate created_at is not in the future."""
         if isinstance(v, str):
@@ -238,7 +254,8 @@ class DeliveryTimestampModel(BaseModel):
             raise ValueError("created_at cannot be in the future")
         return v
 
-    @validator("expires_at", pre=True)
+    @field_validator("expires_at", mode="before")
+    @classmethod
     def validate_expires_at(cls, v):
         """Validate expires_at is reasonable (not too far in future)."""
         if isinstance(v, str):
@@ -251,14 +268,12 @@ class DeliveryTimestampModel(BaseModel):
             raise ValueError("expires_at is too far in the future (max 365 days)")
         return v
 
-    @root_validator(skip_on_failure=True)
-    def validate_logical_ordering(cls, values):
+    @model_validator(mode="after")
+    def validate_logical_ordering(self):
         """Validate that created_at < expires_at."""
-        created = values.get("created_at")
-        expires = values.get("expires_at")
-        if created and expires and created >= expires:
+        if self.created_at and self.expires_at and self.created_at >= self.expires_at:
             raise ValueError("created_at must be before expires_at")
-        return values
+        return self
 
 
 def _sanitize_string(value: str, max_length: int = 500) -> str:
