@@ -13,8 +13,7 @@ Verifies:
 
 import hmac
 import hashlib
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock
 
 from starlette.testclient import TestClient
 
@@ -25,7 +24,6 @@ from src.utils.client_auth import (
 )
 from src.api.main import app
 from src.api.database import get_db
-from src.api.models import TaskStatus
 
 
 # Helper to override get_db dependency
