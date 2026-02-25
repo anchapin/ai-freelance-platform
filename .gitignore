@@ -37,3 +37,4 @@ dist-ssr/
 # Database
 *.db
 data/tasks.db
+__pycache__/
