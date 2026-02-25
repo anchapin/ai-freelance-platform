@@ -463,11 +463,11 @@ class MarketplaceDiscovery:
             async with async_playwright() as playwright:
                 # Launch browser with proper resource management
                 browser = await playwright.chromium.launch(headless=True)
-                
+
                 try:
                     # Create page within try block for automatic cleanup
                     page = await browser.new_page()
-                    
+
                     try:
                         # Navigate to marketplace with timeout
                         response = await page.goto(
@@ -524,14 +524,14 @@ class MarketplaceDiscovery:
                             "avg_budget": 0,
                             "error": str(e),
                         }
-                    
+
                     finally:
                         # Explicitly close page - async context manager will handle playwright
                         try:
                             await page.close()
                         except Exception as e:
                             logger.warning(f"Error closing page for {url}: {e}")
-                
+
                 finally:
                     # Explicitly close browser - async context manager will handle playwright
                     try:

@@ -309,6 +309,7 @@ class LLMService:
                 asyncio.get_running_loop()
                 # If here, we're in async context - this will block!
                 import warnings
+
                 warnings.warn(
                     "complete() with stealth_mode called from async context - "
                     "will block event loop. Use complete_async() instead.",
@@ -319,6 +320,7 @@ class LLMService:
                 # No running event loop, safe to proceed
                 pass
             import time as time_module
+
             time_module.sleep(delay)
 
         messages = []

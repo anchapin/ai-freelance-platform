@@ -93,7 +93,9 @@ class AuthenticatedClient:
 
     def is_authenticated(self) -> bool:
         """Check if client is authenticated."""
-        return bool(self.email and self.token and verify_client_token(self.email, self.token))
+        return bool(
+            self.email and self.token and verify_client_token(self.email, self.token)
+        )
 
 
 def require_client_auth(
@@ -124,10 +126,7 @@ def require_client_auth(
     # 1. Check for missing parameters
     if not email or not token:
         logger.warning("[CLIENT_AUTH] Missing auth parameters")
-        raise HTTPException(
-            status_code=401,
-            detail="Missing email or token"
-        )
+        raise HTTPException(status_code=401, detail="Missing email or token")
 
     # Normalize email
     normalized_email = email.strip().lower()
@@ -135,10 +134,7 @@ def require_client_auth(
     # 2. Verify token matches email
     if not verify_client_token(normalized_email, token):
         logger.warning(f"[CLIENT_AUTH] Invalid token for email: {normalized_email}")
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authentication token"
-        )
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
 
     return AuthenticatedClient(normalized_email, token)
 
@@ -181,7 +177,7 @@ def optional_client_auth(
         logger.warning("[CLIENT_AUTH] Partial auth parameters provided")
         raise HTTPException(
             status_code=401,
-            detail="Both email and token must be provided for authentication"
+            detail="Both email and token must be provided for authentication",
         )
 
     # Normalize email
@@ -190,9 +186,6 @@ def optional_client_auth(
     # Verify token matches email
     if not verify_client_token(normalized_email, token):
         logger.warning(f"[CLIENT_AUTH] Invalid token for email: {normalized_email}")
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authentication token"
-        )
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
 
     return AuthenticatedClient(normalized_email, token)

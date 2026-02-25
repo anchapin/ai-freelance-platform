@@ -150,7 +150,7 @@ class DeliveryResponse(BaseModel):
                 "domain": "research",
                 "result_type": "xlsx",
                 "result_url": "https://storage.example.com/results/file.xlsx",
-                "delivered_at": "2026-02-24T12:00:00+00:00"
+                "delivered_at": "2026-02-24T12:00:00+00:00",
             }
         }
     )
@@ -168,7 +168,7 @@ class DeliveryResponse(BaseModel):
 
 class AddressValidationModel(BaseModel):
     """Strict validation model for delivery addresses (Issue #18)."""
-    
+
     address: str = Field(..., min_length=5, max_length=255)
     city: str = Field(..., min_length=2, max_length=100)
     postal_code: str = Field(..., min_length=2, max_length=20)
@@ -214,7 +214,7 @@ class AddressValidationModel(BaseModel):
 
 class DeliveryAmountModel(BaseModel):
     """Strict validation model for delivery amounts (Issue #18)."""
-    
+
     amount_cents: int = Field(..., ge=0, le=999999999)  # Max $9,999,999.99
     currency: str = Field(default="USD", min_length=3, max_length=3)
 
@@ -240,7 +240,7 @@ class DeliveryAmountModel(BaseModel):
 
 class DeliveryTimestampModel(BaseModel):
     """Strict validation model for delivery timestamps (Issue #18)."""
-    
+
     created_at: datetime = Field(...)
     expires_at: datetime = Field(...)
 
@@ -249,7 +249,7 @@ class DeliveryTimestampModel(BaseModel):
     def validate_created_at(cls, v):
         """Validate created_at is not in the future."""
         if isinstance(v, str):
-            v = datetime.fromisoformat(v.replace('Z', '+00:00'))
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
         if v > datetime.now(timezone.utc):
             raise ValueError("created_at cannot be in the future")
         return v
@@ -259,7 +259,7 @@ class DeliveryTimestampModel(BaseModel):
     def validate_expires_at(cls, v):
         """Validate expires_at is reasonable (not too far in future)."""
         if isinstance(v, str):
-            v = datetime.fromisoformat(v.replace('Z', '+00:00'))
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
         now = datetime.now(timezone.utc)
         if v <= now:
             raise ValueError("expires_at must be in the future")
@@ -1179,27 +1179,30 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
+
 # Custom middleware to add security headers to all responses (Issue #18)
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     """Add security headers to prevent common web vulnerabilities."""
     response = await call_next(request)
-    
+
     # Prevent MIME type sniffing
     response.headers["X-Content-Type-Options"] = "nosniff"
-    
+
     # Enable XSS protection in older browsers
     response.headers["X-XSS-Protection"] = "1; mode=block"
-    
+
     # Prevent clickjacking
     response.headers["X-Frame-Options"] = "DENY"
-    
+
     # Disable client-side caching for sensitive endpoints
     if "/api/delivery/" in request.url.path:
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
-    
+
     return response
 
 
@@ -1554,7 +1557,7 @@ def get_discount_tier(completed_tasks_count: int) -> int:
 @app.get("/api/client/history")
 async def get_client_task_history(
     client: AuthenticatedClient = Depends(require_client_auth),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Get task history for a client by email (authenticated — Issue #17).
@@ -1635,7 +1638,7 @@ async def get_client_task_history(
 @app.get("/api/client/discount-info")
 async def get_client_discount_info(
     client: AuthenticatedClient = Depends(require_client_auth),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Get discount information for a client (authenticated — Issue #17).
@@ -1655,10 +1658,7 @@ async def get_client_discount_info(
     # Count completed tasks for this client
     completed_count = (
         db.query(Task)
-        .filter(
-            Task.client_email == client.email,
-            Task.status == TaskStatus.COMPLETED
-        )
+        .filter(Task.client_email == client.email, Task.status == TaskStatus.COMPLETED)
         .count()
     )
 
@@ -1902,8 +1902,7 @@ async def calculate_price_with_discount(
         completed_count = (
             db.query(Task)
             .filter(
-                Task.client_email == client.email,
-                Task.status == TaskStatus.COMPLETED
+                Task.client_email == client.email, Task.status == TaskStatus.COMPLETED
             )
             .count()
         )

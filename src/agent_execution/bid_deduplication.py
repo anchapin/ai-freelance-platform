@@ -127,18 +127,15 @@ async def mark_bid_withdrawn(db_session: Session, bid_id: str, reason: str) -> b
     """
     # Generate event ID for idempotent operations (Issue #40)
     event_id = str(uuid.uuid4())
-    
+
     try:
         # Use nested transaction (savepoint) for rollback safety
         savepoint = db_session.begin_nested()
-        
+
         try:
             # Query with SELECT FOR UPDATE to prevent race conditions
             bid = (
-                db_session.query(Bid)
-                .filter(Bid.id == bid_id)
-                .with_for_update()
-                .first()
+                db_session.query(Bid).filter(Bid.id == bid_id).with_for_update().first()
             )
 
             if not bid:
@@ -156,7 +153,7 @@ async def mark_bid_withdrawn(db_session: Session, bid_id: str, reason: str) -> b
 
             # Store previous state for audit trail
             previous_status = bid.status.value if bid.status else None
-            
+
             # Atomic update
             bid.status = BidStatus.WITHDRAWN
             bid.withdrawn_reason = reason
@@ -165,7 +162,7 @@ async def mark_bid_withdrawn(db_session: Session, bid_id: str, reason: str) -> b
 
             # Commit savepoint (part of larger transaction)
             savepoint.commit()
-            
+
             # Atomic logging (Issue #40)
             logger.info(
                 f"[{event_id}] Bid {bid_id} withdrawn: {reason} "
@@ -177,8 +174,7 @@ async def mark_bid_withdrawn(db_session: Session, bid_id: str, reason: str) -> b
             # Rollback savepoint on error
             savepoint.rollback()
             logger.error(
-                f"[{event_id}] Error in transaction for bid {bid_id}: "
-                f"{inner_e}",
+                f"[{event_id}] Error in transaction for bid {bid_id}: {inner_e}",
                 exc_info=True,
             )
             return False
