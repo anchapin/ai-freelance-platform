@@ -16,89 +16,15 @@ Features:
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from sqlalchemy import (
-    Column,
-    String,
-    Integer,
-    Float,
-    Boolean,
-    DateTime,
-    Index,
-)
 
 from ..api.database import SessionLocal
-from ..api.models import Base
+from ..api.models import ConfidenceEntry as ConfidenceEntryModel
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class ConfidenceEntry(Base):
-    """
-    Confidence Entry Database Model
-
-    Stores bid history with outcomes for confidence calculation.
-    Tracks win rates, profit margins, and streak information.
-    """
-
-    __tablename__ = "confidence_entries"
-
-    __table_args__ = (
-        Index("idx_conf_threshold", "threshold"),
-        Index("idx_conf_won", "won"),
-        Index("idx_conf_created_at", "created_at"),
-    )
-
-    id = Column(String, primary_key=True)
-
-    # Bid details
-    threshold = Column(Integer, nullable=False, index=True)
-    bid_amount_cents = Column(Integer, nullable=False)
-    job_title = Column(String, nullable=True)
-    marketplace = Column(String, nullable=True)
-
-    # Outcome
-    won = Column(Boolean, nullable=False, index=True)
-    profit_cents = Column(Integer, nullable=True)
-    profit_dollars = Column(Float, nullable=True)
-
-    # Confidence factors
-    confidence_score = Column(Integer, nullable=True)
-    evaluation_confidence = Column(Integer, nullable=True)
-
-    # Streak tracking
-    win_streak_before = Column(Integer, default=0)
-    loss_streak_before = Column(Integer, default=0)
-    consecutive_wins_after = Column(Integer, default=0)
-    consecutive_losses_after = Column(Integer, default=0)
-
-    # Metadata
-    strategy_type = Column(String, nullable=True)
-
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert confidence entry to dictionary."""
-        return {
-            "id": self.id,
-            "threshold": self.threshold,
-            "bid_amount_dollars": self.bid_amount_cents / 100,
-            "bid_amount_cents": self.bid_amount_cents,
-            "job_title": self.job_title,
-            "marketplace": self.marketplace,
-            "won": self.won,
-            "profit_dollars": self.profit_dollars,
-            "profit_cents": self.profit_cents,
-            "confidence_score": self.confidence_score,
-            "evaluation_confidence": self.evaluation_confidence,
-            "win_streak_before": self.win_streak_before,
-            "loss_streak_before": self.loss_streak_before,
-            "consecutive_wins_after": self.consecutive_wins_after,
-            "consecutive_losses_after": self.consecutive_losses_after,
-            "strategy_type": self.strategy_type,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
+ConfidenceEntry = ConfidenceEntryModel
 
 
 class ConfidenceTracker:
@@ -252,9 +178,10 @@ class ConfidenceTracker:
 
             db.commit()
 
+            profit_str = f"${profit_cents / 100:.2f}" if profit_cents else "$0"
             logger.info(
                 f"Updated outcome - Won: {won}, "
-                f"Profit: ${profit_cents / 100:.2f if profit_cents else 0}, "
+                f"Profit: {profit_str}, "
                 f"Win Streak: {self.current_streak_wins}, "
                 f"Loss Streak: {self.current_streak_losses}"
             )

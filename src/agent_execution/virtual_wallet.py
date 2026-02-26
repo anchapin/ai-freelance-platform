@@ -16,97 +16,17 @@ Features:
 
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
-from enum import Enum as PyEnum
 
-from sqlalchemy import (
-    Column,
-    String,
-    Integer,
-    Boolean,
-    DateTime,
-)
 
 from ..api.database import SessionLocal
-from ..api.models import Base
+from ..api.models import VirtualWallet as VirtualWalletModel
 from ..config.config_manager import ConfigManager
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class BudgetResetPeriod(PyEnum):
-    """Budget reset period options."""
-
-    DAILY = "daily"
-    WEEKLY = "weekly"
-    MONTHLY = "monthly"
-
-
-class VirtualWallet(Base):
-    """
-    Virtual Wallet Database Model
-
-    Stores wallet state including balance, spending, and budget configuration.
-    Persists wallet state across restarts.
-    """
-
-    __tablename__ = "virtual_wallets"
-
-    id = Column(String, primary_key=True)
-
-    # Financial state
-    balance_cents = Column(Integer, default=0, nullable=False)
-    total_spent_cents = Column(Integer, default=0, nullable=False)
-    total_earned_cents = Column(Integer, default=0, nullable=False)
-
-    # Budget configuration
-    budget_cap_cents = Column(Integer, default=50000, nullable=False)
-    budget_reset_period = Column(String, default="weekly", nullable=False)
-
-    # Budget tracking
-    budget_start_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    budget_spent_cents = Column(Integer, default=0, nullable=False)
-
-    # Threshold alerts
-    low_budget_threshold_percent = Column(Integer, default=25, nullable=False)
-    critical_budget_threshold_percent = Column(Integer, default=10, nullable=False)
-
-    # Alert tracking
-    low_budget_alert_sent = Column(Boolean, default=False, nullable=False)
-    critical_budget_alert_sent = Column(Boolean, default=False, nullable=False)
-
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert wallet to dictionary."""
-        return {
-            "id": self.id,
-            "balance_dollars": self.balance_cents / 100,
-            "balance_cents": self.balance_cents,
-            "total_spent_dollars": self.total_spent_cents / 100,
-            "total_spent_cents": self.total_spent_cents,
-            "total_earned_dollars": self.total_earned_cents / 100,
-            "total_earned_cents": self.total_earned_cents,
-            "budget_cap_dollars": self.budget_cap_cents / 100,
-            "budget_cap_cents": self.budget_cap_cents,
-            "budget_reset_period": self.budget_reset_period,
-            "budget_spent_dollars": self.budget_spent_cents / 100,
-            "budget_spent_cents": self.budget_spent_cents,
-            "budget_remaining_dollars": (
-                self.budget_cap_cents - self.budget_spent_cents
-            )
-            / 100,
-            "budget_remaining_cents": self.budget_cap_cents - self.budget_spent_cents,
-            "budget_percentage_used": (
-                self.budget_spent_cents / self.budget_cap_cents * 100
-            )
-            if self.budget_cap_cents > 0
-            else 0,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-        }
+VirtualWallet = VirtualWalletModel
 
 
 class VirtualWalletManager:

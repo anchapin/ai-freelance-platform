@@ -17,17 +17,9 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import (
-    Column,
-    String,
-    Integer,
-    Float,
-    DateTime,
-    Index,
-)
 
 from ..api.database import SessionLocal
-from ..api.models import Base
+from ..api.models import CostEntry as CostEntryModel
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -43,74 +35,7 @@ class CostType(PyEnum):
     OTHER = "other"
 
 
-class CostEntry(Base):
-    """
-    Cost Entry Database Model
-
-    Stores individual cost entries for tracking financial operations
-    and calculating ROI.
-    """
-
-    __tablename__ = "cost_entries"
-
-    __table_args__ = (
-        Index("idx_cost_task_id", "task_id"),
-        Index("idx_cost_bid_id", "bid_id"),
-        Index("idx_cost_type", "cost_type"),
-        Index("idx_cost_marketplace", "marketplace"),
-        Index("idx_cost_created_at", "created_at"),
-    )
-
-    id = Column(String, primary_key=True)
-
-    # Reference to task or bid
-    task_id = Column(String, nullable=True, index=True)
-    bid_id = Column(String, nullable=True, index=True)
-
-    # Cost details
-    cost_type = Column(String, nullable=False, index=True)
-    cost_cents = Column(Integer, nullable=False)
-    cost_dollars = Column(Float, nullable=False)
-
-    # Context
-    description = Column(String, nullable=True)
-    marketplace = Column(String, nullable=True, index=True)
-    strategy_type = Column(String, nullable=True)
-
-    # Revenue tracking for ROI calculation
-    revenue_cents = Column(Integer, nullable=True)
-    revenue_dollars = Column(Float, nullable=True)
-
-    # Calculated ROI
-    roi_cents = Column(Integer, nullable=True)
-    roi_dollars = Column(Float, nullable=True)
-    roi_percentage = Column(Float, nullable=True)
-
-    # Metadata
-    metadata = Column(String, nullable=True)
-
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert cost entry to dictionary."""
-        return {
-            "id": self.id,
-            "task_id": self.task_id,
-            "bid_id": self.bid_id,
-            "cost_type": self.cost_type,
-            "cost_cents": self.cost_cents,
-            "cost_dollars": self.cost_dollars,
-            "description": self.description,
-            "marketplace": self.marketplace,
-            "strategy_type": self.strategy_type,
-            "revenue_cents": self.revenue_cents,
-            "revenue_dollars": self.revenue_dollars,
-            "roi_cents": self.roi_cents,
-            "roi_dollars": self.roi_dollars,
-            "roi_percentage": self.roi_percentage,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
+CostEntry = CostEntryModel
 
 
 class CostTracker:
@@ -166,7 +91,7 @@ class CostTracker:
                 description=description,
                 marketplace=marketplace,
                 strategy_type=strategy_type,
-                metadata=metadata,
+                extra_metadata=metadata,
                 created_at=datetime.utcnow(),
             )
 

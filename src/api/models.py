@@ -1407,3 +1407,216 @@ class ThresholdPetition(Base):
             else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class CostEntry(Base):
+    """
+    Cost Entry Database Model
+
+    Stores individual cost entries for tracking financial operations
+    and calculating ROI.
+
+    Issue #94: Cost Tracking Enhancement
+    """
+
+    __tablename__ = "cost_entries"
+
+    __table_args__ = (
+        Index("idx_cost_task_id", "task_id"),
+        Index("idx_cost_bid_id", "bid_id"),
+        Index("idx_cost_type", "cost_type"),
+        Index("idx_cost_marketplace", "marketplace"),
+        Index("idx_cost_created_at", "created_at"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Reference to task or bid
+    task_id = Column(String, nullable=True, index=True)
+    bid_id = Column(String, nullable=True, index=True)
+
+    # Cost details
+    cost_type = Column(String, nullable=False, index=True)
+    cost_cents = Column(Integer, nullable=False)
+    cost_dollars = Column(Float, nullable=False)
+
+    # Context
+    description = Column(String, nullable=True)
+    marketplace = Column(String, nullable=True, index=True)
+    strategy_type = Column(String, nullable=True)
+
+    # Revenue tracking for ROI calculation
+    revenue_cents = Column(Integer, nullable=True)
+    revenue_dollars = Column(Float, nullable=True)
+
+    # Calculated ROI
+    roi_cents = Column(Integer, nullable=True)
+    roi_dollars = Column(Float, nullable=True)
+    roi_percentage = Column(Float, nullable=True)
+
+    # Additional metadata
+    extra_metadata = Column(String, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        """Convert cost entry to dictionary."""
+        return {
+            "id": self.id,
+            "task_id": self.task_id,
+            "bid_id": self.bid_id,
+            "cost_type": self.cost_type,
+            "cost_cents": self.cost_cents,
+            "cost_dollars": self.cost_dollars,
+            "description": self.description,
+            "marketplace": self.marketplace,
+            "strategy_type": self.strategy_type,
+            "revenue_cents": self.revenue_cents,
+            "revenue_dollars": self.revenue_dollars,
+            "roi_cents": self.roi_cents,
+            "roi_dollars": self.roi_dollars,
+            "roi_percentage": self.roi_percentage,
+            "extra_metadata": self.extra_metadata,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class ConfidenceEntry(Base):
+    """
+    Confidence Entry Database Model
+
+    Stores bid history with outcomes for confidence calculation.
+    Tracks win rates, profit margins, and streak information.
+
+    Issue #96: Confidence Tracker Module
+    """
+
+    __tablename__ = "confidence_entries"
+
+    __table_args__ = (
+        Index("idx_conf_threshold", "threshold"),
+        Index("idx_conf_won", "won"),
+        Index("idx_conf_created_at", "created_at"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Bid details
+    threshold = Column(Integer, nullable=False, index=True)
+    bid_amount_cents = Column(Integer, nullable=False)
+    job_title = Column(String, nullable=True)
+    marketplace = Column(String, nullable=True)
+
+    # Outcome
+    won = Column(Boolean, nullable=False, index=True)
+    profit_cents = Column(Integer, nullable=True)
+    profit_dollars = Column(Float, nullable=True)
+
+    # Confidence factors
+    confidence_score = Column(Integer, nullable=True)
+    evaluation_confidence = Column(Integer, nullable=True)
+
+    # Streak tracking
+    win_streak_before = Column(Integer, default=0)
+    loss_streak_before = Column(Integer, default=0)
+    consecutive_wins_after = Column(Integer, default=0)
+    consecutive_losses_after = Column(Integer, default=0)
+
+    # Metadata
+    strategy_type = Column(String, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        """Convert confidence entry to dictionary."""
+        return {
+            "id": self.id,
+            "threshold": self.threshold,
+            "bid_amount_dollars": self.bid_amount_cents / 100,
+            "bid_amount_cents": self.bid_amount_cents,
+            "job_title": self.job_title,
+            "marketplace": self.marketplace,
+            "won": self.won,
+            "profit_dollars": self.profit_dollars,
+            "profit_cents": self.profit_cents,
+            "confidence_score": self.confidence_score,
+            "evaluation_confidence": self.evaluation_confidence,
+            "win_streak_before": self.win_streak_before,
+            "loss_streak_before": self.loss_streak_before,
+            "consecutive_wins_after": self.consecutive_wins_after,
+            "consecutive_losses_after": self.consecutive_losses_after,
+            "strategy_type": self.strategy_type,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class VirtualWallet(Base):
+    """
+    Virtual Wallet Database Model
+
+    Stores wallet state including balance, spending, and budget configuration.
+    Persists wallet state across restarts.
+
+    Issue #92: Virtual Wallet Module
+    Issue #93: Budget Management System
+    """
+
+    __tablename__ = "virtual_wallets"
+
+    id = Column(String, primary_key=True, default="default")
+
+    # Financial state
+    balance_cents = Column(Integer, default=0, nullable=False)
+    total_spent_cents = Column(Integer, default=0, nullable=False)
+    total_earned_cents = Column(Integer, default=0, nullable=False)
+
+    # Budget configuration
+    budget_cap_cents = Column(Integer, default=50000, nullable=False)
+    budget_reset_period = Column(String, default="weekly", nullable=False)
+
+    # Budget tracking
+    budget_start_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    budget_spent_cents = Column(Integer, default=0, nullable=False)
+
+    # Threshold alerts
+    low_budget_threshold_percent = Column(Integer, default=25, nullable=False)
+    critical_budget_threshold_percent = Column(Integer, default=10, nullable=False)
+
+    # Alert tracking
+    low_budget_alert_sent = Column(Boolean, default=False, nullable=False)
+    critical_budget_alert_sent = Column(Boolean, default=False, nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        """Convert wallet to dictionary."""
+        return {
+            "id": self.id,
+            "balance_dollars": self.balance_cents / 100,
+            "balance_cents": self.balance_cents,
+            "total_spent_dollars": self.total_spent_cents / 100,
+            "total_spent_cents": self.total_spent_cents,
+            "total_earned_dollars": self.total_earned_cents / 100,
+            "total_earned_cents": self.total_earned_cents,
+            "budget_cap_dollars": self.budget_cap_cents / 100,
+            "budget_cap_cents": self.budget_cap_cents,
+            "budget_reset_period": self.budget_reset_period,
+            "budget_spent_dollars": self.budget_spent_cents / 100,
+            "budget_spent_cents": self.budget_spent_cents,
+            "budget_remaining_dollars": (
+                self.budget_cap_cents - self.budget_spent_cents
+            )
+            / 100,
+            "budget_remaining_cents": self.budget_cap_cents - self.budget_spent_cents,
+            "budget_percentage_used": (
+                self.budget_spent_cents / self.budget_cap_cents * 100
+            )
+            if self.budget_cap_cents > 0
+            else 0,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

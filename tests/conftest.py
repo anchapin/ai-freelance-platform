@@ -17,7 +17,7 @@ import sys
 import os
 
 # Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 # =============================================================================
@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 # =============================================================================
 # STRIPE API MOCKS
 # =============================================================================
+
 
 @pytest.fixture
 def mock_stripe_session():
@@ -62,13 +63,14 @@ def mock_stripe_session_completed():
 def mock_stripe_error():
     """Mock Stripe error."""
     from stripe import StripeError
+
     return StripeError(message="Stripe API error", code="api_error")
 
 
 @pytest.fixture
 def mock_stripe_module(mock_stripe_session):
     """Mock entire Stripe module."""
-    with patch('stripe.checkout.Session') as mock_session:
+    with patch("stripe.checkout.Session") as mock_session:
         mock_session.create.return_value = mock_stripe_session
         mock_session.retrieve.return_value = mock_stripe_session
         yield mock_session
@@ -77,6 +79,7 @@ def mock_stripe_module(mock_stripe_session):
 # =============================================================================
 # E2B SANDBOX MOCKS
 # =============================================================================
+
 
 @pytest.fixture
 def mock_e2b_success_result():
@@ -90,8 +93,8 @@ def mock_e2b_success_result():
             "Starting E2B sandbox...",
             "Processing data...",
             "Generating visualization...",
-            "Upload complete!"
-        ]
+            "Upload complete!",
+        ],
     }
 
 
@@ -102,10 +105,7 @@ def mock_e2b_failure_result():
         "success": False,
         "error": "Execution failed: Invalid data format",
         "execution_time_seconds": 12.3,
-        "logs": [
-            "Starting E2B sandbox...",
-            "Error: Could not parse CSV data"
-        ]
+        "logs": ["Starting E2B sandbox...", "Error: Could not parse CSV data"],
     }
 
 
@@ -119,6 +119,7 @@ def mock_e2b_client():
 # =============================================================================
 # OPENAI/OLLAMA LLM MOCKS
 # =============================================================================
+
 
 @pytest.fixture
 def mock_openai_response():
@@ -165,7 +166,7 @@ def mock_ollama_response():
 @pytest.fixture
 def mock_openai_client(mock_openai_response):
     """Mock OpenAI client."""
-    with patch('openai.OpenAI') as mock_client:
+    with patch("openai.OpenAI") as mock_client:
         mock_instance = Mock()
         mock_instance.chat.completions.create.return_value = mock_openai_response
         mock_client.return_value = mock_instance
@@ -175,6 +176,22 @@ def mock_openai_client(mock_openai_response):
 # =============================================================================
 # DATABASE FIXTURES
 # =============================================================================
+
+
+@pytest.fixture(scope="function", autouse=True)
+def setup_database():
+    """Create all database tables before tests and drop them after."""
+    from src.api.models import Base
+    from src.api.database import engine
+
+    # Create all tables
+    Base.metadata.create_all(bind=engine)
+
+    yield
+
+    # Drop all tables after tests
+    Base.metadata.drop_all(bind=engine)
+
 
 @pytest.fixture
 def sample_task_data():
@@ -217,10 +234,12 @@ def sample_task_data_high_value():
 # COST CONFIGURATION FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def mock_cost_config():
     """Mock CostConfig for testing."""
     from src.agent_execution.arena import CostConfig
+
     return CostConfig()
 
 
@@ -228,10 +247,12 @@ def mock_cost_config():
 # SAMPLE TASK STATUSES FOR STATE MACHINE TESTS
 # =============================================================================
 
+
 @pytest.fixture
 def task_statuses():
     """All possible task statuses."""
     from src.api.models import TaskStatus
+
     return {
         "PENDING": TaskStatus.PENDING,
         "PAID": TaskStatus.PAID,
@@ -249,21 +270,22 @@ def task_statuses():
 # ARENA AGENT CONFIGURATIONS
 # =============================================================================
 
+
 @pytest.fixture
 def mock_agent_config_cloud():
     """Mock agent configuration for cloud model."""
     from src.agent_execution.arena import AgentConfig
-    
+
     mock_llm = Mock()
     mock_llm.get_model.return_value = "gpt-4o"
     mock_llm.is_local.return_value = False
-    
+
     return AgentConfig(
         name="Agent_B_Cloud",
         llm_service=mock_llm,
         system_prompt_style="standard",
         max_retries=2,
-        planning_time_multiplier=1.0
+        planning_time_multiplier=1.0,
     )
 
 
@@ -271,23 +293,24 @@ def mock_agent_config_cloud():
 def mock_agent_config_local():
     """Mock agent configuration for local model."""
     from src.agent_execution.arena import AgentConfig
-    
+
     mock_llm = Mock()
     mock_llm.get_model.return_value = "llama3.2"
     mock_llm.is_local.return_value = True
-    
+
     return AgentConfig(
         name="Agent_A_Local",
         llm_service=mock_llm,
         system_prompt_style="standard",
         max_retries=0,
-        planning_time_multiplier=2.0
+        planning_time_multiplier=2.0,
     )
 
 
 # =============================================================================
 # PROFIT CALCULATION TEST DATA
 # =============================================================================
+
 
 @pytest.fixture
 def profit_test_cases():
@@ -321,6 +344,7 @@ def profit_test_cases():
 # PRICING TEST DATA
 # =============================================================================
 
+
 @pytest.fixture
 def pricing_test_cases():
     """Test cases for pricing calculations."""
@@ -328,9 +352,7 @@ def pricing_test_cases():
         # Domain: accounting, legal, data_analysis
         # Complexity: simple (1.0), medium (1.5), complex (2.0)
         # Urgency: standard (1.0), rush (1.25), urgent (1.5)
-        
         # Base rates: accounting=$100, legal=$175, data_analysis=$150
-        
         "accounting_simple_standard": {
             "domain": "accounting",
             "complexity": "simple",
