@@ -726,3 +726,64 @@ def test_all_workflows_run_without_errors(test_db):
     ).first()
     assert final_competition is not None
     assert final_competition.winner == "agent_a"
+
+# =============================================================================
+# TEST E: DOCUMENT/REPORT GENERATION INTEGRATION (Issue #1)
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_document_generation_workflow(test_db):
+    """Test integrated document generation workflow (Issue #1)."""
+    from src.agent_execution.executor import TaskRouter, OutputFormat
+    
+    # Setup
+    router = TaskRouter()
+    user_request = "Create a detailed financial report for last month"
+    csv_data = "date,revenue,expense\n2026-01-01,1000,500\n2026-01-15,1200,600"
+    
+    # Mock LLM and Sandbox to avoid external calls
+    with patch("src.agent_execution.executor.ReportGenerator.generate_report") as mock_gen:
+        mock_gen.return_value = {
+            "success": True,
+            "file_url": "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,...",
+            "file_name": "financial_report.docx",
+            "output_format": OutputFormat.DOCX,
+            "message": "Report generated successfully"
+        }
+        
+        # Execute routing
+        result = router.route(
+            domain="legal",
+            user_request=user_request,
+            csv_data=csv_data
+        )
+        
+        # Verify
+        assert result["success"] is True
+        assert result["file_name"] == "financial_report.docx"
+        mock_gen.assert_called_once()
+
+# =============================================================================
+# TEST F: DISTRIBUTED TRACING PROPAGATION (Issue #31)
+# =============================================================================
+
+def test_distributed_tracing_propagation():
+    """Test that trace IDs propagate across component boundaries (Issue #31)."""
+    from src.utils.distributed_tracing import init_trace_context, get_trace_id
+    import logging
+    
+    # Initialize context
+    trace_id = init_trace_context()
+    assert trace_id is not None
+    
+    # Verify propagation
+    assert get_trace_id() == trace_id
+    
+    # Verify logging integration (if initialized)
+    logger = logging.getLogger("test_trace")
+    # We can't easily check the log output format here without complex setup,
+    # but we can verify the context is set.
+    
+    from src.utils.distributed_tracing import clear_trace_context
+    clear_trace_context()
+    assert get_trace_id() is None
