@@ -83,6 +83,12 @@ class ConfigManager:
         "INITIAL_SEED_MONEY": 10000,  # Initial seed money in cents ($100)
         "BUDGET_CAP_WEEKLY": 50000,  # Weekly budget cap in cents ($500)
         "BUDGET_RESET_PERIOD": "weekly",  # Reset period: daily, weekly, monthly
+        # Auto-Threshold Increase (Issue #99)
+        "AUTO_THRESHOLD_INCREASE": True,  # Enable auto threshold increase
+        "AUTO_THRESHOLD_WIN_RATE_THRESHOLD": 70,  # Win rate % to trigger increase
+        "AUTO_THRESHOLD_PROFIT_MARGIN_THRESHOLD": 50,  # Profit margin in cents ($0.50)
+        "AUTO_THRESHOLD_CONSECUTIVE_PERIODS": 4,  # Consecutive periods meeting criteria
+        "WEEKLY_PETITION_DAY": "monday",  # Day of week for evaluation
         # External URLs
         "OLLAMA_URL": "http://localhost:11434/v1",
         "TRACELOOP_URL": "http://localhost:6006/v1/traces",
