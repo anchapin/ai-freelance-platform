@@ -49,6 +49,9 @@ from .models import Bid, BidStatus
 # Import client authentication for dashboard endpoints (Issue #17)
 from ..utils.client_auth import generate_client_token, verify_client_token
 
+# Import Rate Limiting Middleware (Issue #65)
+from .rate_limit_middleware import RateLimitMiddleware
+
 # Import contextlib for lifespan
 from contextlib import asynccontextmanager
 
@@ -1091,6 +1094,9 @@ async def lifespan(app: FastAPI):
 
 # Update your FastAPI initialization to use the lifespan
 app = FastAPI(title="ArbitrageAI API", lifespan=lifespan)
+
+# Add Rate Limiting Middleware (Issue #65)
+app.add_middleware(RateLimitMiddleware)
 
 
 @app.get("/")
