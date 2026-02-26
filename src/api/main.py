@@ -1221,6 +1221,15 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
             detail="Database error occurred. Our team has been notified."
         )
     except Exception as e:
+        # Check for concurrency conflicts (Issue #29)
+        from sqlalchemy.orm.exc import StaleDataError
+        if isinstance(e, StaleDataError):
+            logger.warning(f"Concurrency conflict detected: {e}")
+            raise HTTPException(
+                status_code=409,
+                detail="A concurrency conflict occurred. Please try again."
+            )
+        
         logger.error(f"Unexpected error creating checkout session: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
