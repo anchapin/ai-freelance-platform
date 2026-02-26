@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import './TaskStatus.css';
 
@@ -18,16 +18,12 @@ function TaskStatus() {
   const [showDashboard, setShowDashboard] = useState(false);
   const [emailInput, setEmailInput] = useState(clientEmail || '');
 
-  // AbortController refs for cleanup
-  const dashboardAbortControllerRef = useRef(null);
-  const taskPollAbortControllerRef = useRef(null);
-  
-  // Polling configuration with exponential backoff (moved outside to avoid dependency warnings)
-  const POLL_INTERVALS = useRef([2000, 3000, 5000, 8000, 10000]); // 2s, 3s, 5s, 8s, 10s
-  const STOP_POLLING_STATES = useRef(['COMPLETED', 'FAILED', 'CANCELLED']);
+  // Polling configuration with exponential backoff
+  const POLL_INTERVALS = [2000, 3000, 5000, 8000, 10000]; // 2s, 3s, 5s, 8s, 10s
+  const STOP_POLLING_STATES = ['COMPLETED', 'FAILED', 'CANCELLED'];
 
   // Fetch dashboard data when email is provided (requires authentication token)
-  const fetchDashboardData = async (email, abortSignal) => {
+  const fetchDashboardData = async (email) => {
     if (!email || !email.includes('@')) return;
     
     try {
@@ -44,9 +40,7 @@ function TaskStatus() {
         return;
       }
       
-      const response = await fetch(url, {
-        signal: abortSignal
-      });
+      const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
         setDashboardData(data);
@@ -54,27 +48,15 @@ function TaskStatus() {
         console.error('Invalid or missing authentication token for dashboard access');
       }
     } catch (err) {
-      // Don't log abort errors as they're expected on cleanup
-      if (err.name !== 'AbortError') {
-        console.error('Failed to fetch dashboard data:', err);
-      }
+      console.error('Failed to fetch dashboard data:', err);
     }
   };
 
   useEffect(() => {
     if (clientEmail) {
       setEmailInput(clientEmail);
-      // Create abort controller for dashboard fetch
-      dashboardAbortControllerRef.current = new AbortController();
-      fetchDashboardData(clientEmail, dashboardAbortControllerRef.current.signal);
+      fetchDashboardData(clientEmail);
     }
-    
-    // Cleanup on unmount or email change
-    return () => {
-      if (dashboardAbortControllerRef.current) {
-        dashboardAbortControllerRef.current.abort();
-      }
-    };
   }, [clientEmail]);
 
   useEffect(() => {
@@ -85,14 +67,10 @@ function TaskStatus() {
 
     let pollIndex = 0;
     let timeoutId = null;
-    // Create abort controller for task polling
-    taskPollAbortControllerRef.current = new AbortController();
 
     const fetchTask = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
-          signal: taskPollAbortControllerRef.current.signal
-        });
+        const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`);
         
         if (!response.ok) {
           if (response.status === 404) {
@@ -106,22 +84,20 @@ function TaskStatus() {
         setError(null);
 
         // Stop polling if task is in a terminal state
-        if (STOP_POLLING_STATES.current.includes(data.status)) {
+        if (STOP_POLLING_STATES.includes(data.status)) {
           setLoading(false);
+          if (timeoutId) clearTimeout(timeoutId);
           return;
         }
 
         // Exponential backoff: increase interval between polls
-        pollIndex = Math.min(pollIndex + 1, POLL_INTERVALS.current.length - 1);
-        const nextInterval = POLL_INTERVALS.current[pollIndex];
+        pollIndex = Math.min(pollIndex + 1, POLL_INTERVALS.length - 1);
+        const nextInterval = POLL_INTERVALS[pollIndex];
         
         timeoutId = setTimeout(fetchTask, nextInterval);
       } catch (err) {
-        // Don't log abort errors as they're expected on cleanup
-        if (err.name !== 'AbortError') {
-          setError(err.message);
-          setLoading(false);
-        }
+        setError(err.message);
+        setLoading(false);
       }
     };
 
@@ -130,12 +106,7 @@ function TaskStatus() {
 
     // Cleanup on unmount
     return () => {
-      // Clear the timeout
       if (timeoutId) clearTimeout(timeoutId);
-      // Abort all pending fetch requests
-      if (taskPollAbortControllerRef.current) {
-        taskPollAbortControllerRef.current.abort();
-      }
     };
   }, [taskId]);
 
@@ -143,9 +114,7 @@ function TaskStatus() {
   const handleEmailSubmit = (e) => {
     e.preventDefault();
     if (emailInput && emailInput.includes('@')) {
-      // Create new abort controller for this fetch
-      dashboardAbortControllerRef.current = new AbortController();
-      fetchDashboardData(emailInput, dashboardAbortControllerRef.current.signal);
+      fetchDashboardData(emailInput);
       setShowDashboard(true);
     }
   };
@@ -316,7 +285,7 @@ function TaskStatus() {
           </div>
         );
       
-      case 'COMPLETED': {
+      case 'COMPLETED':
         const deliveryUrl = task.delivery_token 
           ? `/task-status?task_id=${task.id}&token=${task.delivery_token}`
           : null;
@@ -343,7 +312,6 @@ function TaskStatus() {
             <p className="task-id">Task ID: {task.id}</p>
           </div>
         );
-      }
       
       case 'FAILED':
         return (
