@@ -735,7 +735,7 @@ class WebSocketManager:
         # This would typically check database permissions
         # For now, we'll implement a simple check
         session = self.client_sessions.get(client_id, {})
-        user_id = session.get("user_id")
+        session.get("user_id")
         
         # TODO: Implement proper task ownership validation
         # This should query the database to check if user_id owns task_id

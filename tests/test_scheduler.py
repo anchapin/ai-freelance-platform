@@ -38,7 +38,7 @@ class TestCronExpressionValidator:
         ]
         
         for expression in valid_expressions:
-            assert CronExpressionValidator.validate_expression(expression) == True
+            assert CronExpressionValidator.validate_expression(expression)
     
     def test_validate_expression_invalid(self):
         """Test validation of invalid cron expressions."""
@@ -53,7 +53,7 @@ class TestCronExpressionValidator:
         ]
         
         for expression in invalid_expressions:
-            assert CronExpressionValidator.validate_expression(expression) == False
+            assert not CronExpressionValidator.validate_expression(expression)
     
     def test_get_next_occurrence(self):
         """Test getting next occurrence for cron expressions."""
@@ -96,11 +96,11 @@ class TestIntelligentScheduler:
         # Mock schedule that avoids peak hours
         mock_schedule = Mock()
         mock_schedule.avoid_peak_hours = True
-        assert scheduler.should_avoid_peak_hours(mock_schedule) == True
+        assert scheduler.should_avoid_peak_hours(mock_schedule)
         
         # Mock schedule that doesn't avoid peak hours
         mock_schedule.avoid_peak_hours = False
-        assert scheduler.should_avoid_peak_hours(mock_schedule) == False
+        assert not scheduler.should_avoid_peak_hours(mock_schedule)
     
     def test_get_optimal_time_business_hours(self):
         """Test optimal time calculation during business hours."""
@@ -162,11 +162,11 @@ class TestIntelligentScheduler:
         # Mock schedule with batching enabled
         mock_schedule = Mock()
         mock_schedule.batch_size = 5
-        assert scheduler.should_batch_tasks(mock_schedule) == True
+        assert scheduler.should_batch_tasks(mock_schedule)
         
         # Mock schedule without batching
         mock_schedule.batch_size = 1
-        assert scheduler.should_batch_tasks(mock_schedule) == False
+        assert not scheduler.should_batch_tasks(mock_schedule)
     
     def test_get_batch_window(self):
         """Test batch window calculation."""
@@ -263,7 +263,7 @@ class TestTaskScheduler:
         
         # Pause the schedule
         result = await scheduler.pause_schedule(schedule_id)
-        assert result == True
+        assert result
         
         # Verify status changed
         schedule = await scheduler.get_schedule(schedule_id)
@@ -281,7 +281,7 @@ class TestTaskScheduler:
         # Pause then resume
         await scheduler.pause_schedule(schedule_id)
         result = await scheduler.resume_schedule(schedule_id)
-        assert result == True
+        assert result
         
         # Verify status changed back to active
         schedule = await scheduler.get_schedule(schedule_id)
@@ -299,7 +299,7 @@ class TestTaskScheduler:
         
         # Cancel the schedule
         result = await scheduler.cancel_schedule(schedule_id)
-        assert result == True
+        assert result
         
         # Verify status changed
         schedule = await scheduler.get_schedule(schedule_id)
@@ -470,11 +470,11 @@ class TestSchedulerIntegration:
         
         # Initialize
         await scheduler.initialize()
-        assert scheduler.is_running == True
+        assert scheduler.is_running
         
         # Shutdown
         await scheduler.shutdown()
-        assert scheduler.is_running == False
+        assert not scheduler.is_running
     
     @pytest.mark.asyncio
     async def test_scheduler_with_real_database(self, db_session: AsyncSession):
@@ -606,7 +606,7 @@ class TestSchedulerAPIEndpoints:
         assert response.status_code == 200
         
         data = response.json()
-        assert data["valid"] == True
+        assert data["valid"]
         assert "next_occurrence" in data
         assert "human_readable" in data
         
@@ -615,7 +615,7 @@ class TestSchedulerAPIEndpoints:
         assert response.status_code == 200
         
         data = response.json()
-        assert data["valid"] == False
+        assert not data["valid"]
         assert "error" in data
     
     def test_common_cron_expressions_endpoint(self, client: TestClient):

@@ -113,10 +113,10 @@ class TestWebSocketManager:
             
             result = await websocket_manager.connect_client(mock_websocket, "test-client")
             
-            assert result == True
+            assert result
             assert "test-client" in websocket_manager.active_connections
             assert "test-client" in websocket_manager.client_sessions
-            assert websocket_manager.client_sessions["test-client"]["authenticated"] == True
+            assert websocket_manager.client_sessions["test-client"]["authenticated"]
     
     @pytest.mark.asyncio
     async def test_connect_client_invalid_token(self, websocket_manager, mock_websocket):
@@ -127,7 +127,7 @@ class TestWebSocketManager:
             
             result = await websocket_manager.connect_client(mock_websocket, "test-client")
             
-            assert result == False
+            assert not result
             assert "test-client" not in websocket_manager.active_connections
     
     @pytest.mark.asyncio
@@ -143,7 +143,7 @@ class TestWebSocketManager:
         assert "test-client" not in websocket_manager.active_connections
         assert "test-client" not in websocket_manager.client_sessions
         assert "test-client" not in websocket_manager.last_heartbeat
-        assert mock_websocket.closed == True
+        assert mock_websocket.closed
     
     @pytest.mark.asyncio
     async def test_subscribe_to_task(self, websocket_manager):
@@ -153,7 +153,7 @@ class TestWebSocketManager:
         
         result = await websocket_manager.subscribe_to_task("test-client", "test-task")
         
-        assert result == True
+        assert result
         assert "test-task" in websocket_manager.task_subscriptions
         assert "test-client" in websocket_manager.task_subscriptions["test-task"]
     
@@ -165,7 +165,7 @@ class TestWebSocketManager:
         
         result = await websocket_manager.subscribe_to_bid("test-client", "test-bid")
         
-        assert result == True
+        assert result
         assert "test-bid" in websocket_manager.bid_subscriptions
         assert "test-client" in websocket_manager.bid_subscriptions["test-bid"]
     
@@ -315,7 +315,7 @@ class TestWebSocketManager:
         assert message["data"]["title"] == "Success"
         assert message["data"]["message"] == "Operation completed successfully"
         assert message["data"]["duration"] == 5000
-        assert message["data"]["persistent"] == False
+        assert not message["data"]["persistent"]
     
     @pytest.mark.asyncio
     async def test_send_system_alert(self, websocket_manager):
@@ -417,7 +417,7 @@ class TestWebSocketIntegration:
         
         # Subscribe to task
         result = await websocket_manager.subscribe_to_task("test-client", test_task.id)
-        assert result == True
+        assert result
         
         # Send task update
         await websocket_manager.send_task_update(
@@ -445,7 +445,7 @@ class TestWebSocketIntegration:
         
         # Subscribe to bid
         result = await websocket_manager.subscribe_to_bid("test-client", test_bid.id)
-        assert result == True
+        assert result
         
         # Send bid update
         await websocket_manager.send_bid_update(
@@ -488,7 +488,7 @@ class TestWebSocketIntegration:
             
             result = await manager.connect_client(mock_websocket, "test-client")
             
-            assert result == True
+            assert result
             assert "test-client" in manager.client_sessions
             assert manager.client_sessions["test-client"]["user_id"] == "test-user"
 

@@ -26,6 +26,7 @@ from .models import (
     ArenaCompetition,
     ArenaCompetitionStatus,
     EscalationLog,
+    WebhookSecret,
 )
 from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
@@ -1446,7 +1447,7 @@ async def stripe_webhook(
     payload = await request.body()
 
     # Get all active webhook secrets from the database
-    secrets = db.query(WebhookSecret).filter(WebhookSecret.is_active == True).all()
+    secrets = db.query(WebhookSecret).filter(WebhookSecret.is_active).all()
 
     event = None
     for secret in secrets:

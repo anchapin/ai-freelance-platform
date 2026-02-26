@@ -835,7 +835,7 @@ class IntelligentRouter:
         ml_confidence = classification.get('confidence', 0.5)
         
         # Get top performance recommendation
-        perf_recommendation = performance_recommendations[0] if performance_recommendations else None
+        performance_recommendations[0] if performance_recommendations else None
         
         # Check for anomalies
         anomaly_score = classification.get('anomaly_score', 0.0)

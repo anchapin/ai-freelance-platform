@@ -68,7 +68,8 @@ except (ImportError, AttributeError):
 try:
     from opentelemetry.propagate import inject as inject_context
 except ImportError:
-    inject_context = lambda x: x
+    def inject_context(x):
+        return x
 
 # Optional: propagators (may not be installed)
 try:
@@ -374,7 +375,7 @@ class APMManager:
             propagators.append(B3MultiFormat())
 
         if propagators and CompositePropagator:
-            propagator = CompositePropagator(propagators)
+            CompositePropagator(propagators)
             logger.info(f"✓ Configured {len(propagators)} trace context propagators")
         elif propagators:
             logger.info(f"✓ Available {len(propagators)} propagators")
@@ -543,7 +544,7 @@ def measure_execution(name: str, attributes: Optional[Dict[str, Any]] = None):
     Returns:
         Context manager yielding duration tracking
     """
-    manager = get_apm_manager()
+    get_apm_manager()
     start_time = time.time()
 
     with create_span(name, attributes) as span:

@@ -168,7 +168,7 @@ class TestSandboxExecution:
     
     def test_execute_in_docker_sandbox(self, e2e_db: Session):
         """Test executing code in Docker sandbox."""
-        task = create_test_task(e2e_db)
+        create_test_task(e2e_db)
         
         # Mock sandbox execution
         sandbox_result = {
@@ -185,7 +185,7 @@ class TestSandboxExecution:
     
     def test_handle_sandbox_execution_timeout(self, e2e_db: Session):
         """Test handling sandbox execution timeout."""
-        task = create_test_task(e2e_db)
+        create_test_task(e2e_db)
         
         sandbox_result = {
             "success": False,
@@ -198,7 +198,7 @@ class TestSandboxExecution:
     
     def test_handle_sandbox_memory_error(self, e2e_db: Session):
         """Test handling sandbox memory error."""
-        task = create_test_task(e2e_db)
+        create_test_task(e2e_db)
         
         sandbox_result = {
             "success": False,
@@ -211,14 +211,13 @@ class TestSandboxExecution:
     
     def test_sandbox_cleanup_on_success(self, e2e_db: Session):
         """Test sandbox cleanup after successful execution."""
-        task = create_test_task(e2e_db)
+        create_test_task(e2e_db)
         
         # Track cleanup
         cleanup_events = []
         
         # Simulate execution
         try:
-            sandbox_result = {"success": True}
             cleanup_events.append("cleanup_started")
         finally:
             cleanup_events.append("cleanup_completed")
@@ -227,7 +226,7 @@ class TestSandboxExecution:
     
     def test_sandbox_cleanup_on_failure(self, e2e_db: Session):
         """Test sandbox cleanup after execution failure."""
-        task = create_test_task(e2e_db)
+        create_test_task(e2e_db)
         
         cleanup_events = []
         

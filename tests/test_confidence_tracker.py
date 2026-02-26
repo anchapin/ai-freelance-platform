@@ -177,7 +177,7 @@ class TestConfidenceTracker:
         """Test getting recent history."""
         # Record multiple bids
         for i in range(20):
-            entry = confidence_tracker.record_bid(
+            confidence_tracker.record_bid(
                 threshold=50,
                 bid_amount_cents=10000,
                 job_title=f"Job {i}",

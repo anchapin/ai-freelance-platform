@@ -168,7 +168,7 @@ class TestTaskClassifier:
         # Train classifier
         classifier.train(profiles, labels)
         
-        assert classifier.is_trained == True
+        assert classifier.is_trained
         assert classifier.text_classifier is not None
         assert classifier.clustering_model is not None
         assert classifier.vectorizer is not None
@@ -262,7 +262,7 @@ class TestPerformanceTracker:
         # Check that data was recorded
         assert "llama-3.2" in tracker.performance_data
         assert len(tracker.performance_data["llama-3.2"]) == 1
-        assert tracker.performance_data["llama-3.2"][0]["success"] == True
+        assert tracker.performance_data["llama-3.2"][0]["success"]
         assert tracker.performance_data["llama-3.2"][0]["execution_time"] == 150.0
     
     def test_get_handler_recommendations(self):
@@ -635,7 +635,7 @@ class TestIntelligentRouter:
             
             # Should succeed with fallback
             execution_result = result["execution_result"]
-            assert execution_result["success"] == True
+            assert execution_result["success"]
             assert "Task completed successfully" in execution_result["message"]
 
 
@@ -798,7 +798,7 @@ class TestErrorHandling:
         
         # Execution should have failed
         execution_result = result["execution_result"]
-        assert execution_result["success"] == False
+        assert not execution_result["success"]
         assert "All handlers failed" in execution_result["message"]
 
 

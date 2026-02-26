@@ -181,7 +181,6 @@ class TestOptimizedQueries:
 
     def test_get_active_bids_optimized(self, test_db, sample_bids):
         """Verify optimized active bids query works correctly."""
-        bids = sample_bids
         results = get_active_bids_optimized(test_db)
         assert len(results) > 0
         assert all(
@@ -191,13 +190,11 @@ class TestOptimizedQueries:
 
     def test_get_active_bids_optimized_with_marketplace(self, test_db, sample_bids):
         """Verify marketplace-filtered active bids query works correctly."""
-        bids = sample_bids
         results = get_active_bids_optimized(test_db, marketplace="upwork")
         assert all(b.marketplace == "upwork" for b in results)
 
     def test_get_recent_bids_optimized(self, test_db, sample_bids):
         """Verify optimized recent bids query works correctly."""
-        bids = sample_bids
         results = get_recent_bids_optimized(test_db, marketplace="upwork", limit=10)
         assert all(b.marketplace == "upwork" for b in results)
         # Should be ordered by created_at desc
@@ -206,7 +203,6 @@ class TestOptimizedQueries:
 
     def test_get_bid_dedup_set_optimized(self, test_db, sample_bids):
         """Verify optimized bid deduplication query works correctly."""
-        bids = sample_bids
         results = get_bid_dedup_set_optimized(test_db, [BidStatus.PENDING])
         assert isinstance(results, set)
         assert len(results) > 0

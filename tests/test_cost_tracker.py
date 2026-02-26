@@ -71,7 +71,7 @@ class TestCostTracker:
     def test_add_revenue(self, cost_tracker):
         """Test adding revenue to cost entries."""
         # Track a cost first
-        entry = cost_tracker.track_cost(
+        cost_tracker.track_cost(
             cost_type="sandbox",
             cost_cents=1000,  # $10
             description="E2B sandbox execution",

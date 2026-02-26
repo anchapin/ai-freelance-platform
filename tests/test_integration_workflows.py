@@ -777,7 +777,7 @@ def test_distributed_tracing_propagation():
     assert get_trace_id() == trace_id
     
     # Verify logging integration (if initialized)
-    logger = logging.getLogger("test_trace")
+    logging.getLogger("test_trace")
     # We can't easily check the log output format here without complex setup,
     # but we can verify the context is set.
     

@@ -382,9 +382,9 @@ class TestMultiStepWorkflowFailures:
         
         with pytest.raises(ValidationError):
             try:
-                result1 = step(1)
-                result2 = step(2)
-                result3 = step(3)  # Fails here
+                step(1)
+                step(2)
+                step(3)  # Fails here
             except ValidationError:
                 # Rollback in reverse order
                 undo_step(2)
@@ -510,7 +510,7 @@ class TestCascadeFailuresAcrossServices:
         with pytest.raises(NetworkError):
             result_a = service_a()
             result_b = service_b(result_a)
-            result_c = service_c(result_b)
+            service_c(result_b)
         
         assert call_log == ["A", "B", "C_failed"]
 
@@ -892,7 +892,6 @@ class TestErrorHandlingIntegration:
         import concurrent.futures
         
         results = []
-        errors = []
         
         def operation(op_id, should_fail=False):
             try:

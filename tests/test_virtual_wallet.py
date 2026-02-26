@@ -2,6 +2,7 @@
 Tests for Virtual Wallet Module (Issues #92, #93)
 """
 
+from datetime import datetime
 import pytest
 from src.api.database import SessionLocal
 from src.api.models import VirtualWallet

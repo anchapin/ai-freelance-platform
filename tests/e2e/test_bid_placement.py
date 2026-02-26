@@ -248,12 +248,12 @@ class TestBidDeduplication:
         job_id = "job_dedup_test"
         
         # Submit first bid
-        bid1 = create_test_bid(e2e_db, job_id=job_id, marketplace="Upwork")
+        create_test_bid(e2e_db, job_id=job_id, marketplace="Upwork")
         
         # Attempt duplicate bid (will fail due to unique constraint)
         duplicate_found = False
         try:
-            bid2 = create_test_bid(e2e_db, job_id=job_id, marketplace="Upwork")
+            create_test_bid(e2e_db, job_id=job_id, marketplace="Upwork")
         except Exception:
             # Unique constraint violation is expected
             duplicate_found = True
