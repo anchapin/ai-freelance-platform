@@ -831,3 +831,60 @@ class RateLimitLog(Base):
             "response_time_ms": self.response_time_ms,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
         }
+
+
+class ScheduledTask(Base):
+    """Database model for scheduled tasks."""
+    
+    __tablename__ = "scheduled_tasks"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String, nullable=True)  # Reference to actual task when executed
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    domain = Column(String, nullable=False)
+    cron_expression = Column(String, nullable=False)
+    schedule_type = Column(String, default="RECURRING", nullable=False)
+    status = Column(String, default="ACTIVE", nullable=False)
+    task_data = Column(Text, nullable=True)  # JSON string containing task data
+    
+    # Scheduling metadata
+    next_run_at = Column(DateTime, nullable=True)
+    last_run_at = Column(DateTime, nullable=True)
+    last_run_result = Column(String, nullable=True)  # SUCCESS, FAILED
+    last_run_error = Column(Text, nullable=True)
+    
+    # Recurrence settings
+    max_runs = Column(Integer, nullable=True)  # None for unlimited
+    run_count = Column(Integer, default=0)
+    timezone = Column(String, default="UTC")
+    
+    # Intelligent scheduling
+    avoid_peak_hours = Column(Boolean, default=True)
+    batch_size = Column(Integer, default=1)
+    priority = Column(Integer, default=1)  # 1 (low) to 10 (high)
+    
+    # Analytics
+    avg_execution_time = Column(Float, default=0.0)
+    success_rate = Column(Float, default=100.0)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)  # Auto-expire old schedules
+
+
+class ScheduleHistory(Base):
+    """Database model for schedule execution history."""
+    
+    __tablename__ = "schedule_history"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    schedule_id = Column(String, nullable=False, index=True)
+    task_id = Column(String, nullable=True)
+    execution_start = Column(DateTime, nullable=False)
+    execution_end = Column(DateTime, nullable=True)
+    status = Column(String, nullable=False)  # STARTED, COMPLETED, FAILED
+    result = Column(Text, nullable=True)  # Success message or error details
+    execution_time_ms = Column(Float, nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
