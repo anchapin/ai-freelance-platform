@@ -132,41 +132,35 @@ def should_use_redis_locks() -> bool:
 
 def get_ollama_url() -> str:
     """
-    Get Ollama local inference server URL from environment.
-
-    Environment variable: OLLAMA_URL
-    Default: http://localhost:11434/v1
+    Get Ollama local inference server URL from environment via ConfigManager.
 
     Returns:
         Ollama base URL for LLM inference
     """
-    return os.getenv("OLLAMA_URL", "http://localhost:11434/v1")
+    from .config.config_manager import ConfigManager
+    return ConfigManager.get("OLLAMA_URL")
 
 
 def get_traceloop_url() -> str:
     """
-    Get Traceloop collector URL from environment.
-
-    Environment variable: TRACELOOP_URL
-    Default: http://localhost:6006/v1/traces
+    Get Traceloop collector URL from environment via ConfigManager.
 
     Returns:
         Traceloop traces endpoint URL
     """
-    return os.getenv("TRACELOOP_URL", "http://localhost:6006/v1/traces")
+    from .config.config_manager import ConfigManager
+    return ConfigManager.get("TRACELOOP_URL")
 
 
 def get_telegram_api_url() -> str:
     """
-    Get Telegram Bot API base URL from environment.
-
-    Environment variable: TELEGRAM_API_URL
-    Default: https://api.telegram.org
+    Get Telegram Bot API base URL from environment via ConfigManager.
 
     Returns:
         Telegram Bot API base URL
     """
-    return os.getenv("TELEGRAM_API_URL", "https://api.telegram.org")
+    from .config.config_manager import ConfigManager
+    return ConfigManager.get("TELEGRAM_API_URL")
 
 
 def validate_urls() -> None:

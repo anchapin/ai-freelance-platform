@@ -17,7 +17,6 @@ import asyncio
 import random
 import time
 from typing import Optional, Dict, Any
-from .config import get_ollama_url
 from .llm_health_check import get_health_checker, CircuitBreakerError
 
 # Load environment variables from .env file
@@ -84,7 +83,7 @@ class ModelConfig:
         """
         self.cloud_model = cloud_model
         self.local_model = local_model
-        self.local_base_url = local_base_url or get_ollama_url()
+        self.local_base_url = local_base_url or ConfigManager.get("OLLAMA_URL")
         self.local_api_key = local_api_key
         self.use_local_by_default = use_local_by_default
         self.task_model_map = task_model_map or {}
