@@ -21,7 +21,8 @@ from enum import Enum as PyEnum
 from sqlalchemy.orm import Session
 
 from ..api.database import SessionLocal
-from ..api.models import ThresholdPetition, ConfidenceEntry
+from ..api.models import ThresholdPetition
+from ..agent_execution.confidence_tracker import ConfidenceEntry
 from ..config.config_manager import ConfigManager
 from ..utils.logger import get_logger
 
