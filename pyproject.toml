@@ -10,7 +10,6 @@ dependencies = [
     "openai>=1.0.0",
     "e2b-code-interpreter>=1.0.0",
     "python-dotenv>=1.0.0",
-    "livebench @ git+https://github.com/HKUDS/ClawWork.git",
     # File parsing dependencies
     "pandas>=2.0.0",
     "openpyxl>=3.1.0",
