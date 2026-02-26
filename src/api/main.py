@@ -222,8 +222,9 @@ class DeliveryAmountModel(BaseModel):
     def validate_positive_amount(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("Amount must be positive")
-        if v > 100000000:  # $1M in cents
-            raise ValueError("Amount exceeds maximum allowed")
+        max_amount = ConfigManager.get("MAX_DELIVERY_AMOUNT_CENTS")
+        if v > max_amount:
+            raise ValueError(f"Amount exceeds maximum allowed ({max_amount})")
         return v
 
     @field_validator("currency")
@@ -258,8 +259,9 @@ class DeliveryTimestampModel(BaseModel):
             raise ValueError("Expires at must be after created at")
             
         # Max TTL check (e.g., 7 days)
-        if v > datetime.now(timezone.utc) + timedelta(days=7):
-            raise ValueError("Expires at too far in future")
+        max_days = ConfigManager.get("MAX_DELIVERY_TOKEN_TTL_DAYS")
+        if v > datetime.now(timezone.utc) + timedelta(days=max_days):
+            raise ValueError(f"Expires at too far in future (max {max_days} days)")
             
         return v
 

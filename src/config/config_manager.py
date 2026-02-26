@@ -52,10 +52,12 @@ class ConfigManager:
         
         # Delivery & Security Thresholds
         "DELIVERY_TOKEN_TTL_HOURS": 1,
+        "MAX_DELIVERY_TOKEN_TTL_DAYS": 7,
         "DELIVERY_MAX_FAILED_ATTEMPTS": 5,
         "DELIVERY_LOCKOUT_SECONDS": 3600,
         "DELIVERY_MAX_ATTEMPTS_PER_IP": 20,
         "DELIVERY_IP_LOCKOUT_SECONDS": 3600,
+        "MAX_DELIVERY_AMOUNT_CENTS": 100000000,  # $1M
         
         # Locking & Distribution
         "BID_LOCK_MANAGER_TTL": 300,
