@@ -111,6 +111,10 @@ from ..agent_execution.arena import (
     ArenaLearningLogger,
 )
 
+# Import Scheduler modules
+from ..agent_execution.scheduler import TaskScheduler
+from .scheduler_endpoints import register_scheduler_routes
+
 # Import Experience Vector Database for few-shot learning (RAG)
 try:
     from ..experience_vector_db import store_successful_task
@@ -3618,6 +3622,9 @@ async def process_bid_approval(bid_id: str, approval_status: str, db: Session):
 # =============================================================================
 
 app.include_router(admin_router)
+
+# Register scheduler routes
+register_scheduler_routes(app)
 
 
 if __name__ == "__main__":
