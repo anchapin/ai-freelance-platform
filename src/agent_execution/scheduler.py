@@ -41,7 +41,7 @@ from sqlalchemy.exc import IntegrityError
 import pytz
 
 from .errors import SchedulingError
-from ..api.models import Base
+from ..api.models import Base, ScheduledTask, ScheduleHistory
 from ..api.database import get_db
 from ..utils.logger import get_logger
 

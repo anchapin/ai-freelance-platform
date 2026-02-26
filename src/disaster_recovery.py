@@ -48,7 +48,7 @@ from src.config import Config
 from src.utils.logger import get_logger
 from src.utils.telemetry import get_tracer
 from src.api.database import get_db
-from src.api.models import Task, TaskStatus, Bid, BidStatus, Marketplace
+from src.api.models import Task, TaskStatus, Bid, BidStatus
 
 # Import telemetry
 from traceloop.sdk.decorators import task, workflow

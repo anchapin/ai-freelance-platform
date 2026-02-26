@@ -38,6 +38,10 @@ dependencies = [
     "playwright>=1.40.0",
     # Distributed Locking and Caching (Issue #19)
     "redis>=5.0.0",
+    "croniter>=2.0.0",
+    "PyJWT>=2.8.0",
+    "boto3>=1.34.0",
+    "schedule>=1.2.0",
     "ruff",
 ]
 
@@ -48,6 +52,9 @@ dev = [
     "ruff>=0.1.0",
     "httpx>=0.24.0",
 ]
+
+[project.scripts]
+ft-cli = "fine_tuning.cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

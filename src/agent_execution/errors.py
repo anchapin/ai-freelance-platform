@@ -114,6 +114,12 @@ class SecurityError(FatalError):
     pass
 
 
+class SchedulingError(PermanentError):
+    """Error related to task scheduling, cron parsing, or job queue operations."""
+
+    pass
+
+
 # Mapping of exception types to error categories
 ERROR_CLASSIFICATION: dict[Type[Exception], Type[AgentError]] = {
     # Network/Transient

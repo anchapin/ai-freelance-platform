@@ -23,7 +23,13 @@ from datetime import datetime
 # Import error categorization (Issue #37)
 
 # E2B Code Interpreter SDK (fallback)
-from e2b_code_interpreter import Sandbox
+try:
+    from e2b_code_interpreter import Sandbox
+
+    E2B_AVAILABLE = True
+except ImportError:
+    E2B_AVAILABLE = False
+    Sandbox = None
 
 # Import LLM Service for AI-powered code generation
 from src.llm_service import LLMService
@@ -329,7 +335,20 @@ class TaskRouter:
             f"TaskRouter: domain={domain}, task_type={detected_task_type}, output_format={detected_format}"
         )
 
+        # Check if it's a report request
+        is_report = any(word in user_request.lower() for word in ["report", "summary", "analysis", "executive"])
+
         # Route to appropriate handler
+        if is_report and detected_format == OutputFormat.DOCX:
+            report_type = "summary" if "summary" in user_request.lower() else "detailed"
+            return self._handle_report_generation(
+                domain=domain,
+                user_request=user_request,
+                csv_data=csv_data,
+                report_type=report_type,
+                **kwargs,
+            )
+
         if detected_format == OutputFormat.DOCX:
             return self._handle_document_generation(
                 domain=domain,
@@ -380,6 +399,39 @@ class TaskRouter:
             csv_data=csv_data, user_request=user_request, domain=domain, **kwargs
         )
 
+    def _handle_report_generation(
+        self,
+        domain: str,
+        user_request: str,
+        csv_data: str,
+        report_type: str = "detailed",
+        **kwargs,
+    ) -> dict:
+        """
+        Handle report generation tasks using ReportGenerator.
+
+        Args:
+            domain: The domain
+            user_request: The user's request
+            csv_data: CSV data
+            report_type: summary or detailed
+            **kwargs: Additional arguments
+
+        Returns:
+            Dictionary with report generation results
+        """
+        generator = ReportGenerator(
+            domain=domain,
+            llm_service=self.llm,
+            report_type=report_type
+        )
+
+        return generator.generate_report(
+            user_request=user_request,
+            csv_data=csv_data,
+            **kwargs
+        )
+
     def _handle_document_generation(
         self,
         domain: str,
@@ -401,97 +453,17 @@ class TaskRouter:
         Returns:
             Dictionary with document generation results
         """
-        # Extract headers
-        first_line = csv_data.strip().split("\n")[0]
-        csv_headers = [h.strip() for h in first_line.split(",")]
+        generator = DocumentGenerator(
+            domain=domain,
+            llm_service=self.llm,
+            output_format=output_format
+        )
 
-        # Generate code for document creation using LLM
-        llm = self.llm or LLMService()
-
-        system_prompt = self._get_document_system_prompt(domain, output_format)
-
-        prompt = f"""CSV Headers: {csv_headers}
-User Request: {user_request}
-Domain: {domain}
-Output Format: {output_format}
-
-Generate Python code to create a {output_format} document from the data.
-The code should:
-1. Read the CSV data using pandas
-2. Create a properly formatted document
-3. Save it to a file named 'output.{output_format}'
-4. Print a JSON result with keys: file_path, success
-
-Return ONLY the Python code, no markdown."""
-
-        try:
-            result = llm.complete(
-                prompt=prompt,
-                temperature=0.3,
-                max_tokens=2000,
-                system_prompt=system_prompt,
-            )
-
-            code = result["content"].strip()
-            # Extract code from markdown if present
-            code_match = re.search(r"```python\s*([\s\S]*?)\s*```", code)
-            if code_match:
-                code = code_match.group(1).strip()
-
-            # Wrap with CSV data
-            code_with_csv = f'csv_data = """{csv_data}"""\n\n' + code
-
-            # Execute in sandbox
-            e2b_api_key = kwargs.get("api_key") or os.environ.get("E2B_API_KEY")
-            sandbox_timeout = kwargs.get("sandbox_timeout", 120)
-
-            success, sandbox_result, _, artifacts = _execute_code_in_sandbox(
-                code_with_csv, e2b_api_key, sandbox_timeout, output_format
-            )
-
-            if success and artifacts:
-                # Return the generated document
-                for artifact in artifacts:
-                    if hasattr(artifact, "data") and hasattr(artifact, "name"):
-                        if artifact.name.endswith(f".{output_format}"):
-                            return {
-                                "success": True,
-                                "file_url": f"data:application/{output_format};base64,{base64.b64encode(artifact.data).decode('utf-8')}",
-                                "file_name": artifact.name,
-                                "output_format": output_format,
-                                "message": f"{output_format.upper()} document generated successfully",
-                            }
-
-            # Check logs for result
-            if success and sandbox_result and sandbox_result.logs:
-                for log in sandbox_result.logs:
-                    if hasattr(log, "text") and log.text and "{" in log.text:
-                        try:
-                            json_start = log.text.find("{")
-                            json_end = log.text.rfind("}") + 1
-                            result_data = eval(log.text[json_start:json_end])
-                            if result_data.get("success"):
-                                return {
-                                    "success": True,
-                                    "file_url": result_data.get("file_path", ""),
-                                    "output_format": output_format,
-                                    "message": f"{output_format.upper()} document generated",
-                                }
-                        except Exception:
-                            pass
-
-            return {
-                "success": False,
-                "message": f"Failed to generate {output_format} document",
-                "output_format": output_format,
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"Document generation error: {str(e)}",
-                "output_format": output_format,
-            }
+        return generator.generate_document(
+            user_request=user_request,
+            csv_data=csv_data,
+            **kwargs
+        )
 
     def _handle_spreadsheet_generation(
         self,
@@ -2751,6 +2723,14 @@ def _execute_code_in_e2b(
     Returns:
         Tuple of (success, result/error_message, logs, artifacts)
     """
+    if not E2B_AVAILABLE:
+        return (
+            False,
+            "E2B_NOT_AVAILABLE: E2B Code Interpreter SDK is not installed. Please install it with 'pip install e2b-code-interpreter' or use Docker sandbox.",
+            None,
+            None,
+        )
+
     try:
         with Sandbox(api_key=e2b_api_key) as sandbox:
             # Pre-install dependencies based on the required output format

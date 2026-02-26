@@ -12,9 +12,7 @@ This test suite verifies:
 
 import os
 import pytest
-import asyncio
 from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime
 
 from src.utils.apm import (
     APMManager,
@@ -55,7 +53,8 @@ class TestAPMManagerInitialization:
             os.environ["APM_BACKEND"] = "jaeger"
             os.environ["TRACE_SAMPLE_RATE"] = "0.1"
 
-            # Create fresh manager
+            # Force re-initialization
+            APMManager._instance = None
             manager = APMManager()
 
             assert manager.environment == "production"
@@ -67,6 +66,7 @@ class TestAPMManagerInitialization:
             # Restore environment
             os.environ.clear()
             os.environ.update(original_env)
+            APMManager._instance = None
 
     def test_apm_disabled_when_env_var_false(self):
         """Test that APM can be disabled via environment variable"""
@@ -74,31 +74,35 @@ class TestAPMManagerInitialization:
 
         try:
             os.environ["APM_ENABLED"] = "false"
-
+            APMManager._instance = None
             manager = APMManager()
             assert manager.apm_enabled is False
 
         finally:
             os.environ.clear()
             os.environ.update(original_env)
+            APMManager._instance = None
 
     def test_trace_sampling_defaults(self):
         """Test trace sampling rate defaults"""
         original_env = os.environ.copy()
-
+        if "TRACE_SAMPLE_RATE" in os.environ:
+            del os.environ["TRACE_SAMPLE_RATE"]
+        if "APM_ENVIRONMENT" in os.environ:
+            del os.environ["APM_ENVIRONMENT"]
+    
         try:
             # Development: should default to 1.0 (100%)
             os.environ["ENVIRONMENT"] = "development"
+            APMManager._instance = None
             manager = APMManager()
             assert manager.trace_sample_rate == 1.0
-
+    
             # Production: should default to 0.1 (10%)
             os.environ["ENVIRONMENT"] = "production"
-            # Force re-initialization
             APMManager._instance = None
             manager = APMManager()
             assert manager.trace_sample_rate == 0.1
-
         finally:
             os.environ.clear()
             os.environ.update(original_env)
@@ -386,6 +390,7 @@ class TestAPMIntegration:
 
         try:
             os.environ["APM_ENABLED"] = "true"
+            APMManager._instance = None
 
             with patch("src.utils.apm.JaegerExporter"):
                 init_apm()
@@ -396,6 +401,7 @@ class TestAPMIntegration:
         finally:
             os.environ.clear()
             os.environ.update(original_env)
+            APMManager._instance = None
 
     def test_apm_with_development_environment(self):
         """Test APM configuration in development"""
@@ -404,6 +410,7 @@ class TestAPMIntegration:
         try:
             os.environ["ENVIRONMENT"] = "development"
             os.environ["APM_ENABLED"] = "true"
+            APMManager._instance = None
 
             manager = APMManager()
             assert manager.trace_sample_rate == 1.0  # 100% sampling in dev
@@ -417,17 +424,19 @@ class TestAPMIntegration:
     def test_apm_with_production_environment(self):
         """Test APM configuration in production"""
         original_env = os.environ.copy()
-
+        if "TRACE_SAMPLE_RATE" in os.environ:
+            del os.environ["TRACE_SAMPLE_RATE"]
+        if "APM_ENVIRONMENT" in os.environ:
+            del os.environ["APM_ENVIRONMENT"]
+    
         try:
             os.environ["ENVIRONMENT"] = "production"
             os.environ["APM_ENABLED"] = "true"
-
             APMManager._instance = None
+    
             manager = APMManager()
-
             assert manager.trace_sample_rate == 0.1  # 10% sampling in prod
             assert manager.apm_environment == "production"
-
         finally:
             os.environ.clear()
             os.environ.update(original_env)

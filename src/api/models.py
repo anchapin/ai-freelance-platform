@@ -202,6 +202,7 @@ class Task(Base):
     )  # One-time use flag (Issue #18)
     # Timestamp fields for tracking turnaround time
     created_at = Column(DateTime, default=datetime.utcnow)  # Task creation timestamp
+    completed_at = Column(DateTime, nullable=True)  # Task completion timestamp
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )  # Last update timestamp
@@ -282,6 +283,7 @@ class Task(Base):
             else None,
             "delivery_token_used": self.delivery_token_used,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             # New fields
             "work_plan": self.work_plan,

@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from src.api.database import get_db
-from src.api.models import Task, TaskStatus, Bid, BidStatus, Marketplace, ClientPreferences
+from src.api.models import Task, TaskStatus, Bid, BidStatus
 from src.utils.logger import get_logger
 from src.utils.telemetry import get_tracer
 from src.config import Config
@@ -171,6 +171,45 @@ class AnalyticsEngine:
             return self.cache[cache_key]['result']
         return None
 
+    def _calculate_task_count(self, time_filter: datetime) -> int:
+        """Calculate total task count."""
+        return self.db.query(Task).filter(
+            Task.created_at >= time_filter
+        ).count()
+    
+    def _calculate_success_rate(self, time_filter: datetime) -> float:
+        """Calculate task success rate."""
+        total_tasks = self._calculate_task_count(time_filter)
+        if total_tasks == 0:
+            return 0.0
+        
+        completed_tasks = self.db.query(Task).filter(
+            Task.created_at >= time_filter,
+            Task.status == TaskStatus.COMPLETED
+        ).count()
+        
+        return (completed_tasks / total_tasks) * 100
+    
+    def _calculate_avg_completion_time(self, time_filter: datetime) -> float:
+        """Calculate average task completion time in hours."""
+        tasks = self.db.query(Task).filter(
+            Task.created_at >= time_filter,
+            Task.status == TaskStatus.COMPLETED,
+            Task.completed_at.isnot(None)
+        ).all()
+        
+        if not tasks:
+            return 0.0
+        
+        total_time = 0
+        for task in tasks:
+            if task.completed_at:
+                completion_time = (task.completed_at - task.created_at).total_seconds()
+                total_time += completion_time
+        
+        avg_seconds = total_time / len(tasks)
+        return avg_seconds / 3600  # Convert to hours
+
 
 class KPIAnalytics(AnalyticsEngine):
     """Key Performance Indicators analytics."""
@@ -237,45 +276,6 @@ class KPIAnalytics(AnalyticsEngine):
         ).scalar()
         return float(result or 0) / 100  # Convert cents to dollars
     
-    def _calculate_task_count(self, time_filter: datetime) -> int:
-        """Calculate total task count."""
-        return self.db.query(Task).filter(
-            Task.created_at >= time_filter
-        ).count()
-    
-    def _calculate_success_rate(self, time_filter: datetime) -> float:
-        """Calculate task success rate."""
-        total_tasks = self._calculate_task_count(time_filter)
-        if total_tasks == 0:
-            return 0.0
-        
-        completed_tasks = self.db.query(Task).filter(
-            Task.created_at >= time_filter,
-            Task.status == TaskStatus.COMPLETED
-        ).count()
-        
-        return (completed_tasks / total_tasks) * 100
-    
-    def _calculate_avg_completion_time(self, time_filter: datetime) -> float:
-        """Calculate average task completion time in hours."""
-        tasks = self.db.query(Task).filter(
-            Task.created_at >= time_filter,
-            Task.status == TaskStatus.COMPLETED,
-            Task.completed_at.isnot(None)
-        ).all()
-        
-        if not tasks:
-            return 0.0
-        
-        total_time = 0
-        for task in tasks:
-            if task.completed_at:
-                completion_time = (task.completed_at - task.created_at).total_seconds()
-                total_time += completion_time
-        
-        avg_seconds = total_time / len(tasks)
-        return avg_seconds / 3600  # Convert to hours
-    
     def _calculate_active_users(self, time_filter: datetime) -> int:
         """Calculate number of active users."""
         return self.db.query(func.count(func.distinct(Task.client_email))).filter(
@@ -303,7 +303,7 @@ class KPIAnalytics(AnalyticsEngine):
         total_tasks = self._calculate_task_count(time_filter)
         hours = (datetime.now() - time_filter).total_seconds() / 3600
         
-        if hours == 0:
+        if hours < 0.0001:  # Avoid division by zero or near-zero
             return 0.0
         
         return total_tasks / hours
@@ -332,7 +332,7 @@ class PredictiveAnalytics(AnalyticsEngine):
         # Get historical data
         historical_data = self._get_historical_data(metric, horizon_hours * 7)  # Use 7x horizon for training
         
-        if len(historical_data) < 10:  # Need minimum data points
+        if len(historical_data.values) < 10:  # Need minimum data points
             return PredictionResult(
                 prediction=0.0,
                 lower_bound=0.0,
@@ -1070,3 +1070,8 @@ async def update_analytics_cache():
     # This would be called by a scheduler to keep analytics data fresh
     logger.info("Updating analytics cache...")
     # Implementation would depend on the scheduling system used
+
+
+def register_analytics_routes(app):
+    """Register analytics routes with the FastAPI application."""
+    app.include_router(router)
