@@ -3390,6 +3390,103 @@ async def decide_threshold_petition(
         db.close()
 
 
+# =============================================================================
+# AUTO-THRESHOLD ENDPOINTS (Issue #99)
+# =============================================================================
+
+
+@app.post("/api/v1/confidence/auto-threshold/evaluate", response_model=dict)
+async def evaluate_auto_threshold():
+    """
+    Evaluate auto-threshold criteria and create petition if met.
+
+    Manually trigger evaluation of auto-threshold increase criteria.
+    If criteria are met, a petition will be created automatically.
+
+    Response:
+        - status: Evaluation status
+        - petition: Created petition (if criteria met)
+        - evaluation: Performance evaluation results
+        - message: Description of result
+    """
+    from src.agent_execution.auto_threshold import get_auto_threshold_manager
+
+    manager = get_auto_threshold_manager()
+    result = manager.evaluate_and_petition()
+
+    return result
+
+
+@app.post(
+    "/api/v1/confidence/auto-threshold/rollback/{petition_id}", response_model=dict
+)
+async def rollback_auto_threshold(
+    petition_id: str,
+    reasoning: str,
+):
+    """
+    Roll back an auto-increased threshold.
+
+    Allows human operator to undo an auto-threshold increase
+    if it was incorrect.
+
+    Args:
+        petition_id: ID of the petition to rollback
+        reasoning: Reason for rollback
+
+    Response:
+        - success: Boolean indicating if rollback succeeded
+        - message: Confirmation message
+    """
+    from src.agent_execution.auto_threshold import get_auto_threshold_manager
+
+    manager = get_auto_threshold_manager()
+    success = manager.rollback_auto_increase(petition_id, reasoning)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to rollback auto-threshold")
+
+    return {
+        "success": True,
+        "message": f"Auto-threshold increase rolled back for petition {petition_id}",
+    }
+
+
+@app.get("/api/v1/confidence/auto-threshold/status", response_model=dict)
+async def get_auto_threshold_status():
+    """
+    Get auto-threshold configuration and status.
+
+    Returns current configuration and recent evaluation status.
+
+    Response:
+        - enabled: Whether auto-threshold is enabled
+        - win_rate_threshold: Win rate threshold percentage
+        - profit_margin_threshold: Profit margin threshold in dollars
+        - consecutive_periods: Consecutive periods required
+        - last_evaluation: Last evaluation timestamp
+    """
+    from src.config.config_manager import ConfigManager
+
+    return {
+        "enabled": ConfigManager.get("AUTO_THRESHOLD_INCREASE", True),
+        "win_rate_threshold": ConfigManager.get(
+            "AUTO_THRESHOLD_WIN_RATE_THRESHOLD", 70
+        ),
+        "profit_margin_threshold_dollars": ConfigManager.get(
+            "AUTO_THRESHOLD_PROFIT_MARGIN_THRESHOLD", 50
+        )
+        / 100,
+        "profit_margin_threshold_cents": ConfigManager.get(
+            "AUTO_THRESHOLD_PROFIT_MARGIN_THRESHOLD", 50
+        ),
+        "consecutive_periods": ConfigManager.get(
+            "AUTO_THRESHOLD_CONSECUTIVE_PERIODS", 4
+        ),
+        "weekly_petition_day": ConfigManager.get("WEEKLY_PETITION_DAY", "monday"),
+    }
+
+
 # Register scheduler routes
 register_scheduler_routes(app)
 register_analytics_routes(app)
