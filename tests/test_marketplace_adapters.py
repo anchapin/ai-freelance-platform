@@ -6,12 +6,8 @@ with the main agent_execution module.
 """
 
 import pytest
-import asyncio
 import sys
-from datetime import datetime
-from typing import List
-from unittest.mock import Mock, AsyncMock, patch
-import httpx
+from unittest.mock import AsyncMock
 import os
 
 # Add src to path for direct imports
@@ -19,15 +15,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Import directly from base module to avoid circular imports
 from src.agent_execution.marketplace_adapters.base import (
-    MarketplaceAdapter,
     SearchQuery,
     SearchResult,
     BidProposal,
     BidStatus,
-    BidStatusUpdate,
-    PlacedBid,
     PricingModel,
-    InboxMessage,
     MarketplaceError,
     AuthenticationError,
     RateLimitError,

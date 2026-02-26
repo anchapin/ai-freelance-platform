@@ -11,15 +11,11 @@ Tests the complete payment processing workflow:
 Coverage: ~15% of critical path
 """
 
-import pytest
-import json
-from unittest.mock import AsyncMock, patch, Mock
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-import hmac
 import hashlib
 
-from src.api.models import Task, TaskStatus
+from src.api.models import TaskStatus
 from .utils import (
     create_test_task,
     simulate_payment_success,
@@ -105,7 +101,6 @@ class TestPaymentVerification:
     def test_verify_webhook_signature(self, mock_stripe_webhook_payload, mock_stripe_signature):
         """Test verifying Stripe webhook signature."""
         # In production, use actual Stripe signing secret
-        signing_secret = "whsec_test_secret_123"
         
         # Create mock signature verification
         def verify_signature(payload_str, signature, secret):
@@ -174,7 +169,7 @@ class TestPaymentProcessing:
         )
         
         # Simulate payment success webhook
-        webhook = simulate_payment_success(task, amount=task.amount_paid)
+        simulate_payment_success(task, amount=task.amount_paid)
         
         # Update task status
         task.status = TaskStatus.PAID
@@ -186,7 +181,7 @@ class TestPaymentProcessing:
         """Test processing failed payment webhook."""
         task = create_test_task(e2e_db, status=TaskStatus.PENDING)
         
-        webhook = simulate_payment_failure(task)
+        simulate_payment_failure(task)
         
         # Task should remain PENDING
         assert_task_in_state(task, TaskStatus.PENDING)
@@ -315,10 +310,10 @@ class TestPaymentRetry:
         task = create_test_task(e2e_db, status=TaskStatus.PENDING)
         
         # First attempt fails
-        webhook1 = simulate_payment_failure(task)
+        simulate_payment_failure(task)
         
         # Retry
-        webhook2 = simulate_payment_success(task)
+        simulate_payment_success(task)
         
         # After success, update status
         task.status = TaskStatus.PAID

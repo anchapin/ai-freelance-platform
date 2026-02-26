@@ -12,9 +12,8 @@ Provides:
 
 import time
 import redis
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional, Dict, Tuple
-import json
 import logging
 
 from sqlalchemy.orm import Session

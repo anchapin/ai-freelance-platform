@@ -12,7 +12,7 @@ import time as _time
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator, ValidationInfo, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, Any
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError
 import stripe
@@ -26,6 +26,7 @@ from .models import (
     ArenaCompetition,
     ArenaCompetitionStatus,
     EscalationLog,
+    WebhookSecret,
 )
 from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
@@ -37,7 +38,7 @@ from ..utils.logger import get_logger
 from ..config.config_manager import ConfigManager
 
 # Import file validation utility (Issue #34)
-from ..utils.file_validator import validate_file_upload, MAX_FILE_SIZE_BYTES
+from ..utils.file_validator import validate_file_upload
 
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
@@ -86,7 +87,6 @@ from ..agent_execution.arena import (
 )
 
 # Import Scheduler modules
-from ..agent_execution.scheduler import TaskScheduler
 from .scheduler_endpoints import register_scheduler_routes
 from .analytics import register_analytics_routes
 
@@ -1447,7 +1447,7 @@ async def stripe_webhook(
     payload = await request.body()
 
     # Get all active webhook secrets from the database
-    secrets = db.query(WebhookSecret).filter(WebhookSecret.is_active == True).all()
+    secrets = db.query(WebhookSecret).filter(WebhookSecret.is_active).all()
 
     event = None
     for secret in secrets:
@@ -2927,6 +2927,167 @@ async def get_confidence_history(
 
     tracker = get_confidence_tracker()
     return tracker.get_recent_history(limit=limit, threshold=threshold)
+
+
+# =============================================================================
+# SIMULATION ENGINE ENDPOINTS (Issues #89, #91)
+# =============================================================================
+
+
+@app.get("/api/v1/simulation/profit", response_model=dict)
+async def get_simulation_profit(
+    strategy_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Get total simulated profit/loss.
+
+    Calculates total profit/loss based on simulated outcomes.
+    Can filter by strategy type and date range.
+
+    Args:
+        strategy_type: Filter by strategy type (aggressive, conservative, balanced)
+        start_date: Start date for filter (YYYY-MM-DD)
+        end_date: End date for filter (YYYY-MM-DD)
+
+    Response:
+        - total_profit_dollars: Total profit/loss
+        - total_bids: Number of bids
+        - wins: Number of wins
+        - losses: Number of losses
+        - win_rate_percentage: Win rate percentage
+        - average_bid_dollars: Average bid amount
+    """
+    from src.agent_execution.simulation_engine import get_simulation_engine
+
+    engine = get_simulation_engine()
+    date_filter = {}
+    if start_date or end_date:
+        if start_date:
+            date_filter["start"] = start_date
+        if end_date:
+            date_filter["end"] = end_date
+
+    return engine.calculate_total_profit(
+        strategy_type=strategy_type, date_filter=date_filter if date_filter else None
+    )
+
+
+@app.get("/api/v1/simulation/compare", response_model=dict)
+async def compare_simulation_strategies(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Compare performance of different bidding strategies.
+
+    Compares aggressive, conservative, and balanced strategies.
+
+    Args:
+        start_date: Start date for filter (YYYY-MM-DD)
+        end_date: End date for filter (YYYY-MM-DD)
+
+    Response:
+        - strategies: Dictionary with stats per strategy
+        - best_strategy: Name of best performing strategy
+        - best_win_rate: Win rate of best strategy
+        - best_profit_dollars: Profit of best strategy
+        - insights: List of insights
+    """
+    from src.agent_execution.simulation_engine import get_simulation_engine
+
+    engine = get_simulation_engine()
+    date_filter = {}
+    if start_date or end_date:
+        if start_date:
+            date_filter["start"] = start_date
+        if end_date:
+            date_filter["end"] = end_date
+
+    return engine.compare_strategies(date_filter=date_filter if date_filter else None)
+
+
+@app.get("/api/v1/simulation/strategy", response_model=dict)
+async def get_simulation_strategy_summary(
+    strategy_type: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Get performance summary for a specific strategy.
+
+    Returns detailed statistics for a given bidding strategy.
+
+    Args:
+        strategy_type: Strategy type (aggressive, conservative, balanced)
+        start_date: Start date for filter (YYYY-MM-DD)
+        end_date: End date for filter (YYYY-MM-DD)
+
+    Response:
+        - strategy_type: Strategy name
+        - win_rate_percentage: Win rate
+        - total_profit_dollars: Total profit
+        - total_bids: Number of bids
+        - wins: Number of wins
+        - losses: Number of losses
+        - average_bid_dollars: Average bid amount
+    """
+    from src.agent_execution.simulation_engine import get_simulation_engine
+
+    if strategy_type not in ["aggressive", "conservative", "balanced"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid strategy type. Must be one of: aggressive, conservative, balanced",
+        )
+
+    engine = get_simulation_engine()
+    date_filter = {}
+    if start_date or end_date:
+        if start_date:
+            date_filter["start"] = start_date
+        if end_date:
+            date_filter["end"] = end_date
+
+    return engine.get_strategy_summary(
+        strategy_type=strategy_type, date_filter=date_filter if date_filter else None
+    )
+
+
+@app.get("/api/v1/simulation/history", response_model=list)
+async def get_simulation_history(
+    limit: int = 100,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Get recent simulation bid history.
+
+    Returns recent simulation bids for review and analysis.
+
+    Args:
+        limit: Maximum number of simulations to return
+        start_date: Start date for filter (YYYY-MM-DD)
+        end_date: End date for filter (YYYY-MM-DD)
+
+    Response:
+        - List of simulation bid entries
+    """
+    from src.agent_execution.simulation_engine import get_simulation_engine
+
+    engine = get_simulation_engine()
+    date_filter = {}
+    if start_date or end_date:
+        if start_date:
+            date_filter["start"] = start_date
+        if end_date:
+            date_filter["end"] = end_date
+
+    simulations = engine.get_recent_simulations(
+        limit=limit, date_filter=date_filter if date_filter else None
+    )
+
+    return [sim.to_dict() for sim in simulations]
 
 
 # Register scheduler routes

@@ -9,8 +9,6 @@ import os
 import json
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 import logging
 
 logger = logging.getLogger(__name__)

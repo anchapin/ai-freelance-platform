@@ -5,7 +5,6 @@ Implements marketplace adapter for Upwork platform.
 Handles job searching, proposal placement, and contract management.
 """
 
-import asyncio
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import httpx

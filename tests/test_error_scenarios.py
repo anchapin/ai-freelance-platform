@@ -13,9 +13,8 @@ These tests ensure system resilience and proper error recovery.
 
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta
-from typing import Optional
+from unittest.mock import Mock
+from datetime import datetime
 
 from src.agent_execution.errors import (
     NetworkError,
@@ -129,7 +128,7 @@ def mock_circuit_breaker(monkeypatch):
                 result = func(*args, **kwargs)
                 self.record_success()
                 return result
-            except Exception as e:
+            except Exception:
                 self.record_failure()
                 raise
     
@@ -383,9 +382,9 @@ class TestMultiStepWorkflowFailures:
         
         with pytest.raises(ValidationError):
             try:
-                result1 = step(1)
-                result2 = step(2)
-                result3 = step(3)  # Fails here
+                step(1)
+                step(2)
+                step(3)  # Fails here
             except ValidationError:
                 # Rollback in reverse order
                 undo_step(2)
@@ -511,7 +510,7 @@ class TestCascadeFailuresAcrossServices:
         with pytest.raises(NetworkError):
             result_a = service_a()
             result_b = service_b(result_a)
-            result_c = service_c(result_b)
+            service_c(result_b)
         
         assert call_log == ["A", "B", "C_failed"]
 
@@ -848,7 +847,7 @@ class TestErrorHandlingIntegration:
             for attempt in range(max_retries):
                 try:
                     return await unreliable_task()
-                except TransientError as e:
+                except TransientError:
                     if attempt == max_retries - 1:
                         raise
                     await asyncio.sleep(0.01)
@@ -893,7 +892,6 @@ class TestErrorHandlingIntegration:
         import concurrent.futures
         
         results = []
-        errors = []
         
         def operation(op_id, should_fail=False):
             try:

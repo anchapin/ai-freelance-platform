@@ -136,7 +136,7 @@ class FineTuningCLI:
             output_model_name: Name for fine-tuned model
             num_epochs: Number of epochs
         """
-        print(f"Generating Ollama fine-tuning script...")
+        print("Generating Ollama fine-tuning script...")
 
         tuner = OllamaFineTuner()
 
@@ -149,7 +149,7 @@ class FineTuningCLI:
         )
 
         print(f"✓ Script generated: {script_path}")
-        print(f"\nTo run fine-tuning:")
+        print("\nTo run fine-tuning:")
         print(f"  python {script_path}")
 
     def evaluate_model(
@@ -194,7 +194,7 @@ class FineTuningCLI:
             cost_per_inference=cost_per_inference,
         )
 
-        print(f"✓ Evaluation complete")
+        print("✓ Evaluation complete")
         print(f"  Accuracy: {result.accuracy:.2%}")
         print(f"  Latency: {result.avg_latency_ms:.2f}ms")
         print(f"  Cost per inference: ${result.cost_per_inference:.6f}")

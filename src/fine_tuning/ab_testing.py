@@ -6,7 +6,7 @@ Compare fine-tuned models against base models in production.
 
 import json
 from dataclasses import dataclass, asdict
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 from enum import Enum
 import logging

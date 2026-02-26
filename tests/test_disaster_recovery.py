@@ -11,10 +11,8 @@ import tempfile
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
+from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
 
 from src.api.disaster_recovery import (
     DisasterRecoveryAPI,
@@ -37,7 +35,6 @@ from src.disaster_recovery import (
     RecoveryOperation
 )
 from src.config import Config
-from src.utils.logger import get_logger
 
 
 class TestBackupManager:
@@ -896,7 +893,7 @@ class TestDisasterRecoveryErrorHandling:
         recovery_manager = RecoveryManager(mock_config, mock_backup_manager)
         
         # Mock backup metadata
-        backup_metadata = BackupMetadata(
+        BackupMetadata(
             backup_id="test_backup",
             backup_type=BackupType.FULL,
             timestamp=datetime.now(),
@@ -912,7 +909,7 @@ class TestDisasterRecoveryErrorHandling:
         )
         
         # Mock plan
-        plan = RecoveryPlan(
+        RecoveryPlan(
             plan_id="default",
             name="Default Plan",
             description="Test plan",

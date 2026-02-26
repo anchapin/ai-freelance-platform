@@ -17,7 +17,7 @@ import os
 import base64
 import json
 import re
-from typing import Optional, List, Any, Dict, Union
+from typing import Optional, List, Any
 from datetime import datetime
 
 # Import error categorization (Issue #37)

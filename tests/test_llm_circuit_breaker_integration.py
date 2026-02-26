@@ -6,11 +6,10 @@ including fallback behavior, exponential backoff, and health checking.
 """
 
 import pytest
-import asyncio
 from unittest.mock import patch, MagicMock
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from src.llm_service import LLMService, ModelConfig
+from src.llm_service import LLMService
 from src.llm_health_check import (
     get_health_checker,
     CircuitBreakerError,

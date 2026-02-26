@@ -266,20 +266,20 @@ def get_usage_analytics(
     
     # Total quotas exceeded
     total_quotas_exceeded = db.query(QuotaUsage).filter(
-        QuotaUsage.quota_exceeded == True,
+        QuotaUsage.quota_exceeded,
         QuotaUsage.billing_month == current_month,
     ).count()
     
     # Rate limit violations last 24h
     cutoff_time = datetime.utcnow() - timedelta(hours=24)
     rate_limit_violations_24h = db.query(RateLimitLog).filter(
-        RateLimitLog.exceeded == True,
+        RateLimitLog.exceeded,
         RateLimitLog.timestamp >= cutoff_time,
     ).count()
     
     # Quota exceeded alerts last 24h
     quota_alerts_24h = db.query(RateLimitLog).filter(
-        RateLimitLog.quota_exceeded == True,
+        RateLimitLog.quota_exceeded,
         RateLimitLog.timestamp >= cutoff_time,
     ).count()
     

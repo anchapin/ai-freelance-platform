@@ -25,11 +25,9 @@ from sqlalchemy import (
     DateTime,
     Index,
 )
-from sqlalchemy.orm import declarative_base
 
-from .database import SessionLocal
+from ..api.database import SessionLocal
 from ..api.models import Base
-from ..config.config_manager import ConfigManager
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)

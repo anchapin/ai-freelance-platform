@@ -15,8 +15,7 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional
 
 from src.api.models import (
-    Task, TaskStatus, Bid, BidStatus, ArenaCompetition,
-    ArenaCompetitionStatus, ClientProfile
+    Task, TaskStatus, Bid, BidStatus, ClientProfile
 )
 
 
