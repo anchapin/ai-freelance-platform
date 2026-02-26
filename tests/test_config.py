@@ -7,6 +7,7 @@ Issue #27: Configuration audit and validation
 import os
 import pytest
 from src.config import (
+    ConfigManager,
     validate_critical_env_vars,
     get_all_configured_env_vars,
     validate_urls,
@@ -19,6 +20,14 @@ from src.config import (
     is_debug,
     should_use_redis_locks,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_config_cache():
+    """Reset ConfigManager cache before each test."""
+    ConfigManager.reset_instance()
+    yield
+    ConfigManager.reset_instance()
 
 
 class TestValidationCriticalEnvVars:
@@ -65,6 +74,7 @@ class TestValidationCriticalEnvVars:
         monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_key")
         monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
         monkeypatch.setenv("DATABASE_URL", "sqlite:///./data/tasks.db")
+        monkeypatch.setenv("CLIENT_AUTH_SECRET", "secure-test-secret-1234567890")
 
         # Should not raise
         validate_critical_env_vars()

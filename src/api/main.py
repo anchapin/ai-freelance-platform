@@ -23,6 +23,9 @@ from .experience_logger import experience_logger
 # Import logging module
 from ..utils.logger import get_logger
 
+# Import Config Manager (Issue #26)
+from ..config.config_manager import ConfigManager
+
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
 
@@ -83,23 +86,23 @@ except ImportError:
 # ESCALATION & HUMAN-IN-THE-LOOP (HITL) CONFIGURATION (Pillar 1.7)
 # =============================================================================
 
-# High-value threshold for profit protection (in dollars)
+# High-value threshold for profit protection (in dollars) (Issue #26: Magic Number)
 # Tasks with amount_paid >= HIGH_VALUE_THRESHOLD will always be escalated on failure
-HIGH_VALUE_THRESHOLD = 200
+HIGH_VALUE_THRESHOLD = ConfigManager.get("HIGH_VALUE_THRESHOLD")
 
 # Maximum number of retry attempts before escalation (matches executor.py)
-MAX_RETRY_ATTEMPTS = 3
+MAX_RETRY_ATTEMPTS = ConfigManager.get("MAX_RETRY_ATTEMPTS")
 
 # =============================================================================
 # DELIVERY ENDPOINT SECURITY (Issue #18)
 # =============================================================================
 
 # Delivery token TTL in hours (configurable via env)
-DELIVERY_TOKEN_TTL_HOURS = int(os.environ.get("DELIVERY_TOKEN_TTL_HOURS", "72"))
+DELIVERY_TOKEN_TTL_HOURS = ConfigManager.get("DELIVERY_TOKEN_TTL_HOURS")
 
 # Rate limiting: max failed delivery attempts per task before lockout
-DELIVERY_MAX_FAILED_ATTEMPTS = int(os.environ.get("DELIVERY_MAX_FAILED_ATTEMPTS", "5"))
-DELIVERY_LOCKOUT_SECONDS = int(os.environ.get("DELIVERY_LOCKOUT_SECONDS", "3600"))
+DELIVERY_MAX_FAILED_ATTEMPTS = ConfigManager.get("DELIVERY_MAX_FAILED_ATTEMPTS")
+DELIVERY_LOCKOUT_SECONDS = ConfigManager.get("DELIVERY_LOCKOUT_SECONDS")
 
 # In-memory rate limiter: { task_id: (fail_count, first_fail_timestamp) }
 _delivery_rate_limits: dict[str, tuple[int, float]] = {}
@@ -1849,9 +1852,9 @@ async def get_arena_stats(db: Session = Depends(get_db)):
 
 # Autonomous loop configuration
 AUTONOMOUS_SCAN_ENABLED = os.environ.get("AUTONOMOUS_SCAN_ENABLED", "false").lower() == "true"
-AUTONOMOUS_SCAN_INTERVAL_MIN = 15  # minutes
-AUTONOMOUS_SCAN_INTERVAL_MAX = 30  # minutes
-AUTONOMOUS_MIN_BID_THRESHOLD = 30  # Minimum bid amount in dollars to consider
+AUTONOMOUS_SCAN_INTERVAL_MIN = ConfigManager.get("MARKET_SCAN_INTERVAL") // 60
+AUTONOMOUS_SCAN_INTERVAL_MAX = (ConfigManager.get("MARKET_SCAN_INTERVAL") // 60) * 2
+AUTONOMOUS_MIN_BID_THRESHOLD = ConfigManager.get("MIN_BID_THRESHOLD")
 
 
 async def generate_proposal(job_title: str, job_description: str, bid_amount: int) -> str:
