@@ -37,7 +37,7 @@ except ImportError:
 # Try to import Playwright
 try:
     from playwright.async_api import async_playwright
-
+    from .browser_pool import get_browser_pool
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -459,85 +459,89 @@ class MarketplaceDiscovery:
         page = None
 
         try:
-            # Use async context manager for playwright - ensures proper cleanup
-            async with async_playwright() as playwright:
-                # Launch browser with proper resource management
-                browser = await playwright.chromium.launch(headless=True)
+            # Use BrowserPool instead of launching new browser (Issue #4)
+            pool = get_browser_pool()
+            # Ensure pool is started
+            try:
+                await pool.start()
+            except Exception:
+                pass
+                
+            browser = await pool.acquire_browser()
+
+            try:
+                # Create page
+                page = await browser.new_page()
 
                 try:
-                    # Create page within try block for automatic cleanup
-                    page = await browser.new_page()
+                    # Navigate to marketplace with timeout
+                    response = await page.goto(
+                        url, wait_until="domcontentloaded", timeout=timeout * 1000
+                    )
 
-                    try:
-                        # Navigate to marketplace with timeout
-                        response = await page.goto(
-                            url, wait_until="domcontentloaded", timeout=timeout * 1000
-                        )
-
-                        if not response or response.status >= 400:
-                            return {
-                                "url": url,
-                                "accessible": False,
-                                "job_count": 0,
-                                "avg_budget": 0,
-                                "status_code": response.status if response else None,
-                            }
-
-                        # Try to count job listings
-                        job_elements = await page.query_selector_all(
-                            [
-                                ".job-listing",
-                                ".job-card",
-                                ".project-card",
-                                "[data-testid='job-post']",
-                                ".listing-item",
-                                "article.job",
-                            ]
-                        )
-
-                        job_count = len(job_elements) if job_elements else 0
-
-                        return {
-                            "url": url,
-                            "accessible": True,
-                            "job_count": job_count,
-                            "avg_budget": 0,  # Would be calculated from actual job data
-                            "evaluated_at": datetime.now().isoformat(),
-                        }
-
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Marketplace evaluation timeout for {url}")
+                    if not response or response.status >= 400:
                         return {
                             "url": url,
                             "accessible": False,
                             "job_count": 0,
                             "avg_budget": 0,
-                            "error": "Page load timeout",
+                            "status_code": response.status if response else None,
                         }
 
-                    except Exception as e:
-                        logger.warning(f"Failed to evaluate marketplace {url}: {e}")
-                        return {
-                            "url": url,
-                            "accessible": False,
-                            "job_count": 0,
-                            "avg_budget": 0,
-                            "error": str(e),
-                        }
+                    # Try to count job listings
+                    job_elements = await page.query_selector_all(
+                        [
+                            ".job-listing",
+                            ".job-card",
+                            ".project-card",
+                            "[data-testid='job-post']",
+                            ".listing-item",
+                            "article.job",
+                        ]
+                    )
 
-                    finally:
-                        # Explicitly close page - async context manager will handle playwright
-                        try:
-                            await page.close()
-                        except Exception as e:
-                            logger.warning(f"Error closing page for {url}: {e}")
+                    job_count = len(job_elements) if job_elements else 0
+
+                    return {
+                        "url": url,
+                        "accessible": True,
+                        "job_count": job_count,
+                        "avg_budget": 0,  # Would be calculated from actual job data
+                        "evaluated_at": datetime.now().isoformat(),
+                    }
+
+                except asyncio.TimeoutError:
+                    logger.warning(f"Marketplace evaluation timeout for {url}")
+                    return {
+                        "url": url,
+                        "accessible": False,
+                        "job_count": 0,
+                        "avg_budget": 0,
+                        "error": "Page load timeout",
+                    }
+
+                except Exception as e:
+                    logger.warning(f"Failed to evaluate marketplace {url}: {e}")
+                    return {
+                        "url": url,
+                        "accessible": False,
+                        "job_count": 0,
+                        "avg_budget": 0,
+                        "error": str(e),
+                    }
 
                 finally:
-                    # Explicitly close browser - async context manager will handle playwright
+                    # Explicitly close page
                     try:
-                        await browser.close()
+                        await page.close()
                     except Exception as e:
-                        logger.warning(f"Error closing browser for {url}: {e}")
+                        logger.warning(f"Error closing page for {url}: {e}")
+
+            finally:
+                # Release browser back to pool instead of closing (Issue #4)
+                if browser:
+                    pool = get_browser_pool()
+                    await pool.release_browser(browser)
 
         except Exception as e:
             logger.error(f"Marketplace evaluation error: {e}")

@@ -32,29 +32,26 @@ class TestMarketplaceDiscoveryCleanup:
         import inspect
         source = inspect.getsource(discovery.evaluate_marketplace)
         
-        # Check for async context manager usage
-        assert "async with async_playwright()" in source
+        # Check for BrowserPool usage (Issue #4)
+        assert "get_browser_pool()" in source
+        assert "pool.acquire_browser()" in source
     
     @pytest.mark.asyncio
     async def test_evaluate_marketplace_cleanup_on_error(self):
         """Test cleanup happens even when evaluation fails."""
         discovery = MarketplaceDiscovery()
         
-        # The marketplace_discovery.py now uses async with
-        # which should cleanup automatically
-        # This test verifies the code pattern uses async context managers
+        # The marketplace_discovery.py now uses BrowserPool
+        # which should release resources back to the pool
         
         # Check that the method has proper exception handling
         import inspect
         source = inspect.getsource(discovery.evaluate_marketplace)
         
-        # Verify async with is used (async with handles cleanup automatically)
-        # No need to check for finally: blocks since async context managers
-        # handle resource cleanup on exit (exception or normal path)
-        assert "async with" in source or "try:" in source
-        # Either has async with for playwright, or try/except for error handling
-        assert ("async_playwright" in source or "playwright" in source or 
-                "try:" in source)
+        # Verify proper cleanup patterns are used
+        assert "try:" in source
+        assert "finally:" in source
+        assert "pool.release_browser" in source or "release_browser" in source
 
 
 @pytest.mark.skipif(
@@ -219,17 +216,18 @@ class TestContextManagerCleanup:
     
     @pytest.mark.skip(reason="Implementation may vary - patterns can differ")
     def test_marketplace_discovery_context_pattern(self):
-        """Test marketplace_discovery uses proper context manager pattern."""
+        """Test marketplace_discovery uses proper resource management pattern."""
         from src.agent_execution.marketplace_discovery import MarketplaceDiscovery
         import inspect
         
         source = inspect.getsource(MarketplaceDiscovery.evaluate_marketplace)
         
-        # Check for proper patterns
-        assert "async with async_playwright()" in source
+        # Check for proper patterns (Issue #4)
+        assert "get_browser_pool()" in source
+        assert "acquire_browser" in source
         assert "finally:" in source
         assert "await page.close()" in source
-        assert "await browser.close()" in source
+        assert "release_browser" in source
         assert "asyncio.TimeoutError" in source
 
 

@@ -17,7 +17,7 @@ import os
 import base64
 import json
 import re
-from typing import Optional
+from typing import Optional, List, Any, Dict, Union
 from datetime import datetime
 
 # Import error categorization (Issue #37)
@@ -307,6 +307,7 @@ class TaskRouter:
         csv_data: str,
         task_type: Optional[str] = None,
         output_format: Optional[str] = None,
+        few_shot_examples: Optional[List[Any]] = None,
         **kwargs,
     ) -> dict:
         """
@@ -318,6 +319,7 @@ class TaskRouter:
             csv_data: CSV data as string
             task_type: Optional explicit task type
             output_format: Optional explicit output format
+            few_shot_examples: Pre-fetched few-shot examples (Issue #6)
             **kwargs: Additional arguments passed to handler
 
         Returns:
@@ -380,7 +382,12 @@ class TaskRouter:
             )
 
     def _handle_visualization(
-        self, domain: str, user_request: str, csv_data: str, **kwargs
+        self, 
+        domain: str, 
+        user_request: str, 
+        csv_data: str, 
+        few_shot_examples: Optional[List[Any]] = None,
+        **kwargs
     ) -> dict:
         """
         Handle visualization tasks (default behavior).
@@ -389,6 +396,7 @@ class TaskRouter:
             domain: The domain
             user_request: The user's request
             csv_data: CSV data
+            few_shot_examples: Pre-fetched few-shot examples (Issue #6)
             **kwargs: Additional arguments
 
         Returns:
@@ -396,7 +404,11 @@ class TaskRouter:
         """
         # Delegate to existing execute_data_visualization function
         return execute_data_visualization(
-            csv_data=csv_data, user_request=user_request, domain=domain, **kwargs
+            csv_data=csv_data, 
+            user_request=user_request, 
+            domain=domain, 
+            few_shot_examples=few_shot_examples,
+            **kwargs
         )
 
     def _handle_report_generation(
@@ -1064,6 +1076,7 @@ def execute_task(
     csv_data: str,
     task_type: Optional[str] = None,
     output_format: Optional[str] = None,
+    few_shot_examples: Optional[List[Any]] = None,
     **kwargs,
 ) -> dict:
     """
@@ -1078,6 +1091,7 @@ def execute_task(
         csv_data: CSV data as string
         task_type: Optional explicit task type (visualization, document, spreadsheet)
         output_format: Optional explicit output format (image, docx, xlsx, pdf)
+        few_shot_examples: Pre-fetched few-shot examples (Issue #6)
         **kwargs: Additional arguments passed to handler
 
     Returns:
@@ -1090,6 +1104,7 @@ def execute_task(
         csv_data=csv_data,
         task_type=task_type,
         output_format=output_format,
+        few_shot_examples=few_shot_examples,
         **kwargs,
     )
 
@@ -2307,7 +2322,10 @@ class AIResponseGenerator:
     """
 
     def __init__(
-        self, llm_service: Optional[LLMService] = None, domain: Optional[str] = None
+        self, 
+        llm_service: Optional[LLMService] = None, 
+        domain: Optional[str] = None,
+        few_shot_examples: Optional[List[Any]] = None
     ):
         """
         Initialize the AI response generator.
@@ -2317,10 +2335,12 @@ class AIResponseGenerator:
                         creates one with default settings.
             domain: Optional domain for selecting specialized system prompt
                     (legal, accounting, or data_analysis/default)
+            few_shot_examples: Optional pre-fetched few-shot examples (Issue #6 Decoupling)
         """
         self.llm = llm_service or LLMService()
         self.domain = domain
         self.enable_few_shot = EXPERIENCE_DB_AVAILABLE
+        self.prefetched_examples = few_shot_examples
 
     def _get_few_shot_system_prompt(
         self, base_system_prompt: str, user_request: str, domain: str
@@ -2340,7 +2360,14 @@ class AIResponseGenerator:
             return base_system_prompt
 
         try:
-            # Try to build few-shot system prompt
+            # Use prefetched examples if available (Issue #6 Decoupling)
+            if self.prefetched_examples is not None:
+                return build_few_shot_system_prompt(
+                    base_system_prompt=base_system_prompt,
+                    examples=self.prefetched_examples
+                )
+
+            # Fall back to synchronous query if no prefetched examples
             enhanced_prompt = build_few_shot_system_prompt(
                 base_system_prompt=base_system_prompt,
                 user_request=user_request,
@@ -3040,6 +3067,7 @@ def execute_data_visualization(
     file_content: Optional[str] = None,
     filename: Optional[str] = None,
     force_cloud: bool = False,
+    few_shot_examples: Optional[List[Any]] = None,
 ) -> dict:
     """
     Execute data visualization in a secure E2B sandbox with retry logic
@@ -3069,6 +3097,7 @@ def execute_data_visualization(
         file_content: Base64-encoded file content (alternative to csv_data)
         filename: Original filename for detecting file type
         force_cloud: Force using cloud model even for basic tasks (default: False)
+        few_shot_examples: Pre-fetched few-shot examples (Issue #6)
 
     Returns:
         Dictionary containing:
@@ -3137,8 +3166,12 @@ def execute_data_visualization(
     )
 
     # Generate visualization code using LLM with domain-specific prompts
-    # Now includes file_type information
-    ai_generator = AIResponseGenerator(effective_llm, domain=domain)
+    # Now includes file_type information and prefetched examples (Issue #6)
+    ai_generator = AIResponseGenerator(
+        effective_llm, 
+        domain=domain, 
+        few_shot_examples=few_shot_examples
+    )
     llm_result = ai_generator.generate_visualization_code(
         csv_headers, user_request, domain=domain, file_type=effective_file_type
     )

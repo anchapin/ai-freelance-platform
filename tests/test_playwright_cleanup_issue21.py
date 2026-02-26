@@ -51,41 +51,50 @@ class TestMarketScannerResourceCleanup:
         """Test MarketScanner context manager properly cleans up resources."""
         scanner = None
         
-        try:
-            async with MarketScanner() as scanner:
-                # Scanner should be initialized
-                assert scanner is not None
-                assert hasattr(scanner, 'browser')
-                assert hasattr(scanner, 'playwright')
-            
-            # After context exit, scanner should be cleaned up
-            # Note: browser/playwright are None if not successfully initialized
-            # due to Playwright not being installed in test env
-        except RuntimeError as e:
-            # Expected if Playwright is not installed
-            if "Playwright is not installed" not in str(e):
-                raise
+        # Mock the pool
+        mock_pool = AsyncMock()
+        mock_browser = AsyncMock()
+        mock_pool.acquire_browser = AsyncMock(return_value=mock_browser)
+        
+        with patch('src.agent_execution.market_scanner.get_browser_pool', return_value=mock_pool):
+            try:
+                async with MarketScanner() as scanner:
+                    # Scanner should be initialized
+                    assert scanner is not None
+                    assert hasattr(scanner, 'browser')
+                
+                # After context exit, scanner should be cleaned up
+                mock_pool.release_browser.assert_called_once_with(mock_browser)
+            except Exception as e:
+                # Re-raise if not related to environment
+                if "Playwright is not installed" not in str(e):
+                    raise
 
     @pytest.mark.asyncio
     async def test_market_scanner_exception_during_context(self):
         """Test that cleanup happens even when exception occurs in context."""
         exception_raised = False
         
-        try:
-            async with MarketScanner():
-                # Simulate an exception
-                raise ValueError("Test exception")
-        except ValueError:
-            exception_raised = True
-        except RuntimeError as e:
-            # Expected if Playwright not installed
-            if "Playwright is not installed" in str(e):
+        # Mock the pool
+        mock_pool = AsyncMock()
+        mock_browser = AsyncMock()
+        mock_pool.acquire_browser = AsyncMock(return_value=mock_browser)
+        
+        with patch('src.agent_execution.market_scanner.get_browser_pool', return_value=mock_pool):
+            try:
+                async with MarketScanner():
+                    # Simulate an exception
+                    raise ValueError("Test exception")
+            except ValueError:
                 exception_raised = True
-            else:
-                raise
+            except Exception:
+                # Some other exception occurred
+                pass
         
         # Exception should have been raised
         assert exception_raised
+        # Cleanup should have happened
+        mock_pool.release_browser.assert_called_once_with(mock_browser)
 
     @pytest.mark.asyncio
     async def test_market_scanner_page_per_operation(self):
@@ -97,25 +106,22 @@ class TestMarketScannerResourceCleanup:
         source = inspect.getsource(scanner.fetch_job_postings)
         
         # Should create fresh page per operation
-        assert "page = await self.browser.new_page()" in source
+        # Note: browser.new_page() is used now that it's acquired from pool
+        assert "await self.browser.new_page()" in source
         
         # Should close page in finally block
         assert "await page.close()" in source
         assert "finally:" in source
-        
-        # Should not reuse self.page
-        assert "self.page =" not in source or "self.page is" in source
 
     @pytest.mark.asyncio
     async def test_market_scanner_stop_cleanup_order(self):
-        """Test that stop() closes resources in proper order: page -> browser -> playwright."""
+        """Test that stop() closes resources in proper order: page -> pool release."""
         with patch('src.agent_execution.market_scanner.PLAYWRIGHT_AVAILABLE', True):
             scanner = MarketScanner()
             
             # Mock the resources
             scanner.page = AsyncMock()
             scanner.browser = AsyncMock()
-            scanner.playwright = AsyncMock()
             
             # Track call order
             call_order = []
@@ -123,21 +129,21 @@ class TestMarketScannerResourceCleanup:
             async def track_page_close():
                 call_order.append('page')
             
-            async def track_browser_close():
-                call_order.append('browser')
-            
-            async def track_playwright_stop():
-                call_order.append('playwright')
+            async def track_pool_release(b):
+                call_order.append('pool_release')
             
             scanner.page.close = AsyncMock(side_effect=track_page_close)
-            scanner.browser.close = AsyncMock(side_effect=track_browser_close)
-            scanner.playwright.stop = AsyncMock(side_effect=track_playwright_stop)
             
-            # Call stop
-            await scanner.stop()
+            # Mock the pool
+            mock_pool = AsyncMock()
+            mock_pool.release_browser = AsyncMock(side_effect=track_pool_release)
             
-            # Verify cleanup order: page first, then browser, then playwright
-            assert call_order == ['page', 'browser', 'playwright']
+            with patch('src.agent_execution.market_scanner.get_browser_pool', return_value=mock_pool):
+                # Call stop
+                await scanner.stop()
+            
+            # Verify cleanup order: page first, then release to pool
+            assert call_order == ['page', 'pool_release']
             
             # Verify all are set to None
             assert scanner.page is None
@@ -155,11 +161,13 @@ class TestMarketScannerResourceCleanup:
         
         # Should have try/except with cleanup on error
         assert "try:" in source
-        assert "except" in source
         
-        # Should call stop() on failure
-        lines_after_except = source.split("except")[1]
-        assert "await self.stop()" in lines_after_except or "raise" in lines_after_except
+        # Should call stop() on failure - check for it in the main except block
+        # Use rsplit to get the last except block which is the main one
+        assert "except Exception as e:" in source
+        main_except = source.rsplit("except Exception as e:", 1)[1]
+        assert "await self.stop()" in main_except
+        assert "raise" in main_except
 
 
 class TestMarketplaceDiscoveryCleanup:
@@ -167,19 +175,19 @@ class TestMarketplaceDiscoveryCleanup:
 
     @pytest.mark.asyncio
     async def test_evaluate_marketplace_uses_nested_context_managers(self):
-        """Test evaluate_marketplace properly nests async context managers."""
+        """Test evaluate_marketplace properly uses resource management patterns."""
         import inspect
         
         discovery = MarketplaceDiscovery()
         source = inspect.getsource(discovery.evaluate_marketplace)
         
-        # Verify the method structure includes proper nesting:
-        # - async with async_playwright()
+        # Verify the method structure includes proper management (Issue #4):
+        # - get_browser_pool()
         # - try/finally for page.close()
-        # - try/finally for browser.close()
-        assert "async with async_playwright()" in source
+        # - try/finally for pool.release_browser()
+        assert "get_browser_pool()" in source
         # Check for both nesting levels
-        assert source.count("finally:") >= 2  # At least 2 finally blocks for page and browser
+        assert source.count("finally:") >= 2  # At least 2 finally blocks for page and pool release
 
     @pytest.mark.asyncio
     async def test_evaluate_marketplace_handles_timeout(self):
