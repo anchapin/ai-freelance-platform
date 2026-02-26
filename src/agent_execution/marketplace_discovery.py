@@ -473,75 +473,75 @@ class MarketplaceDiscovery:
                 # Create page
                 page = await browser.new_page()
 
-                    try:
-                        # Navigate to marketplace with timeout
-                        response = await page.goto(
-                            url, wait_until="domcontentloaded", timeout=timeout * 1000
-                        )
+                try:
+                    # Navigate to marketplace with timeout
+                    response = await page.goto(
+                        url, wait_until="domcontentloaded", timeout=timeout * 1000
+                    )
 
-                        if not response or response.status >= 400:
-                            return {
-                                "url": url,
-                                "accessible": False,
-                                "job_count": 0,
-                                "avg_budget": 0,
-                                "status_code": response.status if response else None,
-                            }
-
-                        # Try to count job listings
-                        job_elements = await page.query_selector_all(
-                            [
-                                ".job-listing",
-                                ".job-card",
-                                ".project-card",
-                                "[data-testid='job-post']",
-                                ".listing-item",
-                                "article.job",
-                            ]
-                        )
-
-                        job_count = len(job_elements) if job_elements else 0
-
-                        return {
-                            "url": url,
-                            "accessible": True,
-                            "job_count": job_count,
-                            "avg_budget": 0,  # Would be calculated from actual job data
-                            "evaluated_at": datetime.now().isoformat(),
-                        }
-
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Marketplace evaluation timeout for {url}")
+                    if not response or response.status >= 400:
                         return {
                             "url": url,
                             "accessible": False,
                             "job_count": 0,
                             "avg_budget": 0,
-                            "error": "Page load timeout",
+                            "status_code": response.status if response else None,
                         }
 
-                    except Exception as e:
-                        logger.warning(f"Failed to evaluate marketplace {url}: {e}")
-                        return {
-                            "url": url,
-                            "accessible": False,
-                            "job_count": 0,
-                            "avg_budget": 0,
-                            "error": str(e),
-                        }
+                    # Try to count job listings
+                    job_elements = await page.query_selector_all(
+                        [
+                            ".job-listing",
+                            ".job-card",
+                            ".project-card",
+                            "[data-testid='job-post']",
+                            ".listing-item",
+                            "article.job",
+                        ]
+                    )
 
-                    finally:
-                        # Explicitly close page
-                        try:
-                            await page.close()
-                        except Exception as e:
-                            logger.warning(f"Error closing page for {url}: {e}")
+                    job_count = len(job_elements) if job_elements else 0
+
+                    return {
+                        "url": url,
+                        "accessible": True,
+                        "job_count": job_count,
+                        "avg_budget": 0,  # Would be calculated from actual job data
+                        "evaluated_at": datetime.now().isoformat(),
+                    }
+
+                except asyncio.TimeoutError:
+                    logger.warning(f"Marketplace evaluation timeout for {url}")
+                    return {
+                        "url": url,
+                        "accessible": False,
+                        "job_count": 0,
+                        "avg_budget": 0,
+                        "error": "Page load timeout",
+                    }
+
+                except Exception as e:
+                    logger.warning(f"Failed to evaluate marketplace {url}: {e}")
+                    return {
+                        "url": url,
+                        "accessible": False,
+                        "job_count": 0,
+                        "avg_budget": 0,
+                        "error": str(e),
+                    }
 
                 finally:
-                    # Release browser back to pool instead of closing (Issue #4)
-                    if browser:
-                        pool = get_browser_pool()
-                        await pool.release_browser(browser)
+                    # Explicitly close page
+                    try:
+                        await page.close()
+                    except Exception as e:
+                        logger.warning(f"Error closing page for {url}: {e}")
+
+            finally:
+                # Release browser back to pool instead of closing (Issue #4)
+                if browser:
+                    pool = get_browser_pool()
+                    await pool.release_browser(browser)
 
         except Exception as e:
             logger.error(f"Marketplace evaluation error: {e}")
