@@ -9,7 +9,7 @@ import secrets
 import time as _time
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, ValidationInfo
 from sqlalchemy.orm import Session
 import stripe
 
@@ -21,6 +21,9 @@ from .experience_logger import experience_logger
 
 # Import logging module
 from ..utils.logger import get_logger
+
+# Import file validation utility (Issue #34)
+from ..utils.file_validator import validate_file_upload, MAX_FILE_SIZE_BYTES
 
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
@@ -849,7 +852,7 @@ class TaskSubmission(BaseModel):
     title: str
     description: str
     csvContent: str | None = None
-    # New fields for file uploads
+    # New fields for file uploads (Issue #34: Security Validation)
     file_type: str | None = None  # csv, excel, pdf
     file_content: str | None = None  # Base64-encoded file content
     filename: str | None = None  # Original filename
@@ -858,6 +861,41 @@ class TaskSubmission(BaseModel):
     urgency: str = "standard"  # standard, rush, urgent
     # Client tracking
     client_email: str | None = None  # Client email for history tracking
+
+    @field_validator("file_content")
+    @classmethod
+    def validate_file_upload_content(cls, v, info: ValidationInfo):
+        """
+        Comprehensive file upload validation (Issue #34).
+        Performs size, type, and signature validation before processing.
+        """
+        values = info.data
+        filename = values.get("filename")
+        file_type = values.get("file_type")
+
+        if v and filename:
+            try:
+                # Validate using the comprehensive pipeline
+                # This performs sanitization, extension check, size check, and signature check
+                validate_file_upload(
+                    filename=filename,
+                    file_content_base64=v,
+                    file_type=file_type
+                )
+            except ValueError as e:
+                # Propagate validation errors as Pydantic errors (returns 422 to client)
+                raise ValueError(f"File validation failed: {str(e)}")
+
+        return v
+
+    @field_validator("filename")
+    @classmethod
+    def validate_filename_present_with_content(cls, v, info: ValidationInfo):
+        """Ensure filename is provided if file_content is present."""
+        values = info.data
+        if values.get("file_content") and not v:
+            raise ValueError("filename is required when file_content is provided")
+        return v
 
 
 
@@ -917,6 +955,19 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
         raise HTTPException(status_code=400, detail=str(e))
     
     try:
+        # Sanitize filename and validate file if present (Issue #34)
+        sanitized_filename = task.filename
+        if task.file_content and task.filename:
+            try:
+                sanitized_filename, _, _ = validate_file_upload(
+                    filename=task.filename,
+                    file_content_base64=task.file_content,
+                    file_type=task.file_type
+                )
+            except ValueError as e:
+                # Should have been caught by Pydantic validator, but safety first
+                raise HTTPException(status_code=422, detail=f"File validation failed: {str(e)}")
+
         # Determine if this is a high-value task (Pillar 1.7 - Profit Protection)
         is_high_value = amount >= HIGH_VALUE_THRESHOLD
         
@@ -931,7 +982,7 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
             csv_data=task.csvContent,  # Store the CSV content if provided
             file_type=task.file_type,  # Store file type (csv, excel, pdf)
             file_content=task.file_content,  # Store base64-encoded file content
-            filename=task.filename,  # Store original filename
+            filename=sanitized_filename,  # Store sanitized filename (Issue #34)
             client_email=task.client_email,  # Store client email for history tracking
             amount_paid=amount * 100,  # Store amount in cents
             delivery_token=secrets.token_urlsafe(32),  # Cryptographically strong token (Issue #18)
