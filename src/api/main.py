@@ -9,8 +9,9 @@ import secrets
 import time as _time
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, ValidationInfo
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
 import stripe
 
 from datetime import datetime, timedelta, timezone
@@ -988,9 +989,23 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
             client_auth_token=client_token
         )
         
+    except stripe.error.APIConnectionError as e:
+        logger.error(f"Stripe network error: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Stripe API is temporarily unavailable (network timeout). Please try again later."
+        )
     except stripe.error.StripeError as e:
+        logger.error(f"Stripe general error: {e}")
         raise HTTPException(status_code=500, detail=f"Stripe error: {str(e)}")
+    except OperationalError as e:
+        logger.error(f"Database operational error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Database error occurred. Our team has been notified."
+        )
     except Exception as e:
+        logger.error(f"Unexpected error creating checkout session: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 

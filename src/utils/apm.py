@@ -32,15 +32,32 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 
 # Exporters for various APM backends
-from opentelemetry.exporter.jaeger.thrift import JaegerExporter
-from opentelemetry.exporter.prometheus import PrometheusMetricReader
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+try:
+    from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+except ImportError:
+    JaegerExporter = None
+
+try:
+    from opentelemetry.exporter.prometheus import PrometheusMetricReader
+except ImportError:
+    PrometheusMetricReader = None
+
+try:
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+except ImportError:
+    OTLPSpanExporter = None
+    OTLPMetricExporter = None
 
 # Instrumentation auto-loaders
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-from opentelemetry.instrumentation.requests import RequestsInstrumentor
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+    from opentelemetry.instrumentation.requests import RequestsInstrumentor
+except ImportError:
+    FastAPIInstrumentor = None
+    SQLAlchemyInstrumentor = None
+    RequestsInstrumentor = None
 
 # Optional HTTPX instrumentation (may not be available)
 try:
@@ -49,7 +66,10 @@ except (ImportError, AttributeError):
     HTTPXInstrumentor = None
 
 # Trace context propagation
-from opentelemetry.propagate import inject as inject_context
+try:
+    from opentelemetry.propagate import inject as inject_context
+except ImportError:
+    inject_context = lambda x: x
 
 # Optional: propagators (may not be installed)
 try:
@@ -72,7 +92,31 @@ from ..utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+class APMManager:
+    """
+    Manages APM instrumentation and OpenTelemetry providers.
+    """
 
+    def __init__(self):
+        self.apm_enabled = os.getenv("APM_ENABLED", "true").lower() == "true"
+        self.apm_backend = os.getenv("APM_BACKEND", "jaeger").lower()
+        self.apm_service_name = os.getenv("APM_SERVICE_NAME", "arbitrage-ai")
+        self.apm_version = os.getenv("APM_VERSION", "0.1.0")
+        self.apm_environment = os.getenv("APM_ENVIRONMENT", os.getenv("ENV", "development"))
+        
+        # Sampling rate: 1.0 (100%) for development, 0.1 (10%) for production
+        default_sample_rate = "1.0" if self.apm_environment == "development" else "0.1"
+        self.trace_sample_rate = float(os.getenv("TRACE_SAMPLE_RATE", default_sample_rate))
+        
+        # Endpoints
+        self.jaeger_endpoint = os.getenv("JAEGER_ENDPOINT", "http://localhost:14268/api/traces")
+        self.otlp_endpoint = os.getenv("OTLP_ENDPOINT", "http://localhost:4317")
+        
+        # Providers
+        self.tracer_provider = None
+        self.meter_provider = None
+        self.tracer = None
+        self.meter = None
 
     def initialize(self) -> None:
         """Initialize APM infrastructure"""
@@ -119,6 +163,10 @@ logger = get_logger(__name__)
 
     def _setup_meter_provider(self) -> None:
         """Initialize MeterProvider for metrics"""
+        if PrometheusMetricReader is None:
+            logger.warning("PrometheusMetricReader not available, metrics disabled")
+            return
+
         resource = Resource.create({
             "service.name": self.apm_service_name,
             "service.version": self.apm_version,
@@ -141,7 +189,7 @@ logger = get_logger(__name__)
         if not self.tracer_provider:
             return
 
-        if self.apm_backend == "jaeger":
+        if self.apm_backend == "jaeger" and JaegerExporter:
             exporter = JaegerExporter(
                 agent_host_name=self.jaeger_endpoint.split("://")[1].split(":")[0]
                 if "://" in self.jaeger_endpoint
@@ -157,7 +205,7 @@ logger = get_logger(__name__)
             )
             logger.info(f"✓ Jaeger span processor configured: {self.jaeger_endpoint}")
 
-        elif self.apm_backend == "otlp":
+        elif self.apm_backend == "otlp" and OTLPSpanExporter:
             exporter = OTLPSpanExporter(endpoint=self.otlp_endpoint)
             self.tracer_provider.add_span_processor(
                 BatchSpanProcessor(exporter)
@@ -165,7 +213,7 @@ logger = get_logger(__name__)
             logger.info(f"✓ OTLP span processor configured: {self.otlp_endpoint}")
 
         else:
-            logger.warning(f"Unknown APM backend: {self.apm_backend}")
+            logger.warning(f"Unknown or unavailable APM backend: {self.apm_backend}")
 
     def _create_metrics(self) -> None:
         """Create metrics instruments"""
@@ -254,15 +302,17 @@ logger = get_logger(__name__)
         """Auto-instrument framework libraries"""
         try:
             # FastAPI instrumentation
-            FastAPIInstrumentor.instrument()
-            logger.info("✓ FastAPI instrumented")
+            if FastAPIInstrumentor:
+                FastAPIInstrumentor().instrument()
+                logger.info("✓ FastAPI instrumented")
         except Exception as e:
             logger.debug(f"Failed to instrument FastAPI: {e}")
 
         try:
             # SQLAlchemy instrumentation
-            SQLAlchemyInstrumentor().instrument()
-            logger.info("✓ SQLAlchemy instrumented")
+            if SQLAlchemyInstrumentor:
+                SQLAlchemyInstrumentor().instrument()
+                logger.info("✓ SQLAlchemy instrumented")
         except Exception as e:
             logger.debug(f"Failed to instrument SQLAlchemy: {e}")
 
@@ -270,7 +320,8 @@ logger = get_logger(__name__)
             # HTTP client instrumentation
             if HTTPXInstrumentor:
                 HTTPXInstrumentor().instrument()
-            RequestsInstrumentor().instrument()
+            if RequestsInstrumentor:
+                RequestsInstrumentor().instrument()
             logger.info("✓ HTTP clients instrumented")
         except Exception as e:
             logger.debug(f"Failed to instrument HTTP clients: {e}")
