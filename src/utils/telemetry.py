@@ -6,6 +6,10 @@ from ..utils.logger import get_logger
 # Import APM initialization (Issue #42)
 from ..utils.apm import init_apm, get_apm_manager
 
+# Import distributed tracing logging integration (Issue #31)
+from ..utils.distributed_tracing import setup_trace_logging
+import logging
+
 # Optional dependencies
 try:
     from traceloop.sdk import Traceloop
@@ -41,6 +45,7 @@ def init_observability():
     1. APM infrastructure for production monitoring (Issue #42)
     2. Local tracing via Arize Phoenix and Traceloop
     3. OpenTelemetry context propagation for distributed tracing
+    4. Log integration for distributed trace IDs (Issue #31)
 
     Captures LLM calls, token usage, latency, and application metrics automatically.
 
@@ -48,6 +53,13 @@ def init_observability():
     as a standalone Docker container to avoid port conflicts with multiple workers.
     """
     logger.info("Initializing observability stack...")
+
+    # 4. Initialize log integration for distributed trace IDs (Issue #31)
+    try:
+        setup_trace_logging(logging.getLogger())
+        logger.info("✓ Distributed tracing log integration initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize trace logging: {e}")
 
     # 1. Initialize APM infrastructure (Issue #42)
     # Configures Jaeger, Prometheus metrics, trace sampling, and auto-instrumentation
