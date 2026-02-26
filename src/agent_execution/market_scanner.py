@@ -27,12 +27,11 @@ from dotenv import load_dotenv
 from src.utils.logger import get_logger
 
 # Import ConfigManager for centralized configuration
-from src.config import get_config
+from ..config.config_manager import ConfigManager
 
 # Import LLM service for local inference
 try:
-    from src.llm_service import LLMService
-
+    from ..llm_service import LLMService
     LLM_SERVICE_AVAILABLE = True
 except ImportError:
     LLM_SERVICE_AVAILABLE = False
@@ -40,7 +39,6 @@ except ImportError:
 # Try to import Playwright
 try:
     from playwright.async_api import async_playwright, Page, Browser  # noqa: F401
-
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -52,9 +50,7 @@ load_dotenv()
 logger = get_logger(__name__)
 
 if not LLM_SERVICE_AVAILABLE:
-    logger.warning(
-        "LLMService not available, market scanner will use fallback evaluation"
-    )
+    logger.warning("LLMService not available, market scanner will use fallback evaluation")
 
 if not PLAYWRIGHT_AVAILABLE:
     logger.warning("Playwright not available, market scanner will use HTTP-only mode")
@@ -64,15 +60,6 @@ if not PLAYWRIGHT_AVAILABLE:
 # CONFIGURATION
 # =============================================================================
 
-# Load configuration from ConfigManager (centralized)
-def _get_config():
-    """Lazy load configuration to avoid circular imports."""
-    try:
-        return get_config()
-    except Exception:
-        # Fallback to environment variables if ConfigManager fails
-        return None
-
 # Marketplace URLs configuration
 MARKETPLACES_FILE = os.environ.get(
     "MARKETPLACES_FILE",
@@ -81,36 +68,24 @@ MARKETPLACES_FILE = os.environ.get(
 DEFAULT_MARKETPLACE_URL = "https://example.com/freelance-jobs"
 
 # Evaluation settings
-EVALUATION_MODEL = os.environ.get("MARKET_SCAN_MODEL", "llama3.2")
+EVALUATION_MODEL = os.environ.get("MARK_SCAN_MODEL", "llama3.2")
 
-# Load bid amounts from ConfigManager or use defaults
+# Load bid amounts and timeouts from ConfigManager (Issue #26)
 def get_max_bid_amount() -> int:
     """Get MAX_BID_AMOUNT from ConfigManager."""
-    config = _get_config()
-    if config:
-        return config.MAX_BID_AMOUNT
-    return int(os.environ.get("MAX_BID_AMOUNT", "500"))
+    return ConfigManager.get("BID_LIMIT_CENTS") // 100
 
 def get_min_bid_amount() -> int:
     """Get MIN_BID_AMOUNT from ConfigManager."""
-    config = _get_config()
-    if config:
-        return config.MIN_BID_AMOUNT
-    return int(os.environ.get("MIN_BID_AMOUNT", "10"))
+    return ConfigManager.get("MIN_BID_AMOUNT") // 100
 
 def get_page_load_timeout() -> int:
     """Get PAGE_LOAD_TIMEOUT from ConfigManager."""
-    config = _get_config()
-    if config:
-        return config.PAGE_LOAD_TIMEOUT
-    return int(os.environ.get("MARKET_SCAN_PAGE_TIMEOUT", "30"))
+    return ConfigManager.get("MARKET_SCAN_PAGE_TIMEOUT")
 
 def get_scan_interval() -> int:
     """Get SCAN_INTERVAL from ConfigManager."""
-    config = _get_config()
-    if config:
-        return config.SCAN_INTERVAL
-    return int(os.environ.get("MARKET_SCAN_INTERVAL", "300"))
+    return ConfigManager.get("MARKET_SCAN_INTERVAL")
 
 # Legacy module-level constants for backward compatibility
 MAX_BID_AMOUNT = get_max_bid_amount()
