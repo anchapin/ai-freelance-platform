@@ -15,40 +15,29 @@ Features:
 - Disaster recovery testing and validation
 """
 
-import asyncio
 import json
-import logging
-import os
 import shutil
 import tarfile
 import tempfile
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
-from contextlib import asynccontextmanager
 import hashlib
 import boto3
 from botocore.exceptions import ClientError
-import sqlite3
-import subprocess
 import schedule
-from croniter import croniter
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
 import redis
 from redis.exceptions import RedisError
 
 from src.config import Config
 from src.utils.logger import get_logger
 from src.utils.telemetry import get_tracer
-from src.api.database import get_db
-from src.api.models import Task, TaskStatus, Bid, BidStatus
 
 # Import telemetry
 from traceloop.sdk.decorators import task, workflow
@@ -609,7 +598,7 @@ class BackupManager:
         try:
             # Check Redis first for performance
             if self.redis_client:
-                keys = self.redis_client.keys(f"backup:metadata:*")
+                keys = self.redis_client.keys("backup:metadata:*")
                 for key in keys:
                     metadata_str = self.redis_client.get(key)
                     if metadata_str:

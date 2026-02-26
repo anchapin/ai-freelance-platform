@@ -14,12 +14,10 @@ import pytest
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
-from src.api.models import Bid, BidStatus
+from src.api.models import BidStatus
 from .utils import (
-    create_test_task,
     create_test_bid,
     build_job_posting_fixture,
-    build_marketplace_fixture,
     assert_bid_succeeds,
     count_bids_for_job,
 )
@@ -250,13 +248,13 @@ class TestBidDeduplication:
         job_id = "job_dedup_test"
         
         # Submit first bid
-        bid1 = create_test_bid(e2e_db, job_id=job_id, marketplace="Upwork")
+        create_test_bid(e2e_db, job_id=job_id, marketplace="Upwork")
         
         # Attempt duplicate bid (will fail due to unique constraint)
         duplicate_found = False
         try:
-            bid2 = create_test_bid(e2e_db, job_id=job_id, marketplace="Upwork")
-        except Exception as e:
+            create_test_bid(e2e_db, job_id=job_id, marketplace="Upwork")
+        except Exception:
             # Unique constraint violation is expected
             duplicate_found = True
             e2e_db.rollback()

@@ -3,15 +3,12 @@ Tests for client dashboard authentication and authorization.
 Issue #17: Client portal security and access control.
 """
 
-import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 from src.api.main import app
 from src.api.database import get_db
-from src.api.models import Task, TaskStatus
-from src.utils.client_auth import generate_client_token, verify_client_token
+from src.utils.client_auth import generate_client_token
 
 
 def override_get_db(mock_db):

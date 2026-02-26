@@ -15,22 +15,16 @@ Features:
 """
 
 import os
-import json
 import pickle
-import asyncio
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any, Union
-from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple, Any
+from datetime import datetime
 from dataclasses import dataclass, asdict
 from collections import defaultdict, Counter
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.pipeline import Pipeline
-import logging
-from pathlib import Path
+from sklearn.metrics import accuracy_score
 
 # Import existing components
 from src.agent_execution.executor import (
@@ -38,14 +32,12 @@ from src.agent_execution.executor import (
     TaskType,
     OutputFormat,
     LLMService,
-    AIResponseGenerator,
 )
 from src.utils.logger import get_logger
 from src.utils.telemetry import get_tracer
-from src.config import Config
 
 # Import database models
-from src.api.models import Task, TaskStatus, Bid, BidStatus
+from src.api.models import Task, TaskStatus
 
 # Import telemetry
 from traceloop.sdk.decorators import task, workflow
@@ -843,7 +835,7 @@ class IntelligentRouter:
         ml_confidence = classification.get('confidence', 0.5)
         
         # Get top performance recommendation
-        perf_recommendation = performance_recommendations[0] if performance_recommendations else None
+        performance_recommendations[0] if performance_recommendations else None
         
         # Check for anomalies
         anomaly_score = classification.get('anomaly_score', 0.0)

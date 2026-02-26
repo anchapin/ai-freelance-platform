@@ -20,9 +20,8 @@ Test Coverage:
 
 import pytest
 import uuid
-from datetime import datetime
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 
 from src.api.models import Base, Bid, BidStatus, EscalationLog

@@ -11,6 +11,7 @@ from .config_manager import ConfigManager, get_config, ValidationError
 # Alias for backward compatibility
 Config = ConfigManager
 
+
 def get_redis_url() -> str:
     """
     Get Redis connection URL from environment.
@@ -365,7 +366,6 @@ def get_all_configured_env_vars() -> dict:
         "ENABLE_DISTILLATION_CAPTURE": "true",
         # General
         "CORS_ORIGINS": "http://localhost:5173",
-        "BASE_URL": "http://localhost:5173",
     }
 
     # Build result with current values
@@ -395,11 +395,14 @@ def get_all_configured_env_vars() -> dict:
             re.search(pattern, var_name, re.IGNORECASE) for pattern in secret_patterns
         )
         if is_secret and display_value != "(not set)":
-            display_value = "***" + display_value[-4:] if len(display_value) > 4 else "***"
+            display_value = (
+                "***" + display_value[-4:] if len(display_value) > 4 else "***"
+            )
 
         result[var_name] = display_value
 
     return result
+
 
 __all__ = [
     "ConfigManager",

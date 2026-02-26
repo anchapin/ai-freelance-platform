@@ -746,7 +746,7 @@ class LLMService:
         # Timeouts per attempt: [10s, 20s, 30s]
         # Delays between attempts: [0s, 2s, 5s]
         timeouts = [10, 20, 30]
-        backoff = ExponentialBackoff(
+        ExponentialBackoff(
             initial_delay_ms=0, base=2.0, max_delay_ms=5000, jitter_factor=0.1
         )
 

@@ -13,11 +13,8 @@ Tests cover:
 """
 
 import pytest
-import json
-import time
 from datetime import datetime, timezone, timedelta
-from unittest.mock import Mock, patch, AsyncMock
-from fastapi.testclient import TestClient
+from unittest.mock import Mock
 from sqlalchemy.orm import Session
 
 import sys
@@ -46,7 +43,7 @@ def db_with_quotas():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from src.api.models import Base, UserQuota, PricingTier
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timezone
     
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)

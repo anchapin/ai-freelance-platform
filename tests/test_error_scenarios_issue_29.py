@@ -2,8 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi import HTTPException
-from src.api.main import app, create_checkout_session
-from src.api.models import Task, TaskStatus
+from src.api.main import create_checkout_session
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError
 

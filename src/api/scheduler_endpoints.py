@@ -6,18 +6,14 @@ managing recurring tasks, and viewing schedule analytics.
 """
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
-import json
 
 from ..agent_execution.scheduler import (
     TaskScheduler,
     CronExpressionValidator,
-    ScheduleStatus,
-    ScheduleType,
     schedule_daily_task,
     schedule_weekly_task,
     schedule_monthly_task

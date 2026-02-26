@@ -216,7 +216,7 @@ class Task(Base):
     delivery_token = Column(String, nullable=True, index=True)
     delivery_token_expires_at = Column(DateTime, nullable=True)
     delivery_token_used = Column(Boolean, default=False)
-    
+
     # Profit protection
     is_high_value = Column(Boolean, default=False)
 
@@ -227,10 +227,16 @@ class Task(Base):
 
     # Relationships to composed entities (one-to-one)
     execution = relationship(
-        "TaskExecution", uselist=False, cascade="all, delete-orphan", back_populates="task"
+        "TaskExecution",
+        uselist=False,
+        cascade="all, delete-orphan",
+        back_populates="task",
     )
     planning = relationship(
-        "TaskPlanning", uselist=False, cascade="all, delete-orphan", back_populates="task"
+        "TaskPlanning",
+        uselist=False,
+        cascade="all, delete-orphan",
+        back_populates="task",
     )
     review = relationship(
         "TaskReview", uselist=False, cascade="all, delete-orphan", back_populates="task"
@@ -302,7 +308,11 @@ class Task(Base):
 
     @hybrid_property
     def csv_data(self):
-        return self.planning.file_content if self.planning and self.planning.file_type == "csv" else None
+        return (
+            self.planning.file_content
+            if self.planning and self.planning.file_type == "csv"
+            else None
+        )
 
     @csv_data.setter
     def csv_data(self, value):
@@ -373,7 +383,9 @@ class Task(Base):
 
     @hybrid_property
     def last_error(self):
-        return self.review.last_error if self.review else None # Actually could be in execution or review
+        return (
+            self.review.last_error if self.review else None
+        )  # Actually could be in execution or review
 
     @last_error.setter
     def last_error(self, value):
@@ -410,11 +422,21 @@ class Task(Base):
     def __init__(self, **kwargs):
         # List of hybrid properties that should be handled manually
         hybrid_fields = [
-            "work_plan", "plan_status", "file_content", "filename", 
-            "file_type", "csv_data", "retry_count", "execution_log",
-            "review_feedback", "review_approved", "review_attempts",
-            "escalation_reason", "last_error", "review_status",
-            "extracted_context"
+            "work_plan",
+            "plan_status",
+            "file_content",
+            "filename",
+            "file_type",
+            "csv_data",
+            "retry_count",
+            "execution_log",
+            "review_feedback",
+            "review_approved",
+            "review_attempts",
+            "escalation_reason",
+            "last_error",
+            "review_status",
+            "extracted_context",
         ]
         hybrids = {k: kwargs.pop(k) for k in hybrid_fields if k in kwargs}
         super().__init__(**kwargs)
@@ -435,32 +457,42 @@ class Task(Base):
             "amount_paid": self.amount_paid,
             "amount_dollars": (self.amount_paid / 100) if self.amount_paid else None,
             "delivery_token": self.delivery_token,
-            "delivery_token_expires_at": self.delivery_token_expires_at.isoformat() if self.delivery_token_expires_at else None,
+            "delivery_token_expires_at": self.delivery_token_expires_at.isoformat()
+            if self.delivery_token_expires_at
+            else None,
             "delivery_token_used": self.delivery_token_used,
             "is_high_value": self.is_high_value,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "completed_at": self.completed_at.isoformat()
+            if self.completed_at
+            else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
-        
+
         # Flattened fields for compatibility (Issue #5)
-        data.update({
-            "work_plan": self.work_plan,
-            "plan_status": self.plan_status.value if isinstance(self.plan_status, PlanningStatus) else self.plan_status,
-            "file_type": self.file_type,
-            "filename": self.filename,
-            "csv_data": self.csv_data,
-            "retry_count": self.retry_count,
-            "execution_log": self.execution_log,
-            "review_feedback": self.review_feedback,
-            "review_approved": self.review_approved,
-            "review_attempts": self.review_attempts,
-            "escalation_reason": self.escalation_reason,
-            "last_error": self.last_error,
-            "review_status": self.review_status.value if isinstance(self.review_status, ReviewStatus) else self.review_status,
-            "extracted_context": self.extracted_context,
-        })
-        
+        data.update(
+            {
+                "work_plan": self.work_plan,
+                "plan_status": self.plan_status.value
+                if isinstance(self.plan_status, PlanningStatus)
+                else self.plan_status,
+                "file_type": self.file_type,
+                "filename": self.filename,
+                "csv_data": self.csv_data,
+                "retry_count": self.retry_count,
+                "execution_log": self.execution_log,
+                "review_feedback": self.review_feedback,
+                "review_approved": self.review_approved,
+                "review_attempts": self.review_attempts,
+                "escalation_reason": self.escalation_reason,
+                "last_error": self.last_error,
+                "review_status": self.review_status.value
+                if isinstance(self.review_status, ReviewStatus)
+                else self.review_status,
+                "extracted_context": self.extracted_context,
+            }
+        )
+
         # Also include nested structure for new code
         if self.execution:
             data["execution"] = self.execution.to_dict()
@@ -472,7 +504,7 @@ class Task(Base):
             data["arena"] = self.arena.to_dict()
         if self.outputs:
             data["outputs"] = [o.to_dict() for o in self.outputs]
-            
+
         return data
 
 
@@ -484,7 +516,9 @@ class TaskExecution(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     task_id = Column(String, ForeignKey("tasks.id"), unique=True, nullable=False)
 
-    status = Column(Enum(ExecutionStatus), default=ExecutionStatus.PENDING, nullable=False)
+    status = Column(
+        Enum(ExecutionStatus), default=ExecutionStatus.PENDING, nullable=False
+    )
     retry_count = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
     execution_logs = Column(JSON, nullable=True)
@@ -498,11 +532,15 @@ class TaskExecution(Base):
 
     def to_dict(self):
         return {
-            "status": self.status.value if isinstance(self.status, ExecutionStatus) else self.status,
+            "status": self.status.value
+            if isinstance(self.status, ExecutionStatus)
+            else self.status,
             "retry_count": self.retry_count,
             "error_message": self.error_message,
             "started_at": self.started_at.isoformat() if self.started_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "completed_at": self.completed_at.isoformat()
+            if self.completed_at
+            else None,
         }
 
 
@@ -514,7 +552,9 @@ class TaskPlanning(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     task_id = Column(String, ForeignKey("tasks.id"), unique=True, nullable=False)
 
-    status = Column(Enum(PlanningStatus), default=PlanningStatus.PENDING, nullable=False)
+    status = Column(
+        Enum(PlanningStatus), default=PlanningStatus.PENDING, nullable=False
+    )
     plan_content = Column(Text, nullable=True)
     research_findings = Column(JSON, nullable=True)
     extracted_context = Column(JSON, nullable=True)
@@ -531,10 +571,14 @@ class TaskPlanning(Base):
 
     def to_dict(self):
         return {
-            "status": self.status.value if isinstance(self.status, PlanningStatus) else self.status,
+            "status": self.status.value
+            if isinstance(self.status, PlanningStatus)
+            else self.status,
             "plan_content": self.plan_content,
             "filename": self.filename,
-            "plan_generated_at": self.plan_generated_at.isoformat() if self.plan_generated_at else None,
+            "plan_generated_at": self.plan_generated_at.isoformat()
+            if self.plan_generated_at
+            else None,
         }
 
 
@@ -550,23 +594,25 @@ class TaskReview(Base):
     approved = Column(Boolean, default=False)
     review_feedback = Column(Text, nullable=True)
     review_attempts = Column(Integer, default=0)
-    
+
     # Escalation
     needs_escalation = Column(Boolean, default=False)
     escalation_reason = Column(String, nullable=True)
     escalated_at = Column(DateTime, nullable=True)
-    
+
     # Human review
     human_review_notes = Column(Text, nullable=True)
     human_reviewer = Column(String, nullable=True)
-    
+
     reviewed_at = Column(DateTime, nullable=True)
 
     task = relationship("Task", back_populates="review")
 
     def to_dict(self):
         return {
-            "status": self.status.value if isinstance(self.status, ReviewStatus) else self.status,
+            "status": self.status.value
+            if isinstance(self.status, ReviewStatus)
+            else self.status,
             "approved": self.approved,
             "review_feedback": self.review_feedback,
             "review_attempts": self.review_attempts,
@@ -619,7 +665,9 @@ class TaskOutput(Base):
 
     def to_dict(self):
         return {
-            "output_type": self.output_type.value if isinstance(self.output_type, OutputType) else self.output_type,
+            "output_type": self.output_type.value
+            if isinstance(self.output_type, OutputType)
+            else self.output_type,
             "output_url": self.output_url,
         }
 
@@ -658,9 +706,7 @@ class Bid(Base):
     # 1. (job_id, marketplace): Prevents duplicate bids on same posting (Issue #33)
     # 2. (marketplace, job_id, status): Only one ACTIVE bid per posting (at app level)
     __table_args__ = (
-        UniqueConstraint(
-            "job_id", "marketplace", name="unique_bid_per_posting"
-        ),
+        UniqueConstraint("job_id", "marketplace", name="unique_bid_per_posting"),
         UniqueConstraint(
             "marketplace", "job_id", "status", name="unique_active_bid_per_posting"
         ),
@@ -963,6 +1009,7 @@ class DistributedLock(Base):
 
 class PricingTier(PyEnum):
     """Pricing tiers for user quotas."""
+
     FREE = "FREE"
     PRO = "PRO"
     ENTERPRISE = "ENTERPRISE"
@@ -971,49 +1018,57 @@ class PricingTier(PyEnum):
 class UserQuota(Base):
     """
     User quota and rate limit configuration.
-    
+
     Issue #45: API Rate Limiting, Quotas, and Usage Analytics
-    
+
     Tracks per-user quotas across pricing tiers:
     - Free: 10 tasks/month, 100 API calls/month, 60 compute minutes/month
     - Pro: 1000 tasks/month, 10000 API calls/month, 600 compute minutes/month
     - Enterprise: Unlimited
     """
-    
+
     __tablename__ = "user_quotas"
-    
+
     __table_args__ = (
         UniqueConstraint("user_id", name="unique_user_quota"),
         Index("user_id_tier_idx", "user_id", "tier"),
     )
-    
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, nullable=False, unique=True, index=True)  # Email or user identifier
+    user_id = Column(
+        String, nullable=False, unique=True, index=True
+    )  # Email or user identifier
     tier = Column(Enum(PricingTier), default=PricingTier.FREE, nullable=False)
-    
+
     # Monthly limits (resets on billing cycle)
-    monthly_task_limit = Column(Integer, default=10)  # Free: 10, Pro: 1000, Enterprise: unlimited
-    monthly_api_calls_limit = Column(Integer, default=100)  # Free: 100, Pro: 10000, Enterprise: unlimited
-    monthly_compute_minutes_limit = Column(Integer, default=60)  # Free: 60, Pro: 600, Enterprise: unlimited
-    
+    monthly_task_limit = Column(
+        Integer, default=10
+    )  # Free: 10, Pro: 1000, Enterprise: unlimited
+    monthly_api_calls_limit = Column(
+        Integer, default=100
+    )  # Free: 100, Pro: 10000, Enterprise: unlimited
+    monthly_compute_minutes_limit = Column(
+        Integer, default=60
+    )  # Free: 60, Pro: 600, Enterprise: unlimited
+
     # Rate limiting (requests per second + burst)
     rate_limit_rps = Column(Integer, default=10)  # Requests per second
     rate_limit_burst = Column(Integer, default=50)  # Burst capacity
-    
+
     # Billing cycle tracking
     billing_cycle_start = Column(DateTime, nullable=False, default=datetime.utcnow)
     billing_cycle_end = Column(DateTime, nullable=False)
-    
+
     # Quota thresholds for alerts
     alert_threshold_percentage = Column(Integer, default=80)  # Alert at 80% usage
-    
+
     # Override flags (admin)
     override_rate_limit = Column(Boolean, default=False)
     override_quota = Column(Boolean, default=False)
-    
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -1024,8 +1079,12 @@ class UserQuota(Base):
             "monthly_compute_minutes_limit": self.monthly_compute_minutes_limit,
             "rate_limit_rps": self.rate_limit_rps,
             "rate_limit_burst": self.rate_limit_burst,
-            "billing_cycle_start": self.billing_cycle_start.isoformat() if self.billing_cycle_start else None,
-            "billing_cycle_end": self.billing_cycle_end.isoformat() if self.billing_cycle_end else None,
+            "billing_cycle_start": self.billing_cycle_start.isoformat()
+            if self.billing_cycle_start
+            else None,
+            "billing_cycle_end": self.billing_cycle_end.isoformat()
+            if self.billing_cycle_end
+            else None,
             "alert_threshold_percentage": self.alert_threshold_percentage,
             "override_rate_limit": self.override_rate_limit,
             "override_quota": self.override_quota,
@@ -1037,36 +1096,36 @@ class UserQuota(Base):
 class QuotaUsage(Base):
     """
     Monthly quota usage tracking per user.
-    
+
     Issue #45: API Rate Limiting, Quotas, and Usage Analytics
-    
+
     Tracks actual usage against quotas. Resets each billing cycle.
     """
-    
+
     __tablename__ = "quota_usage"
-    
+
     __table_args__ = (
         UniqueConstraint("user_id", "billing_month", name="unique_user_month_usage"),
         Index("user_id_month_idx", "user_id", "billing_month"),
     )
-    
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, nullable=False, index=True)
     billing_month = Column(String, nullable=False)  # YYYY-MM format
-    
+
     # Tracked metrics
     task_count = Column(Integer, default=0)
     api_call_count = Column(Integer, default=0)
     compute_minutes_used = Column(Float, default=0.0)
-    
+
     # Status tracking
     quota_exceeded = Column(Boolean, default=False)
     alert_sent_at_80_percent = Column(DateTime, nullable=True)
     alert_sent_at_100_percent = Column(DateTime, nullable=True)
-    
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -1076,8 +1135,12 @@ class QuotaUsage(Base):
             "api_call_count": self.api_call_count,
             "compute_minutes_used": self.compute_minutes_used,
             "quota_exceeded": self.quota_exceeded,
-            "alert_sent_at_80_percent": self.alert_sent_at_80_percent.isoformat() if self.alert_sent_at_80_percent else None,
-            "alert_sent_at_100_percent": self.alert_sent_at_100_percent.isoformat() if self.alert_sent_at_100_percent else None,
+            "alert_sent_at_80_percent": self.alert_sent_at_80_percent.isoformat()
+            if self.alert_sent_at_80_percent
+            else None,
+            "alert_sent_at_100_percent": self.alert_sent_at_100_percent.isoformat()
+            if self.alert_sent_at_100_percent
+            else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -1086,42 +1149,40 @@ class QuotaUsage(Base):
 class RateLimitLog(Base):
     """
     Log of rate limit violations and enforcement.
-    
+
     Issue #45: API Rate Limiting, Quotas, and Usage Analytics
-    
+
     Tracks rate limit violations for debugging and analytics.
     """
-    
+
     __tablename__ = "rate_limit_logs"
-    
-    __table_args__ = (
-        Index("user_id_timestamp_idx", "user_id", "timestamp"),
-    )
-    
+
+    __table_args__ = (Index("user_id_timestamp_idx", "user_id", "timestamp"),)
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, nullable=False, index=True)
-    
+
     # Request details
     endpoint = Column(String, nullable=False)
     method = Column(String, nullable=False)  # GET, POST, etc.
-    
+
     # Rate limiting details
     requests_in_window = Column(Integer, nullable=False)  # Current window request count
     rate_limit_rps = Column(Integer, nullable=False)  # Limit at time of request
     exceeded = Column(Boolean, default=False)  # Was limit exceeded?
-    
+
     # Quota details
     quota_type = Column(String, nullable=True)  # task, api_call, compute_minute, etc.
     quota_used = Column(Integer, nullable=True)
     quota_limit = Column(Integer, nullable=True)
     quota_exceeded = Column(Boolean, default=False)
-    
+
     # Response
     status_code = Column(Integer, nullable=False)
     response_time_ms = Column(Float, nullable=False)
-    
+
     timestamp = Column(DateTime, default=datetime.utcnow)
-    
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -1143,9 +1204,9 @@ class RateLimitLog(Base):
 
 class ScheduledTask(Base):
     """Database model for scheduled tasks."""
-    
+
     __tablename__ = "scheduled_tasks"
-    
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     task_id = Column(String, nullable=True)  # Reference to actual task when executed
     title = Column(String, nullable=False)
@@ -1155,27 +1216,27 @@ class ScheduledTask(Base):
     schedule_type = Column(String, default="RECURRING", nullable=False)
     status = Column(String, default="ACTIVE", nullable=False)
     task_data = Column(Text, nullable=True)  # JSON string containing task data
-    
+
     # Scheduling metadata
     next_run_at = Column(DateTime, nullable=True)
     last_run_at = Column(DateTime, nullable=True)
     last_run_result = Column(String, nullable=True)  # SUCCESS, FAILED
     last_run_error = Column(Text, nullable=True)
-    
+
     # Recurrence settings
     max_runs = Column(Integer, nullable=True)  # None for unlimited
     run_count = Column(Integer, default=0)
     timezone = Column(String, default="UTC")
-    
+
     # Intelligent scheduling
     avoid_peak_hours = Column(Boolean, default=True)
     batch_size = Column(Integer, default=1)
     priority = Column(Integer, default=1)  # 1 (low) to 10 (high)
-    
+
     # Analytics
     avg_execution_time = Column(Float, default=0.0)
     success_rate = Column(Float, default=100.0)
-    
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)  # Auto-expire old schedules
@@ -1183,9 +1244,9 @@ class ScheduledTask(Base):
 
 class ScheduleHistory(Base):
     """Database model for schedule execution history."""
-    
+
     __tablename__ = "schedule_history"
-    
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     schedule_id = Column(String, nullable=False, index=True)
     task_id = Column(String, nullable=True)
@@ -1194,5 +1255,83 @@ class ScheduleHistory(Base):
     status = Column(String, nullable=False)  # STARTED, COMPLETED, FAILED
     result = Column(Text, nullable=True)  # Success message or error details
     execution_time_ms = Column(Float, nullable=True)
-    
+
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SimulationBid(Base):
+    """
+    Simulation Bid Model for Training Mode
+
+    Tracks hypothetical bids made during training mode when no real
+    financial commitment is made. Used for analysis, strategy comparison,
+    and learning optimization.
+
+    Issue #88, #89, #90: Training Mode & Simulation Engine
+
+    When TRAINING_MODE is enabled:
+    - Bids are evaluated and generated normally
+    - Bids are marked with status='SIMULATED' (not submitted to marketplace)
+    - Results are tracked in this table for analysis
+    - Enables comparison of bidding strategies without financial risk
+    """
+
+    __tablename__ = "simulation_bids"
+
+    __table_args__ = (
+        Index("idx_simbid_created_at", "created_at"),
+        Index("idx_simbid_strategy", "strategy_type"),
+        Index("idx_simbid_outcome", "would_have_won"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Job details
+    job_title = Column(String, nullable=False)
+    job_description = Column(Text, nullable=True)
+    job_url = Column(String, nullable=True)
+
+    # Bid details
+    bid_amount = Column(Integer, nullable=False)  # Bid amount in cents
+    strategy_type = Column(
+        String, nullable=False
+    )  # e.g., "aggressive", "conservative", "balanced"
+    confidence = Column(Integer, nullable=True)  # Evaluation confidence (0-100)
+
+    # Outcome tracking
+    would_have_won = Column(Boolean, nullable=True)  # Simulated outcome
+    outcome_reasoning = Column(Text, nullable=True)  # Why bid would have won/lost
+    actual_outcome = Column(
+        String, nullable=True
+    )  # Actual result from marketplace if tracking
+
+    # Analysis metadata
+    job_marketplace = Column(
+        String, nullable=True
+    )  # Which marketplace (upwork, fiverr, etc.)
+    skills_matched = Column(JSON, nullable=True)  # List of matched skills
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    outcome_updated_at = Column(DateTime, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "job_title": self.job_title,
+            "job_description": self.job_description,
+            "job_url": self.job_url,
+            "bid_amount": self.bid_amount,
+            "bid_amount_dollars": (self.bid_amount / 100) if self.bid_amount else None,
+            "strategy_type": self.strategy_type,
+            "confidence": self.confidence,
+            "would_have_won": self.would_have_won,
+            "outcome_reasoning": self.outcome_reasoning,
+            "actual_outcome": self.actual_outcome,
+            "job_marketplace": self.job_marketplace,
+            "skills_matched": self.skills_matched,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "outcome_updated_at": self.outcome_updated_at.isoformat()
+            if self.outcome_updated_at
+            else None,
+        }

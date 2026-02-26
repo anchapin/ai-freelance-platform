@@ -2,6 +2,7 @@
 FastAPI backend for ArbitrageAI.
 Provides endpoints for creating checkout sessions and processing task submissions.
 """
+
 import os
 import uuid
 import json
@@ -11,14 +12,22 @@ import time as _time
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator, ValidationInfo, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, Any
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError
 import stripe
 
 from datetime import datetime, timedelta, timezone
 from .database import get_db, init_db
-from .models import Task, TaskStatus, ReviewStatus, ArenaCompetition, ArenaCompetitionStatus, EscalationLog
+from .models import (
+    Task,
+    TaskStatus,
+    ReviewStatus,
+    ArenaCompetition,
+    ArenaCompetitionStatus,
+    EscalationLog,
+    WebhookSecret,
+)
 from ..agent_execution.executor import execute_task, OutputFormat
 from .experience_logger import experience_logger
 
@@ -29,7 +38,7 @@ from ..utils.logger import get_logger
 from ..config.config_manager import ConfigManager
 
 # Import file validation utility (Issue #34)
-from ..utils.file_validator import validate_file_upload, MAX_FILE_SIZE_BYTES
+from ..utils.file_validator import validate_file_upload
 
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
@@ -66,7 +75,7 @@ from ..agent_execution.planning import (
     ContextExtractor,
     WorkPlanGenerator,
     get_client_preferences_from_tasks,
-    save_client_preferences
+    save_client_preferences,
 )
 
 # Import Agent Arena modules
@@ -74,11 +83,10 @@ from ..agent_execution.arena import (
     ArenaRouter,
     CompetitionType,
     run_agent_arena,
-    ArenaLearningLogger
+    ArenaLearningLogger,
 )
 
 # Import Scheduler modules
-from ..agent_execution.scheduler import TaskScheduler
 from .scheduler_endpoints import register_scheduler_routes
 from .analytics import register_analytics_routes
 
@@ -90,6 +98,7 @@ try:
     from ..experience_vector_db import store_successful_task, get_experience_db
     from ..async_rag_service import get_async_rag_service
     from ..background_job_queue import get_background_job_queue
+
     EXPERIENCE_DB_AVAILABLE = True
 except ImportError:
     EXPERIENCE_DB_AVAILABLE = False
@@ -188,6 +197,7 @@ _delivery_ip_rate_limits: dict[str, tuple[int, float]] = {}
 
 class AddressValidationModel(BaseModel):
     """Validation model for delivery addresses."""
+
     address: str
     city: str
     postal_code: str
@@ -197,6 +207,7 @@ class AddressValidationModel(BaseModel):
     @classmethod
     def validate_address(cls, v: str) -> str:
         import re
+
         if not re.match(r"^[a-zA-Z0-9\s,.-]+$", v):
             raise ValueError("Contains invalid characters")
         return v
@@ -205,6 +216,7 @@ class AddressValidationModel(BaseModel):
     @classmethod
     def validate_no_numbers(cls, v: str) -> str:
         import re
+
         if not re.match(r"^[a-zA-Z\s,.-]+$", v):
             raise ValueError("Contains invalid characters or numbers")
         return v
@@ -219,6 +231,7 @@ class AddressValidationModel(BaseModel):
 
 class DeliveryAmountModel(BaseModel):
     """Validation model for delivery amounts."""
+
     amount_cents: int
     currency: str = "USD"
 
@@ -242,6 +255,7 @@ class DeliveryAmountModel(BaseModel):
 
 class DeliveryTimestampModel(BaseModel):
     """Validation model for delivery timestamps."""
+
     created_at: datetime
     expires_at: datetime
 
@@ -257,17 +271,17 @@ class DeliveryTimestampModel(BaseModel):
     def validate_not_past(cls, v: datetime, info: ValidationInfo) -> datetime:
         if v < datetime.now(v.tzinfo or timezone.utc):
             raise ValueError("Expires at cannot be in the past")
-        
+
         # Check logical ordering if created_at is available
         created_at = info.data.get("created_at")
         if created_at and v <= created_at:
             raise ValueError("Expires at must be after created at")
-            
+
         # Max TTL check (e.g., 7 days)
         max_days = ConfigManager.get("MAX_DELIVERY_TOKEN_TTL_DAYS")
         if v > datetime.now(timezone.utc) + timedelta(days=max_days):
             raise ValueError(f"Expires at too far in future (max {max_days} days)")
-            
+
         return v
 
 
@@ -293,7 +307,7 @@ def _check_delivery_rate_limit(task_id: str) -> bool:
 def _record_delivery_failure(task_id: str, ip: str = None) -> None:
     """
     Record a failed delivery attempt for rate limiting (Issue #18).
-    
+
     Increments failure counts for the specific task_id.
     Note: IP-level counter is already incremented at the start of the request.
     """
@@ -309,50 +323,50 @@ def _record_delivery_failure(task_id: str, ip: str = None) -> None:
 def _should_escalate_task(task, retry_count: int, error_message: str = None) -> tuple:
     """
     Determine if a task should be escalated to human review.
-    
+
     Escalation criteria (Pillar 1.7):
     1. Agent failed after MAX_RETRY_ATTEMPTS (3 retries)
     2. High-value task ($200+) failed (profit protection)
-    
+
     Args:
         task: The Task object
         retry_count: Number of retry attempts made
         error_message: Optional error message from the failure
-        
+
     Returns:
         Tuple of (should_escalate: bool, reason: str or None)
     """
     # Check if this is a high-value task
     amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
     is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
-    
+
     # Check if retries were exhausted
     if retry_count >= MAX_RETRY_ATTEMPTS:
         reason = "max_retries_exceeded"
         if is_high_value:
             reason = "max_retries_exceeded_high_value"
         return True, reason
-    
+
     # High-value task failed - always escalate for profit protection
     if is_high_value and error_message:
         reason = "high_value_task_failed"
         return True, reason
-    
+
     return False, None
 
 
 async def _escalate_task(db, task, reason: str, error_message: str = None):
     """
     Escalate a task to human review with idempotent notification.
-    
+
     Uses a database transaction (savepoint) to atomically update the task
     status and create the EscalationLog entry. The notification is sent
     after the DB commit succeeds, preventing inconsistent state where the
     task is marked ESCALATION but the log entry is missing.
-    
+
     Idempotency: Uses idempotency_key (task_id_reason) to prevent duplicate
     Telegram notifications on retry.
-    
+
     Args:
         db: Database session
         task: The Task object to escalate
@@ -361,40 +375,46 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
     """
     # Get logger instance
     logger = get_logger(__name__)
-    
+
     # Log the escalation for profit protection
     amount_dollars = (task.amount_paid / 100) if task.amount_paid else 0
     is_high_value = amount_dollars >= HIGH_VALUE_THRESHOLD
-    
+
     logger.warning(f"[ESCALATION] Task {task.id} escalated: {reason}")
-    logger.warning(f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}")
-    logger.warning("[ESCALATION] Human reviewer notification required to prevent refund")
-    
+    logger.warning(
+        f"[ESCALATION] Amount: ${amount_dollars}, High-value: {is_high_value}"
+    )
+    logger.warning(
+        "[ESCALATION] Human reviewer notification required to prevent refund"
+    )
+
     if error_message:
         logger.warning(f"[ESCALATION] Error: {error_message[:200]}...")
-    
+
     # Check for idempotency via EscalationLog
     # Format: "task_id_reason"
     idempotency_key = f"{task.id}_{reason}"
     should_send_notification = False
     escalation_log = None
-    
+
     try:
         # Use a savepoint so that if escalation log fails, we can still
         # update the task status without losing the outer transaction
         db.begin_nested()
-        
+
         # Update task status atomically with escalation log
         task.status = TaskStatus.ESCALATION
         task.escalation_reason = reason
         task.escalated_at = datetime.now(timezone.utc)
         task.last_error = error_message
         task.review_status = ReviewStatus.PENDING
-        
-        escalation_log = db.query(EscalationLog).filter(
-            EscalationLog.idempotency_key == idempotency_key
-        ).first()
-        
+
+        escalation_log = (
+            db.query(EscalationLog)
+            .filter(EscalationLog.idempotency_key == idempotency_key)
+            .first()
+        )
+
         if escalation_log is None:
             # First escalation - create new log
             escalation_log = EscalationLog(
@@ -406,19 +426,18 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
                 domain=task.domain,
                 client_email=task.client_email,
                 notification_sent=False,
-                notification_attempt_count=0
+                notification_attempt_count=0,
             )
             db.add(escalation_log)
-        
+
         # Determine if notification should be sent (before commit)
         should_send_notification = (
-            is_high_value and
-            not escalation_log.notification_sent
+            is_high_value and not escalation_log.notification_sent
         )
-        
+
         # Commit the savepoint - task status + escalation log are now persisted
         db.commit()
-        
+
     except Exception as e:
         db.rollback()
         # If the savepoint fails, still try to update task status
@@ -430,7 +449,7 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
         task.review_status = ReviewStatus.PENDING
         db.commit()
         return
-    
+
     # Send notification AFTER DB commit succeeds to prevent inconsistent state
     if should_send_notification and escalation_log is not None:
         try:
@@ -438,26 +457,32 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
             context = f"Reason: {reason}"
             if error_message:
                 context += f"\nError: {error_message[:200]}"
-            
+
             notification_sent = await notifier.request_human_help(
                 task_id=task.id,
                 context=context,
                 amount_paid=task.amount_paid,
                 domain=task.domain,
-                client_email=task.client_email
+                client_email=task.client_email,
             )
-            
+
             # Update escalation log with notification result
             escalation_log.notification_sent = notification_sent
             escalation_log.notification_attempt_count += 1
             escalation_log.last_notification_attempt_at = datetime.now(timezone.utc)
-            
+
             if notification_sent:
-                logger.info(f"[ESCALATION] Telegram notification sent for high-value task {task.id}")
+                logger.info(
+                    f"[ESCALATION] Telegram notification sent for high-value task {task.id}"
+                )
             else:
-                escalation_log.notification_error = "Notification returned False after retries"
-                logger.warning(f"[ESCALATION] Telegram notification failed for task {task.id}")
-            
+                escalation_log.notification_error = (
+                    "Notification returned False after retries"
+                )
+                logger.warning(
+                    f"[ESCALATION] Telegram notification failed for task {task.id}"
+                )
+
             db.commit()
         except Exception as e:
             # Log error but don't raise - task status is already committed
@@ -476,21 +501,21 @@ async def _escalate_task(db, task, reason: str, error_message: str = None):
 async def process_task_async(task_id: str, use_planning_workflow: bool = True):
     """
     Process a task asynchronously after payment is confirmed.
-    
+
     This function is called as a background task when a task is marked as PAID.
     It retrieves the task from the database, executes the appropriate task
     using the Research & Plan workflow (or TaskRouter as fallback), and updates
     the database with the result.
-    
+
     The Research & Plan workflow includes:
     1. Context Extraction: Agent analyzes uploaded files (PDF/Excel) to extract context
     2. Work Plan Generation: Agent creates a detailed work plan
     3. Plan Execution: Agent executes the plan in the E2B sandbox
     4. Artifact Review: ArtifactReviewer checks the final document against the plan
-    
+
     For high-value tasks (is_high_value=True), the Agent Arena is used to guarantee
     faster completion and higher success rate by running two agents in parallel.
-    
+
     Args:
         task_id: The ID of the task to process
         use_planning_workflow: Whether to use the Research & Plan workflow (default: True)
@@ -498,29 +523,33 @@ async def process_task_async(task_id: str, use_planning_workflow: bool = True):
     # Create a new database session for this background task
     from .database import SessionLocal
     import os
-    
+
     # Initialize logger
     logger = get_logger(__name__)
-    
+
     db = SessionLocal()
     try:
         # Retrieve the task from the database
         task = db.query(Task).filter(Task.id == task_id).first()
-        
+
         if not task:
             logger.error(f"Task {task_id} not found for processing")
             return
-        
+
         if task.status != TaskStatus.PAID:
-            logger.warning(f"Task {task_id} is not in PAID status, current status: {task.status}")
+            logger.warning(
+                f"Task {task_id} is not in PAID status, current status: {task.status}"
+            )
             return
-        
+
         # Get API key from environment
         e2b_api_key = os.environ.get("E2B_API_KEY")
-        
+
         # Build the user request - include title and description for better routing
-        user_request = task.description or f"Create a {task.domain} visualization for {task.title}"
-        
+        user_request = (
+            task.description or f"Create a {task.domain} visualization for {task.title}"
+        )
+
         # Use the CSV data stored in the task, or fall back to sample data if not provided
         csv_data = task.csv_data
         if not csv_data and not task.file_content:
@@ -531,18 +560,18 @@ Marketing,200
 Engineering,300
 Operations,120
 Support,180"""
-        
+
         # =====================================================
         # HIGH-VALUE TASK: Route to Agent Arena for guaranteed success
         # This ensures faster completion and higher success rate for paying clients
         # =====================================================
         if task.is_high_value:
             logger.info("HIGH-VALUE TASK - Routing to Agent Arena")
-            
+
             # Update status to indicate arena processing
             task.status = TaskStatus.PROCESSING
             db.commit()
-            
+
             # Run the arena competition
             arena_result = await run_agent_arena(
                 user_request=user_request,
@@ -559,109 +588,119 @@ Support,180"""
                     "id": task.id,
                     "domain": task.domain,
                     "description": user_request,
-                    "client_email": task.client_email
-                }
+                    "client_email": task.client_email,
+                },
             )
-            
+
             # Extract the winning result
             winner = arena_result.get("winner")
             winning_agent = arena_result.get(winner, {})
             winning_result = winning_agent.get("result", {})
-            
+
             # Get review info from the winning agent
             review_approved = winning_result.get("approved", False)
             review_feedback = winning_result.get("feedback", "")
-            
+
             # Determine output format from work plan if available
             try:
                 plan_data = json.loads(task.work_plan) if task.work_plan else {}
                 output_format = plan_data.get("output_format", "image")
             except (json.JSONDecodeError, AttributeError, TypeError):
                 output_format = "image"
-            
+
             # Store the winning artifact URL
             winning_artifact_url = arena_result.get("winning_artifact_url", "")
-            
+
             if winning_artifact_url:
                 # Store result based on output format
                 task.result_type = output_format
-                
+
                 if output_format in ["docx", "pdf"]:
                     task.result_document_url = winning_artifact_url
                 elif output_format == "xlsx":
                     task.result_spreadsheet_url = winning_artifact_url
                 else:
                     task.result_image_url = winning_artifact_url
-            
+
             # Store arena execution details
             task.execution_log = {
                 "arena_result": arena_result,
                 "winner": winner,
                 "profit_breakdown": {
                     "agent_a": arena_result.get("agent_a", {}).get("profit", {}),
-                    "agent_b": arena_result.get("agent_b", {}).get("profit", {})
-                }
+                    "agent_b": arena_result.get("agent_b", {}).get("profit", {}),
+                },
             }
             task.review_approved = review_approved
             task.review_feedback = review_feedback
             task.retry_count = 0
-            
+
             if review_approved:
                 task.status = TaskStatus.COMPLETED
                 task.completed_at = datetime.utcnow()
                 logger.info(f"COMPLETED via Agent Arena (winner: {winner})")
-                
+
                 # Log success to learning systems
                 experience_logger.log_success(task)
-                
+
                 # Log to arena learning systems
                 try:
                     from ..agent_execution.arena import ArenaLearningLogger
+
                     arena_logger = ArenaLearningLogger()
-                    arena_logger.log_winner(arena_result, {
-                        "id": task.id,
-                        "domain": task.domain,
-                        "description": user_request
-                    })
+                    arena_logger.log_winner(
+                        arena_result,
+                        {
+                            "id": task.id,
+                            "domain": task.domain,
+                            "description": user_request,
+                        },
+                    )
                 except Exception as e:
                     logger.error(f"Error logging arena learning: {e}")
             else:
                 # Arena failed - escalate for human review
-                error_message = f"Arena competition failed. Winner feedback: {review_feedback}"
+                error_message = (
+                    f"Arena competition failed. Winner feedback: {review_feedback}"
+                )
                 task.last_error = error_message
                 await _escalate_task(db, task, "arena_failed", error_message)
                 logger.warning("Arena FAILED - ESCALATED for human review")
-            
+
             db.commit()
             logger.info(f"processed via Arena, final status: {task.status}")
             return
-        
+
         # Update task status to PLANNING if using planning workflow
         if use_planning_workflow:
             task.status = TaskStatus.PLANNING
             db.commit()
-        
+
         if use_planning_workflow:
             # =====================================================
             # RESEARCH & PLAN WORKFLOW (NEW AUTONOMY CORE)
             # =====================================================
             logger.info("Using Research & Plan workflow")
-            
+
             # Step 1 & 2: Extract context and generate work plan
             if use_planning_workflow:
                 task.plan_status = "GENERATING"  # Update plan status
                 db.commit()
-                
+
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Get preferences BEFORE generating work plan
                 client_preferences = None
                 if task.client_email:
                     logger.info(f"Loading client preferences for {task.client_email}")
-                    client_preferences = get_client_preferences_from_tasks(task.client_email)
+                    client_preferences = get_client_preferences_from_tasks(
+                        task.client_email
+                    )
                     if client_preferences.get("has_history"):
-                        logger.info(f"Found {client_preferences['total_previous_tasks']} previous tasks with preferences")
+                        logger.info(
+                            f"Found {client_preferences['total_previous_tasks']} previous tasks with preferences"
+                        )
                     else:
                         logger.info("No previous task history found")
-                
+
                 # Extract context from files
                 context_extractor = ContextExtractor()
                 extracted_context = context_extractor.extract_context(
@@ -669,37 +708,41 @@ Support,180"""
                     csv_data=csv_data,
                     filename=task.filename,
                     file_type=task.file_type,
-                    domain=task.domain
+                    domain=task.domain,
                 )
-                
+
                 # Store extracted context in task
                 task.extracted_context = extracted_context
-                
+
                 # Generate work plan WITH client preferences
                 plan_generator = WorkPlanGenerator()
                 plan_result = plan_generator.create_work_plan(
                     user_request=user_request,
                     domain=task.domain,
                     extracted_context=extracted_context,
-                    client_preferences=client_preferences  # Pass preferences to avoid review failures
+                    client_preferences=client_preferences,  # Pass preferences to avoid review failures
                 )
-                
+
                 if plan_result.get("success"):
                     work_plan = plan_result["plan"]
                     task.work_plan = json.dumps(work_plan)
                     task.plan_status = "APPROVED"
                     task.plan_generated_at = datetime.now(timezone.utc)
-                    logger.info(f"Work plan generated - {work_plan.get('title', 'Untitled')}")
+                    logger.info(
+                        f"Work plan generated - {work_plan.get('title', 'Untitled')}"
+                    )
                 else:
                     task.plan_status = "REJECTED"
-                    logger.warning(f"Plan generation failed - {plan_result.get('error')}")
-                
+                    logger.warning(
+                        f"Plan generation failed - {plan_result.get('error')}"
+                    )
+
                 db.commit()
-            
+
             # Step 3: Execute the plan in E2B sandbox
             task.status = TaskStatus.PROCESSING
             db.commit()
-            
+
             # Execute the workflow
             orchestrator = ResearchAndPlanOrchestrator()
             workflow_result = orchestrator.execute_workflow(
@@ -709,33 +752,38 @@ Support,180"""
                 file_content=task.file_content,
                 filename=task.filename,
                 file_type=task.file_type,
-                api_key=e2b_api_key
+                api_key=e2b_api_key,
             )
-            
+
             # Store execution log
             task.execution_log = workflow_result.get("steps", {})
-            task.retry_count = workflow_result.get("steps", {}).get("plan_execution", {}).get("result", {}).get("retry_count", 0)
-            
+            task.retry_count = (
+                workflow_result.get("steps", {})
+                .get("plan_execution", {})
+                .get("result", {})
+                .get("retry_count", 0)
+            )
+
             # Step 4: Get review results
             review_result = workflow_result.get("steps", {}).get("artifact_review", {})
             task.review_approved = review_result.get("approved", False)
             task.review_feedback = review_result.get("feedback", "")
             task.review_attempts = review_result.get("attempts", 0)
-            
+
             if workflow_result.get("success"):
                 # Get the artifact URL
                 artifact_url = workflow_result.get("artifact_url", "")
-                
+
                 # Determine output format from work plan
                 try:
                     plan_data = json.loads(task.work_plan) if task.work_plan else {}
                     output_format = plan_data.get("output_format", "image")
                 except (json.JSONDecodeError, AttributeError, TypeError):
                     output_format = "image"
-                
+
                 # Store result based on output format (diverse output types)
                 task.result_type = output_format
-                
+
                 if output_format in ["docx", "pdf"]:
                     # For documents
                     task.result_document_url = artifact_url
@@ -745,16 +793,18 @@ Support,180"""
                 else:
                     # For images/visualizations (default)
                     task.result_image_url = artifact_url
-                
+
                 task.status = TaskStatus.COMPLETED
                 task.completed_at = datetime.utcnow()
-                logger.info(f"Completed successfully with Research & Plan workflow (output: {output_format})")
-                
+                logger.info(
+                    f"Completed successfully with Research & Plan workflow (output: {output_format})"
+                )
+
                 # ==========================================================
                 # NEW: Log this success to our continuous learning dataset!
                 # ==========================================================
                 experience_logger.log_success(task)
-                
+
                 # EXPERIENCE VECTOR DATABASE (RAG for Few-Shot Learning): Store successful task
                 if EXPERIENCE_DB_AVAILABLE and task.review_approved:
                     # Extract the generated code from execution log if available
@@ -763,22 +813,28 @@ Support,180"""
                         plan_exec = task.execution_log.get("plan_execution", {})
                         if plan_exec.get("result", {}).get("code"):
                             generated_code = plan_exec["result"]["code"]
-                    
+
                     # Store the experience for future few-shot learning
                     if generated_code:
                         # Extract CSV headers
                         csv_headers = []
                         if csv_data:
-                            first_line = csv_data.strip().split('\n')[0]
-                            csv_headers = [h.strip() for h in first_line.split(',')]
-                        
+                            first_line = csv_data.strip().split("\n")[0]
+                            csv_headers = [h.strip() for h in first_line.split(",")]
+
                         # Use Background Job Queue for non-blocking storage (Issue #6, #25)
-                        queue = get_background_job_queue() if EXPERIENCE_DB_AVAILABLE else None
-                        
+                        queue = (
+                            get_background_job_queue()
+                            if EXPERIENCE_DB_AVAILABLE
+                            else None
+                        )
+
                         # Wrap sync storage in async for background queue
                         async def async_store_experience(**kwargs):
-                            return await asyncio.to_thread(store_successful_task, **kwargs)
-                            
+                            return await asyncio.to_thread(
+                                store_successful_task, **kwargs
+                            )
+
                         if queue and queue._running:
                             await queue.queue_job(
                                 job_type="experience_storage",
@@ -790,10 +846,12 @@ Support,180"""
                                     "domain": task.domain,
                                     "task_type": "visualization",
                                     "output_format": output_format,
-                                    "csv_headers": csv_headers
-                                }
+                                    "csv_headers": csv_headers,
+                                },
                             )
-                            logger.info("Queued experience storage for few-shot learning")
+                            logger.info(
+                                "Queued experience storage for few-shot learning"
+                            )
                         else:
                             # Fallback to sync storage (blocking but safe for simple cases)
                             if EXPERIENCE_DB_AVAILABLE:
@@ -804,10 +862,12 @@ Support,180"""
                                     domain=task.domain,
                                     task_type="visualization",
                                     output_format=output_format,
-                                    csv_headers=csv_headers
+                                    csv_headers=csv_headers,
                                 )
-                                logger.info("Stored experience synchronously (queue not running)")
-                
+                                logger.info(
+                                    "Stored experience synchronously (queue not running)"
+                                )
+
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences after task completion
                 if task.client_email and task.review_feedback:
                     logger.info("Saving client preferences for future tasks")
@@ -817,7 +877,7 @@ Support,180"""
                         review_feedback=task.review_feedback,
                         review_approved=task.review_approved or False,
                         domain=task.domain,
-                        db_session=db
+                        db_session=db,
                     )
                 else:
                     logger.info("No client email or feedback to save preferences")
@@ -825,14 +885,12 @@ Support,180"""
                 # Workflow failed - check if should escalate instead of marking as FAILED
                 error_message = workflow_result.get("message", "Workflow failed")
                 task.last_error = error_message
-                
+
                 # Check if should escalate based on retry count and high-value status
                 should_escalate, escalation_reason = _should_escalate_task(
-                    task, 
-                    task.retry_count or 0, 
-                    error_message
+                    task, task.retry_count or 0, error_message
                 )
-                
+
                 if should_escalate:
                     # ESCALATE to human review (Pillar 1.7)
                     await _escalate_task(db, task, escalation_reason, error_message)
@@ -842,7 +900,7 @@ Support,180"""
                     task.status = TaskStatus.FAILED
                     task.review_feedback = error_message
                     logger.error(f"Failed - {error_message}")
-                
+
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences even on failure
                 if task.client_email and task.review_feedback:
                     logger.info("Saving client preferences (from failed task)")
@@ -852,29 +910,29 @@ Support,180"""
                         review_feedback=task.review_feedback,
                         review_approved=False,  # Failed task
                         domain=task.domain,
-                        db_session=db
+                        db_session=db,
                     )
-        
+
         else:
             # =====================================================
             # LEGACY WORKFLOW (Original TaskRouter)
             # =====================================================
             logger.info("Using legacy TaskRouter workflow")
-            
+
             # Fetch few-shot examples asynchronously (Issue #6 Decoupling)
             few_shot_examples = []
             if EXPERIENCE_DB_AVAILABLE:
                 try:
                     rag_service = get_async_rag_service(get_experience_db())
                     few_shot_examples = await rag_service.get_few_shot_examples(
-                        user_request=user_request,
-                        domain=task.domain,
-                        top_k=2
+                        user_request=user_request, domain=task.domain, top_k=2
                     )
-                    logger.info(f"Retrieved {len(few_shot_examples)} few-shot examples via async service")
+                    logger.info(
+                        f"Retrieved {len(few_shot_examples)} few-shot examples via async service"
+                    )
                 except Exception as rag_err:
                     logger.warning(f"Async RAG retrieval failed: {rag_err}")
-            
+
             # Call executor with pre-fetched examples
             result = execute_task(
                 domain=task.domain,
@@ -883,50 +941,52 @@ Support,180"""
                 file_type=task.file_type,
                 file_content=task.file_content,
                 filename=task.filename,
-                few_shot_examples=few_shot_examples
+                few_shot_examples=few_shot_examples,
             )
-            
+
             # Update the task with the result based on output format (diverse output types)
             if result.get("success"):
                 # Check if this is a document/spreadsheet (non-image) result
                 output_format = result.get("output_format", "image")
-                
+
                 # Store result_type for tracking
                 task.result_type = output_format
-                
+
                 if output_format in [OutputFormat.DOCX, OutputFormat.PDF]:
                     # For documents, store in result_document_url
-                    task.result_document_url = result.get("file_url", result.get("image_url", ""))
+                    task.result_document_url = result.get(
+                        "file_url", result.get("image_url", "")
+                    )
                 elif output_format == OutputFormat.XLSX:
                     # For spreadsheets, store in result_spreadsheet_url
-                    task.result_spreadsheet_url = result.get("file_url", result.get("image_url", ""))
+                    task.result_spreadsheet_url = result.get(
+                        "file_url", result.get("image_url", "")
+                    )
                 else:
                     # For images/visualizations, store in result_image_url
                     task.result_image_url = result.get("image_url", "")
-                
+
                 task.status = TaskStatus.COMPLETED
                 task.completed_at = datetime.utcnow()
                 logger.info(f"completed successfully with format: {output_format}")
-                
+
                 # ==========================================================
                 # NEW: Log this success to our continuous learning dataset!
                 # ==========================================================
                 experience_logger.log_success(task)
             else:
                 # Legacy workflow failed - check if should escalate
-                error_message = result.get('message', 'Unknown error')
+                error_message = result.get("message", "Unknown error")
                 task.last_error = error_message
-                
+
                 # Get retry count from result if available
                 retry_count = result.get("retry_count", 0)
-                
+
                 # Check if should escalate based on retry count and high-value status
                 should_escalate, escalation_reason = _should_escalate_task(
-                    task, 
-                    retry_count, 
-                    error_message
+                    task, retry_count, error_message
                 )
-                
+
                 if should_escalate:
                     # ESCALATE to human review (Pillar 1.7)
                     await _escalate_task(db, task, escalation_reason, error_message)
@@ -936,10 +996,10 @@ Support,180"""
                     task.status = TaskStatus.FAILED
                     task.review_feedback = error_message
                     logger.error(f"failed: {error_message}")
-        
+
         db.commit()
         logger.info(f"processed, final status: {task.status}")
-        
+
     except Exception as e:
         logger.error(f"Error processing task: {str(e)}")
         # Check if should escalate instead of marking as failed
@@ -948,14 +1008,12 @@ Support,180"""
             if task:
                 error_message = str(e)
                 task.last_error = error_message
-                
+
                 # Check if should escalate based on high-value status
                 should_escalate, escalation_reason = _should_escalate_task(
-                    task, 
-                    task.retry_count or 0, 
-                    error_message
+                    task, task.retry_count or 0, error_message
                 )
-                
+
                 if should_escalate:
                     # ESCALATE to human review (Pillar 1.7)
                     await _escalate_task(db, task, escalation_reason, error_message)
@@ -969,7 +1027,6 @@ Support,180"""
             pass
     finally:
         db.close()
-
 
 
 # Configure Stripe (use environment variable in production)
@@ -1007,22 +1064,20 @@ URGENCY_MULTIPLIERS = {
 
 
 def calculate_task_price(
-    domain: str,
-    complexity: str = "medium",
-    urgency: str = "standard"
+    domain: str, complexity: str = "medium", urgency: str = "standard"
 ) -> int:
     """
     Calculate task price using the Task Price Formula:
     Price = Base Rate × Complexity × Urgency
-    
+
     Args:
         domain: The domain of the task (accounting, legal, data_analysis)
         complexity: Task complexity (simple, medium, complex)
         urgency: Task urgency (standard, rush, urgent)
-    
+
     Returns:
         Calculated price in USD (cents for Stripe)
-    
+
     Raises:
         ValueError: If domain, complexity, or urgency is invalid
     """
@@ -1030,24 +1085,28 @@ def calculate_task_price(
     if domain not in DOMAIN_BASE_RATES:
         valid_domains = ", ".join(DOMAIN_BASE_RATES.keys())
         raise ValueError(f"Invalid domain '{domain}'. Must be one of: {valid_domains}")
-    
+
     # Validate complexity
     if complexity not in COMPLEXITY_MULTIPLIERS:
         valid_complexities = ", ".join(COMPLEXITY_MULTIPLIERS.keys())
-        raise ValueError(f"Invalid complexity '{complexity}'. Must be one of: {valid_complexities}")
-    
+        raise ValueError(
+            f"Invalid complexity '{complexity}'. Must be one of: {valid_complexities}"
+        )
+
     # Validate urgency
     if urgency not in URGENCY_MULTIPLIERS:
         valid_urgencies = ", ".join(URGENCY_MULTIPLIERS.keys())
-        raise ValueError(f"Invalid urgency '{urgency}'. Must be one of: {valid_urgencies}")
-    
+        raise ValueError(
+            f"Invalid urgency '{urgency}'. Must be one of: {valid_urgencies}"
+        )
+
     # Calculate price: Base Rate × Complexity × Urgency
     base_rate = DOMAIN_BASE_RATES[domain]
     complexity_multiplier = COMPLEXITY_MULTIPLIERS[complexity]
     urgency_multiplier = URGENCY_MULTIPLIERS[urgency]
-    
+
     price = base_rate * complexity_multiplier * urgency_multiplier
-    
+
     # Round to nearest dollar
     return round(price)
 
@@ -1062,6 +1121,7 @@ BASE_URL = os.environ.get("BASE_URL", "http://localhost:5173")
 
 class TaskSubmission(BaseModel):
     """Model for task submission data."""
+
     domain: str
     title: str
     description: str
@@ -1092,9 +1152,7 @@ class TaskSubmission(BaseModel):
                 # Validate using the comprehensive pipeline
                 # This performs sanitization, extension check, size check, and signature check
                 validate_file_upload(
-                    filename=filename,
-                    file_content_base64=v,
-                    file_type=file_type
+                    filename=filename, file_content_base64=v, file_type=file_type
                 )
             except ValueError as e:
                 # Propagate validation errors as Pydantic errors (returns 422 to client)
@@ -1112,9 +1170,9 @@ class TaskSubmission(BaseModel):
         return v
 
 
-
 class CheckoutResponse(BaseModel):
     """Model for checkout session response."""
+
     session_id: str
     url: str
     amount: int
@@ -1129,21 +1187,21 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize DB and Observability
     init_db()
     init_observability()
-    
+
     # Initialize Background Job Queue (Issue #6, #25)
     if EXPERIENCE_DB_AVAILABLE:
         queue = await get_background_job_queue(max_workers=3)
         logger.info("Background job queue started")
-        
+
         # Pre-initialize RAG service
         vector_db = get_experience_db()
         if vector_db:
             get_async_rag_service(vector_db)
             logger.info("Async RAG service initialized")
-    
+
     # Start autonomous scanning loop if enabled
     await start_autonomous_loop()
-    
+
     yield
     # Shutdown logic
     if EXPERIENCE_DB_AVAILABLE:
@@ -1169,23 +1227,21 @@ async def root():
 async def create_checkout_session(task: TaskSubmission, db: Session = Depends(get_db)):
     """
     Create a Stripe checkout session based on task submission.
-    
+
     Calculates price using the Task Price Formula (Pillar 1.4):
     Price = Base Rate × Complexity × Urgency
-    
+
     Creates a real Stripe checkout session.
     Stores the task in the database with PENDING status.
     """
     # Calculate price using the Task Price Formula
     try:
         amount = calculate_task_price(
-            domain=task.domain,
-            complexity=task.complexity,
-            urgency=task.urgency
+            domain=task.domain, complexity=task.complexity, urgency=task.urgency
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
     try:
         # Sanitize filename and validate file if present (Issue #34)
         sanitized_filename = task.filename
@@ -1194,15 +1250,17 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
                 sanitized_filename, _, _ = validate_file_upload(
                     filename=task.filename,
                     file_content_base64=task.file_content,
-                    file_type=task.file_type
+                    file_type=task.file_type,
                 )
             except ValueError as e:
                 # Should have been caught by Pydantic validator, but safety first
-                raise HTTPException(status_code=422, detail=f"File validation failed: {str(e)}")
+                raise HTTPException(
+                    status_code=422, detail=f"File validation failed: {str(e)}"
+                )
 
         # Determine if this is a high-value task (Pillar 1.7 - Profit Protection)
         is_high_value = amount >= HIGH_VALUE_THRESHOLD
-        
+
         # Create a task in the database with PENDING status
         new_task = Task(
             id=str(uuid.uuid4()),
@@ -1217,46 +1275,53 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
             filename=sanitized_filename,  # Store sanitized filename (Issue #34)
             client_email=task.client_email,  # Store client email for history tracking
             amount_paid=amount * 100,  # Store amount in cents
-            delivery_token=secrets.token_urlsafe(32),  # Cryptographically strong token (Issue #18)
-            delivery_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=DELIVERY_TOKEN_TTL_HOURS),
-            is_high_value=is_high_value  # Mark as high-value for profit protection
+            delivery_token=secrets.token_urlsafe(
+                32
+            ),  # Cryptographically strong token (Issue #18)
+            delivery_token_expires_at=datetime.now(timezone.utc)
+            + timedelta(hours=DELIVERY_TOKEN_TTL_HOURS),
+            is_high_value=is_high_value,  # Mark as high-value for profit protection
         )
         db.add(new_task)
         db.commit()
         db.refresh(new_task)
-        
+
         # Create Stripe checkout session
         checkout_session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{
-                'price_data': {
-                    'currency': 'usd',
-                    'product_data': {
-                        'name': f'{task.domain.title()} Task: {task.title}',
-                        'description': task.description[:500] if task.description else '',
+            payment_method_types=["card"],
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {
+                            "name": f"{task.domain.title()} Task: {task.title}",
+                            "description": task.description[:500]
+                            if task.description
+                            else "",
+                        },
+                        "unit_amount": amount * 100,  # Stripe uses cents
                     },
-                    'unit_amount': amount * 100,  # Stripe uses cents
-                },
-                'quantity': 1,
-            }],
-            mode='payment',
-            success_url=f'{BASE_URL}/success?session_id={{CHECKOUT_SESSION_ID}}',
-            cancel_url=f'{BASE_URL}/cancel',
+                    "quantity": 1,
+                }
+            ],
+            mode="payment",
+            success_url=f"{BASE_URL}/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{BASE_URL}/cancel",
             metadata={
-                'task_id': new_task.id,
-                'domain': task.domain,
-                'title': task.title,
+                "task_id": new_task.id,
+                "domain": task.domain,
+                "title": task.title,
             },
             # Inform user that document generation may take up to 10 minutes
-            billing_address_collection='required',
+            billing_address_collection="required",
             shipping_address_collection=None,
             customer_email=task.client_email,
         )
-        
+
         # Update task with Stripe session ID
         new_task.stripe_session_id = checkout_session.id
         db.commit()
-        
+
         # Generate client auth token for dashboard access (Issue #17)
         client_token = None
         if task.client_email:
@@ -1268,14 +1333,14 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
             amount=amount,
             domain=task.domain,
             title=task.title,
-            client_auth_token=client_token
+            client_auth_token=client_token,
         )
-        
+
     except stripe.error.APIConnectionError as e:
         logger.error(f"Stripe network error: {e}")
         raise HTTPException(
             status_code=503,
-            detail="Stripe API is temporarily unavailable (network timeout). Please try again later."
+            detail="Stripe API is temporarily unavailable (network timeout). Please try again later.",
         )
     except stripe.error.StripeError as e:
         logger.error(f"Stripe general error: {e}")
@@ -1284,18 +1349,19 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
         logger.error(f"Database operational error: {e}")
         raise HTTPException(
             status_code=500,
-            detail="Database error occurred. Our team has been notified."
+            detail="Database error occurred. Our team has been notified.",
         )
     except Exception as e:
         # Check for concurrency conflicts (Issue #29)
         from sqlalchemy.orm.exc import StaleDataError
+
         if isinstance(e, StaleDataError):
             logger.warning(f"Concurrency conflict detected: {e}")
             raise HTTPException(
                 status_code=409,
-                detail="A concurrency conflict occurred. Please try again."
+                detail="A concurrency conflict occurred. Please try again.",
             )
-        
+
         logger.error(f"Unexpected error creating checkout session: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
@@ -1304,7 +1370,7 @@ async def create_checkout_session(task: TaskSubmission, db: Session = Depends(ge
 async def get_domains():
     """
     Get available domains and their pricing configuration.
-    
+
     Returns:
         - domains: List of available domains with base rates
         - complexity: Available complexity levels and their multipliers
@@ -1312,7 +1378,11 @@ async def get_domains():
     """
     return {
         "domains": [
-            {"value": domain, "label": domain.replace("_", " ").title(), "base_price": price}
+            {
+                "value": domain,
+                "label": domain.replace("_", " ").title(),
+                "base_price": price,
+            }
             for domain, price in DOMAIN_BASE_RATES.items()
         ],
         "complexity": [
@@ -1322,24 +1392,22 @@ async def get_domains():
         "urgency": [
             {"value": key, "label": key.title(), "multiplier": value}
             for key, value in URGENCY_MULTIPLIERS.items()
-        ]
+        ],
     }
 
 
 @app.get("/api/calculate-price")
 async def get_price_estimate(
-    domain: str,
-    complexity: str = "medium",
-    urgency: str = "standard"
+    domain: str, complexity: str = "medium", urgency: str = "standard"
 ):
     """
     Calculate a price estimate based on domain, complexity, and urgency.
-    
+
     Query parameters:
         domain: The task domain (accounting, legal, data_analysis)
         complexity: Task complexity (simple, medium, complex)
         urgency: Task urgency (standard, rush, urgent)
-    
+
     Returns:
         Calculated price and breakdown of the calculation
     """
@@ -1348,7 +1416,7 @@ async def get_price_estimate(
         base_rate = DOMAIN_BASE_RATES[domain]
         complexity_mult = COMPLEXITY_MULTIPLIERS[complexity]
         urgency_mult = URGENCY_MULTIPLIERS[urgency]
-        
+
         return {
             "domain": domain,
             "complexity": complexity,
@@ -1357,11 +1425,10 @@ async def get_price_estimate(
             "complexity_multiplier": complexity_mult,
             "urgency_multiplier": urgency_mult,
             "calculated_price": amount,
-            "formula": f"${base_rate} × {complexity_mult} × {urgency_mult} = ${amount}"
+            "formula": f"${base_rate} × {complexity_mult} × {urgency_mult} = ${amount}",
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 
 @app.post("/api/webhook")
@@ -1369,97 +1436,97 @@ async def stripe_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    stripe_signature: str = Header(None)
+    stripe_signature: str = Header(None),
 ):
     """
     Stripe webhook endpoint to handle checkout events.
-    
+
     Listens for checkout.session.completed events and updates task status to PAID.
     When a task is marked as PAID, a background task is added to process the task asynchronously.
     """
     payload = await request.body()
-    
-    try:
-        # Verify webhook signature if secret is configured
-        if STRIPE_WEBHOOK_SECRET != "whsec_placeholder":
-            try:
-                event = stripe.Webhook.construct_event(
-                    payload, stripe_signature, STRIPE_WEBHOOK_SECRET
+
+    # Get all active webhook secrets from the database
+    secrets = db.query(WebhookSecret).filter(WebhookSecret.is_active).all()
+
+    event = None
+    for secret in secrets:
+        try:
+            event = stripe.Webhook.construct_event(
+                payload, stripe_signature, secret.secret
+            )
+            # If successful, break the loop
+            break
+        except stripe.error.SignatureVerificationError:
+            # Try the next secret
+            continue
+
+    if event is None:
+        return JSONResponse(status_code=400, content={"error": "Invalid signature"})
+
+    # Handle the checkout.session.completed event
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        session_id = session.get("id")
+
+        # Look up task by stripe_session_id
+        task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
+
+        if task:
+            # Update task status to PAID
+            task.status = TaskStatus.PAID
+            db.commit()
+
+            # Add background task to process the visualization asynchronously (Issue #6, #25)
+            queue = get_background_job_queue() if EXPERIENCE_DB_AVAILABLE else None
+            if queue and queue._running:
+                await queue.queue_job(
+                    job_type="task_processing",
+                    task_func=process_task_async,
+                    task_args=(task.id,),
+                    max_retries=3,
                 )
-            except stripe.error.SignatureVerificationError:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "Invalid signature"}
-                )
-        else:
-            # For development/testing without webhook secret
-            event = json.loads(payload)
-        
-        # Handle the checkout.session.completed event
-        if event['type'] == 'checkout.session.completed':
-            session = event['data']['object']
-            session_id = session.get('id')
-            
-            # Look up task by stripe_session_id
-            task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
-            
-            if task:
-                # Update task status to PAID
-                task.status = TaskStatus.PAID
-                db.commit()
-                
-                # Add background task to process the visualization asynchronously (Issue #6, #25)
-                queue = get_background_job_queue() if EXPERIENCE_DB_AVAILABLE else None
-                if queue and queue._running:
-                    await queue.queue_job(
-                        job_type="task_processing",
-                        task_func=process_task_async,
-                        task_args=(task.id,),
-                        max_retries=3
-                    )
-                else:
-                    background_tasks.add_task(process_task_async, task.id)
-                
-                return {"status": "success", "message": f"Task {task.id} marked as PAID, processing started"}
             else:
-                return {"status": "warning", "message": f"No task found for session {session_id}"}
-        
-        # Handle other event types if needed
-        elif event['type'] == 'checkout.session.expired':
-            session = event['data']['object']
-            session_id = session.get('id')
-            
-            task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
-            
-            if task:
-                task.status = TaskStatus.FAILED
-                db.commit()
-                
-                return {"status": "success", "message": f"Task {task.id} marked as FAILED (expired)"}
-        
-        # Return 200 for events we don't handle
-        return {"status": "received"}
-        
-    except json.JSONDecodeError:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Invalid JSON payload"}
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Internal error: {str(e)}"}
-        )
+                background_tasks.add_task(process_task_async, task.id)
+
+            return {
+                "status": "success",
+                "message": f"Task {task.id} marked as PAID, processing started",
+            }
+        else:
+            return {
+                "status": "warning",
+                "message": f"No task found for session {session_id}",
+            }
+
+    # Handle other event types if needed
+    elif event["type"] == "checkout.session.expired":
+        session = event["data"]["object"]
+        session_id = session.get("id")
+
+        task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
+
+        if task:
+            task.status = TaskStatus.FAILED
+            db.commit()
+
+            return {
+                "status": "success",
+                "message": f"Task {task.id} marked as FAILED (expired)",
+            }
+
+    # Return 200 for events we don't handle
+    return {"status": "received"}
 
 
 @app.get("/api/tasks/{task_id}")
 async def get_task(task_id: str, db: Session = Depends(get_db)):
     """Get task by ID."""
     task = db.query(Task).filter(Task.id == task_id).first()
-    
+
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     return task.to_dict()
 
 
@@ -1467,29 +1534,29 @@ async def get_task(task_id: str, db: Session = Depends(get_db)):
 async def get_task_by_session(session_id: str, db: Session = Depends(get_db)):
     """
     Get task ID and authentication token by Stripe checkout session ID.
-    
+
     This endpoint is used by the Success component after Stripe redirects
     back to the application with the session_id in the URL.
-    
+
     Returns task ID and client authentication token (if email was provided)
     so the frontend can store the token for authenticated dashboard requests.
-    
+
     Security: Issue #17 - Client authentication for dashboard access
     """
     task = db.query(Task).filter(Task.stripe_session_id == session_id).first()
-    
+
     if not task:
         raise HTTPException(status_code=404, detail="Task not found for this session")
-    
+
     # Generate client auth token if email was provided
     client_token = None
     if task.client_email:
         client_token = generate_client_token(task.client_email)
-    
+
     return {
         "task_id": task.id,
         "client_email": task.client_email,
-        "client_auth_token": client_token
+        "client_auth_token": client_token,
     }
 
 
@@ -1502,10 +1569,10 @@ async def get_task_by_session(session_id: str, db: Session = Depends(get_db)):
 
 # Repeat-client discount tiers
 REPEAT_CLIENT_DISCOUNTS = {
-    0: 0.0,      # First order - no discount
-    1: 0.05,     # 2nd order - 5% discount
-    2: 0.10,     # 3rd order - 10% discount
-    5: 0.15,     # 6th+ order - 15% discount
+    0: 0.0,  # First order - no discount
+    1: 0.05,  # 2nd order - 5% discount
+    2: 0.10,  # 3rd order - 10% discount
+    5: 0.15,  # 6th+ order - 15% discount
 }
 
 # Maximum discount cap
@@ -1515,10 +1582,10 @@ MAX_DISCOUNT = 0.15
 def get_client_discount(completed_tasks_count: int) -> float:
     """
     Calculate repeat-client discount based on number of completed tasks.
-    
+
     Args:
         completed_tasks_count: Number of previously completed tasks for the client
-    
+
     Returns:
         Discount percentage (0.0 to 0.15)
     """
@@ -1544,9 +1611,7 @@ def get_discount_tier(completed_tasks_count: int) -> int:
 
 @app.get("/api/client/history")
 async def get_client_task_history(
-    email: str,
-    token: str,
-    db: Session = Depends(get_db)
+    email: str, token: str, db: Session = Depends(get_db)
 ):
     """
     Get task history for a client by email (authenticated — Issue #17).
@@ -1561,22 +1626,27 @@ async def get_client_task_history(
     if not verify_client_token(email, token):
         raise HTTPException(status_code=401, detail="Invalid authentication token")
     # Get all tasks for this client
-    tasks = db.query(Task).filter(Task.client_email == email).order_by(
-        Task.id.desc()  # Most recent first
-    ).all()
-    
+    tasks = (
+        db.query(Task)
+        .filter(Task.client_email == email)
+        .order_by(
+            Task.id.desc()  # Most recent first
+        )
+        .all()
+    )
+
     # Calculate statistics
     total_tasks = len(tasks)
     completed_tasks = [t for t in tasks if t.status == TaskStatus.COMPLETED]
     completed_count = len(completed_tasks)
-    
+
     # Calculate total spent (in dollars)
     total_spent = sum(t.amount_paid or 0 for t in completed_tasks) / 100
-    
+
     # Get current discount
     current_discount = get_client_discount(completed_count)
     current_tier = get_discount_tier(completed_count)
-    
+
     # Determine next discount tier
     next_tier_info = None
     if current_tier == 0:
@@ -1587,7 +1657,7 @@ async def get_client_task_history(
         next_tier_info = {"tasks_needed": 3, "discount": 0.15, "label": "15% off"}
     else:
         next_tier_info = None  # Already at max discount
-    
+
     # Convert tasks to dictionaries
     task_list = []
     for task in tasks:
@@ -1596,7 +1666,7 @@ async def get_client_task_history(
         if task.amount_paid:
             task_dict["amount_dollars"] = task.amount_paid / 100
         task_list.append(task_dict)
-    
+
     return {
         "tasks": task_list,
         "stats": {
@@ -1604,22 +1674,20 @@ async def get_client_task_history(
             "completed_tasks": completed_count,
             "in_progress_tasks": len([t for t in tasks if t.status == TaskStatus.PAID]),
             "failed_tasks": len([t for t in tasks if t.status == TaskStatus.FAILED]),
-            "total_spent": round(total_spent, 2)
+            "total_spent": round(total_spent, 2),
         },
         "discount": {
             "current_tier": current_tier,
             "discount_percentage": current_discount,
-            "completed_orders": completed_count
+            "completed_orders": completed_count,
         },
-        "next_discount": next_tier_info
+        "next_discount": next_tier_info,
     }
 
 
 @app.get("/api/client/discount-info")
 async def get_client_discount_info(
-    email: str,
-    token: str,
-    db: Session = Depends(get_db)
+    email: str, token: str, db: Session = Depends(get_db)
 ):
     """
     Get discount information for a client (authenticated — Issue #17).
@@ -1629,14 +1697,15 @@ async def get_client_discount_info(
     if not verify_client_token(email, token):
         raise HTTPException(status_code=401, detail="Invalid authentication token")
     # Count completed tasks for this client
-    completed_count = db.query(Task).filter(
-        Task.client_email == email,
-        Task.status == TaskStatus.COMPLETED
-    ).count()
-    
+    completed_count = (
+        db.query(Task)
+        .filter(Task.client_email == email, Task.status == TaskStatus.COMPLETED)
+        .count()
+    )
+
     current_discount = get_client_discount(completed_count)
     current_tier = get_discount_tier(completed_count)
-    
+
     # Determine next discount tier
     next_tier_info = None
     if current_tier == 0:
@@ -1645,7 +1714,7 @@ async def get_client_discount_info(
         next_tier_info = {"tasks_needed": 1, "discount": 0.10, "label": "10% off"}
     elif current_tier == 2:
         next_tier_info = {"tasks_needed": 3, "discount": 0.15, "label": "15% off"}
-    
+
     return {
         "email": email,
         "completed_orders": completed_count,
@@ -1657,7 +1726,7 @@ async def get_client_discount_info(
             {"tier": 1, "label": "Returning Client", "min_orders": 1, "discount": 0.05},
             {"tier": 2, "label": "Loyal Client", "min_orders": 2, "discount": 0.10},
             {"tier": 5, "label": "VIP Client", "min_orders": 5, "discount": 0.15},
-        ]
+        ],
     }
 
 
@@ -1666,13 +1735,13 @@ def _check_delivery_ip_rate_limit(ip: str) -> bool:
     entry = _delivery_ip_rate_limits.get(ip)
     if entry is None:
         return True
-    
+
     attempt_count, first_attempt_ts = entry
     # Reset if lockout window has passed
     if _time.time() - first_attempt_ts > DELIVERY_IP_LOCKOUT_SECONDS:
         del _delivery_ip_rate_limits[ip]
         return True
-        
+
     return attempt_count < DELIVERY_MAX_ATTEMPTS_PER_IP
 
 
@@ -1688,10 +1757,7 @@ def _record_ip_delivery_attempt(ip: str) -> None:
 
 @app.get("/api/delivery/{task_id}/{token}")
 async def get_secure_delivery(
-    task_id: str,
-    token: str,
-    request: Request,
-    db: Session = Depends(get_db)
+    task_id: str, token: str, request: Request, db: Session = Depends(get_db)
 ) -> DeliveryResponse:
     """
     Secure delivery link endpoint with comprehensive validation (Issue #18).
@@ -1723,14 +1789,22 @@ async def get_secure_delivery(
     # 2. IP-level rate limiting (Issue #18)
     if not _check_delivery_ip_rate_limit(client_ip):
         logger.warning(f"[DELIVERY] IP rate limited: ip={client_ip}")
-        raise HTTPException(status_code=429, detail="Too many delivery requests from your IP. Try again later.")
+        raise HTTPException(
+            status_code=429,
+            detail="Too many delivery requests from your IP. Try again later.",
+        )
     _record_ip_delivery_attempt(client_ip)
 
     # 3. Task-level rate limiting
     if not _check_delivery_rate_limit(validated_task_id):
-        logger.warning(f"[DELIVERY] Task rate limited: task={validated_task_id} ip={client_ip}")
+        logger.warning(
+            f"[DELIVERY] Task rate limited: task={validated_task_id} ip={client_ip}"
+        )
         _record_delivery_failure(validated_task_id, client_ip)
-        raise HTTPException(status_code=429, detail="Too many failed attempts for this task. Try again later.")
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts for this task. Try again later.",
+        )
 
     task = db.query(Task).filter(Task.id == validated_task_id).first()
 
@@ -1740,9 +1814,13 @@ async def get_secure_delivery(
         raise HTTPException(status_code=404, detail="Task not found")
 
     # 4. Token verification (constant-time comparison)
-    if not task.delivery_token or not secrets.compare_digest(task.delivery_token, validated_token):
+    if not task.delivery_token or not secrets.compare_digest(
+        task.delivery_token, validated_token
+    ):
         _record_delivery_failure(validated_task_id, client_ip)
-        logger.warning(f"[DELIVERY] Invalid token: task={validated_task_id} ip={client_ip}")
+        logger.warning(
+            f"[DELIVERY] Invalid token: task={validated_task_id} ip={client_ip}"
+        )
         raise HTTPException(status_code=403, detail="Invalid delivery token")
 
     # 5. Token expiration check
@@ -1752,20 +1830,26 @@ async def get_secure_delivery(
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) > expires_at:
             _record_delivery_failure(validated_task_id, client_ip)
-            logger.warning(f"[DELIVERY] Expired token: task={validated_task_id} ip={client_ip}")
+            logger.warning(
+                f"[DELIVERY] Expired token: task={validated_task_id} ip={client_ip}"
+            )
             raise HTTPException(status_code=403, detail="Delivery link has expired")
 
     # 6. One-time use check
     if task.delivery_token_used:
         _record_delivery_failure(validated_task_id, client_ip)
-        logger.warning(f"[DELIVERY] Already used token: task={validated_task_id} ip={client_ip}")
-        raise HTTPException(status_code=403, detail="Delivery link has already been used")
+        logger.warning(
+            f"[DELIVERY] Already used token: task={validated_task_id} ip={client_ip}"
+        )
+        raise HTTPException(
+            status_code=403, detail="Delivery link has already been used"
+        )
 
     # Verify the task is completed
     if task.status != TaskStatus.COMPLETED:
         raise HTTPException(
             status_code=400,
-            detail=f"Task is not ready for delivery. Current status: {task.status.value}"
+            detail=f"Task is not ready for delivery. Current status: {task.status.value}",
         )
 
     # 5. Invalidate token (one-time use)
@@ -1775,11 +1859,21 @@ async def get_secure_delivery(
     # Return the delivery data with sanitized output
     result_url = None
     if task.result_type in ["docx", "pdf"]:
-        result_url = _sanitize_string(task.result_document_url) if task.result_document_url else None
+        result_url = (
+            _sanitize_string(task.result_document_url)
+            if task.result_document_url
+            else None
+        )
     elif task.result_type == "xlsx":
-        result_url = _sanitize_string(task.result_spreadsheet_url) if task.result_spreadsheet_url else None
+        result_url = (
+            _sanitize_string(task.result_spreadsheet_url)
+            if task.result_spreadsheet_url
+            else None
+        )
     else:
-        result_url = _sanitize_string(task.result_image_url) if task.result_image_url else None
+        result_url = (
+            _sanitize_string(task.result_image_url) if task.result_image_url else None
+        )
 
     logger.info(f"[DELIVERY] Success: task={validated_task_id} ip={client_ip}")
 
@@ -1790,18 +1884,24 @@ async def get_secure_delivery(
             "domain": _sanitize_string(task.domain),
             "result_type": task.result_type,
             "result_url": result_url,
-            "result_image_url": _sanitize_string(task.result_image_url) if task.result_image_url else None,
-            "result_document_url": _sanitize_string(task.result_document_url) if task.result_document_url else None,
-            "result_spreadsheet_url": _sanitize_string(task.result_spreadsheet_url) if task.result_spreadsheet_url else None,
-            "delivered_at": datetime.now(timezone.utc).isoformat()
+            "result_image_url": _sanitize_string(task.result_image_url)
+            if task.result_image_url
+            else None,
+            "result_document_url": _sanitize_string(task.result_document_url)
+            if task.result_document_url
+            else None,
+            "result_spreadsheet_url": _sanitize_string(task.result_spreadsheet_url)
+            if task.result_spreadsheet_url
+            else None,
+            "delivered_at": datetime.now(timezone.utc).isoformat(),
         },
         headers={
             "X-Content-Type-Options": "nosniff",
             "X-Frame-Options": "DENY",
             "X-XSS-Protection": "1; mode=block",
             "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-            "Content-Security-Policy": "default-src 'none'"
-        }
+            "Content-Security-Policy": "default-src 'none'",
+        },
     )
 
 
@@ -1812,7 +1912,7 @@ async def calculate_price_with_discount(
     urgency: str = "standard",
     email: str | None = None,
     token: str | None = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Calculate price with repeat-client discount applied (authenticated).
@@ -1830,14 +1930,16 @@ async def calculate_price_with_discount(
         "discount_percentage": 0,
         "final_price": base_price,
         "is_repeat_client": False,
-        "completed_orders": 0
+        "completed_orders": 0,
     }
 
     # If client email provided, check for repeat-client discount
     if email:
         # Require both email and token for authentication
         if not token:
-            logger.warning("[CLIENT_AUTH] Partial auth parameters provided: email without token")
+            logger.warning(
+                "[CLIENT_AUTH] Partial auth parameters provided: email without token"
+            )
             raise HTTPException(
                 status_code=401,
                 detail="Both email and token must be provided for authentication",
@@ -1848,11 +1950,14 @@ async def calculate_price_with_discount(
             logger.warning(f"[CLIENT_AUTH] Invalid token for email: {email}")
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
-        completed_count = db.query(Task).filter(
-            Task.client_email == email,
-            Task.status == TaskStatus.COMPLETED
-        ).count()
-        logger.info(f"Repeat client check for {email}: {completed_count} completed tasks")
+        completed_count = (
+            db.query(Task)
+            .filter(Task.client_email == email, Task.status == TaskStatus.COMPLETED)
+            .count()
+        )
+        logger.info(
+            f"Repeat client check for {email}: {completed_count} completed tasks"
+        )
 
         if completed_count > 0:
             discount = get_client_discount(completed_count)
@@ -1866,17 +1971,20 @@ async def calculate_price_with_discount(
                 "final_price": final_price,
                 "is_repeat_client": True,
                 "completed_orders": completed_count,
-                "discount_tier": get_discount_tier(completed_count)
+                "discount_tier": get_discount_tier(completed_count),
             }
     elif token:
         # Token provided without email
-        logger.warning("[CLIENT_AUTH] Partial auth parameters provided: token without email")
+        logger.warning(
+            "[CLIENT_AUTH] Partial auth parameters provided: token without email"
+        )
         raise HTTPException(
             status_code=401,
             detail="Both email and token must be provided for authentication",
         )
 
     return response
+
 
 # =============================================================================
 # ADMIN METRICS ENDPOINT (Pillar 1.6)
@@ -1887,12 +1995,10 @@ async def calculate_price_with_discount(
 
 
 @app.get("/api/admin/metrics")
-async def get_admin_metrics(
-    db: Session = Depends(get_db)
-):
+async def get_admin_metrics(db: Session = Depends(get_db)):
     """
     Get admin metrics including completion rates, average turnaround time, and revenue per domain.
-    
+
     Returns:
         - completion_rates: Overall and per-domain completion rates
         - turnaround_time: Average time from PAID to COMPLETED status
@@ -1901,33 +2007,31 @@ async def get_admin_metrics(
     # Get all tasks
     all_tasks = db.query(Task).all()
     total_tasks = len(all_tasks)
-    
+
     if total_tasks == 0:
         return {
             "completion_rates": {
                 "overall": {"completed": 0, "total": 0, "rate": 0.0},
-                "by_domain": {}
+                "by_domain": {},
             },
-            "turnaround_time": {
-                "average_hours": 0.0,
-                "sample_size": 0
-            },
-            "revenue": {
-                "total": 0.0,
-                "by_domain": {}
-            }
+            "turnaround_time": {"average_hours": 0.0, "sample_size": 0},
+            "revenue": {"total": 0.0, "by_domain": {}},
         }
-    
+
     # Count tasks by status
     completed_count = sum(1 for t in all_tasks if t.status == TaskStatus.COMPLETED)
     failed_count = sum(1 for t in all_tasks if t.status == TaskStatus.FAILED)
     pending_count = sum(1 for t in all_tasks if t.status == TaskStatus.PENDING)
     paid_count = sum(1 for t in all_tasks if t.status == TaskStatus.PAID)
-    
+
     # Calculate overall completion rate (completed / (completed + failed))
     completed_or_failed = completed_count + failed_count
-    overall_completion_rate = (completed_count / completed_or_failed * 100) if completed_or_failed > 0 else 0.0
-    
+    overall_completion_rate = (
+        (completed_count / completed_or_failed * 100)
+        if completed_or_failed > 0
+        else 0.0
+    )
+
     # Calculate completion rate by domain
     domain_stats = {}
     for domain in DOMAIN_BASE_RATES.keys():
@@ -1936,36 +2040,46 @@ async def get_admin_metrics(
         domain_failed = [t for t in domain_tasks if t.status == TaskStatus.FAILED]
         domain_total = len(domain_tasks)
         domain_completed_or_failed = len(domain_completed) + len(domain_failed)
-        
+
         domain_completion_rate = (
-            len(domain_completed) / domain_completed_or_failed * 100 
-            if domain_completed_or_failed > 0 else 0.0
+            len(domain_completed) / domain_completed_or_failed * 100
+            if domain_completed_or_failed > 0
+            else 0.0
         )
-        
+
         # Calculate revenue for this domain (only from completed tasks)
         domain_revenue = sum(t.amount_paid or 0 for t in domain_completed) / 100
-        
+
         domain_stats[domain] = {
             "total": domain_total,
             "completed": len(domain_completed),
             "failed": len(domain_failed),
             "pending": len([t for t in domain_tasks if t.status == TaskStatus.PENDING]),
-            "in_progress": len([t for t in domain_tasks if t.status == TaskStatus.PAID]),
+            "in_progress": len(
+                [t for t in domain_tasks if t.status == TaskStatus.PAID]
+            ),
             "completion_rate": round(domain_completion_rate, 2),
-            "revenue": round(domain_revenue, 2)
+            "revenue": round(domain_revenue, 2),
         }
-    
+
     # Calculate total revenue
-    total_revenue = sum(t.amount_paid or 0 for t in all_tasks if t.status == TaskStatus.COMPLETED and t.amount_paid) / 100
-    
+    total_revenue = (
+        sum(
+            t.amount_paid or 0
+            for t in all_tasks
+            if t.status == TaskStatus.COMPLETED and t.amount_paid
+        )
+        / 100
+    )
+
     # For turnaround time, we would need created_at and updated_at fields
     # Since these may not exist in the current model, we'll return a placeholder
     # that indicates the feature is available but needs timestamp fields
     turnaround_time_hours = 0.0
     sample_size = 0
-    
+
     # Check if Task model has timestamp fields
-    if hasattr(Task, 'created_at') and hasattr(Task, 'updated_at'):
+    if hasattr(Task, "created_at") and hasattr(Task, "updated_at"):
         # Calculate turnaround time for completed tasks
         completed_tasks = [t for t in all_tasks if t.status == TaskStatus.COMPLETED]
         total_hours = 0.0
@@ -1974,10 +2088,10 @@ async def get_admin_metrics(
                 time_diff = (task.updated_at - task.created_at).total_seconds() / 3600
                 total_hours += time_diff
                 sample_size += 1
-        
+
         if sample_size > 0:
             turnaround_time_hours = total_hours / sample_size
-    
+
     return {
         "completion_rates": {
             "overall": {
@@ -1986,20 +2100,22 @@ async def get_admin_metrics(
                 "pending": pending_count,
                 "in_progress": paid_count,
                 "total": total_tasks,
-                "rate": round(overall_completion_rate, 2)
+                "rate": round(overall_completion_rate, 2),
             },
-            "by_domain": domain_stats
+            "by_domain": domain_stats,
         },
         "turnaround_time": {
             "average_hours": round(turnaround_time_hours, 2),
             "sample_size": sample_size,
-            "note": "Requires created_at and updated_at timestamp fields in Task model"
+            "note": "Requires created_at and updated_at timestamp fields in Task model",
         },
         "revenue": {
             "total": round(total_revenue, 2),
-            "by_domain": {domain: stats["revenue"] for domain, stats in domain_stats.items()},
-            "currency": "USD"
-        }
+            "by_domain": {
+                domain: stats["revenue"] for domain, stats in domain_stats.items()
+            },
+            "currency": "USD",
+        },
     }
 
 
@@ -2013,6 +2129,7 @@ async def get_admin_metrics(
 
 class ArenaSubmission(BaseModel):
     """Model for arena competition submission."""
+
     domain: str
     user_request: str
     csv_data: str | None = None
@@ -2028,32 +2145,34 @@ class ArenaSubmission(BaseModel):
 async def run_arena_competition(
     submission: ArenaSubmission,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Run an Agent Arena competition.
-    
+
     This endpoint runs two agent variants in parallel and determines the winner
     based on quality (PlanReviewer approval) + profit score.
-    
+
     The winning artifact is returned to the client, and both agents' results
     are logged for learning (DPO dataset).
     """
-    
+
     # Map competition type string to enum
     comp_type_map = {
         "model": CompetitionType.MODEL,
         "prompt": CompetitionType.PROMPT,
-        "tooling": CompetitionType.TOOLING
+        "tooling": CompetitionType.TOOLING,
     }
-    competition_type = comp_type_map.get(submission.competition_type, CompetitionType.MODEL)
-    
+    competition_type = comp_type_map.get(
+        submission.competition_type, CompetitionType.MODEL
+    )
+
     # Get task revenue (default if not provided)
     task_revenue = submission.task_revenue or 500  # Default $5.00
-    
+
     # Create arena router
     arena = ArenaRouter(competition_type=competition_type)
-    
+
     # Run the arena natively (it's already async!)
     result = await arena.run_arena(
         user_request=submission.user_request,
@@ -2062,9 +2181,9 @@ async def run_arena_competition(
         file_content=submission.file_content,
         filename=submission.filename,
         file_type=submission.file_type,
-        task_revenue=task_revenue
+        task_revenue=task_revenue,
     )
-    
+
     # Save the competition to the database
     competition_record = ArenaCompetition(
         task_id=submission.task_id,
@@ -2073,26 +2192,23 @@ async def run_arena_competition(
         user_request=submission.user_request,
         task_revenue=task_revenue,
         status=ArenaCompetitionStatus.COMPLETED,
-        
         # Agent A stats
         agent_a_name=result["agent_a"]["config"]["name"],
         agent_a_model=result["agent_a"]["config"]["model"],
         agent_a_approved=result["agent_a"]["result"].get("approved", False),
         agent_a_profit=result["agent_a"]["profit"]["profit"],
-        
         # Agent B stats
         agent_b_name=result["agent_b"]["config"]["name"],
         agent_b_model=result["agent_b"]["config"]["model"],
         agent_b_approved=result["agent_b"]["result"].get("approved", False),
         agent_b_profit=result["agent_b"]["profit"]["profit"],
-        
         winner=result["winner"],
         win_reason=result["win_reason"],
-        winning_artifact_url=result["winning_artifact_url"]
+        winning_artifact_url=result["winning_artifact_url"],
     )
     db.add(competition_record)
     db.commit()
-    
+
     # Log to learning systems (in background) (Issue #6, #25)
     if submission.task_id:
         queue = get_background_job_queue() if EXPERIENCE_DB_AVAILABLE else None
@@ -2100,8 +2216,13 @@ async def run_arena_competition(
             await queue.queue_job(
                 job_type="arena_learning",
                 task_func=_log_arena_learning,
-                task_args=(result, submission.task_id, submission.domain, submission.user_request),
-                max_retries=2
+                task_args=(
+                    result,
+                    submission.task_id,
+                    submission.domain,
+                    submission.user_request,
+                ),
+                max_retries=2,
             )
         else:
             background_tasks.add_task(
@@ -2109,9 +2230,9 @@ async def run_arena_competition(
                 result,
                 submission.task_id,
                 submission.domain,
-                submission.user_request
+                submission.user_request,
             )
-    
+
     # Return the winning result to the client
     return {
         "status": "success",
@@ -2121,63 +2242,56 @@ async def run_arena_competition(
         "competition_type": result["competition_type"],
         "profit_breakdown": {
             "agent_a": result["agent_a"]["profit"],
-            "agent_b": result["agent_b"]["profit"]
+            "agent_b": result["agent_b"]["profit"],
         },
         "agent_configs": {
             "agent_a": result["agent_a"]["config"],
-            "agent_b": result["agent_b"]["config"]
-        }
+            "agent_b": result["agent_b"]["config"],
+        },
     }
 
 
 async def _log_arena_learning(
-    arena_result: dict,
-    task_id: str,
-    domain: str,
-    user_request: str
+    arena_result: dict, task_id: str, domain: str, user_request: str
 ):
     """Log arena results to learning systems."""
     # Get logger for this function
     logger = get_logger(__name__)
-    
+
     try:
         arena_logger = ArenaLearningLogger()
-        
+
         # Create task data for logging
-        task_data = {
-            "id": task_id,
-            "domain": domain,
-            "description": user_request
-        }
-        
+        task_data = {"id": task_id, "domain": domain, "description": user_request}
+
         # Log winner and loser
         arena_logger.log_winner(arena_result, task_data)
         arena_logger.log_loser(arena_result, task_data)
-        
+
         logger.info(f"Learning data logged for task {task_id}")
     except Exception as e:
         logger.error(f"Error logging learning data: {e}")
 
 
 @app.get("/api/arena/history")
-async def get_arena_history(
-    db: Session = Depends(get_db),
-    limit: int = 20
-):
+async def get_arena_history(db: Session = Depends(get_db), limit: int = 20):
     """
     Get arena competition history.
-    
+
     Returns recent arena competitions and their results.
     """
     from .models import ArenaCompetition
-    
-    competitions = db.query(ArenaCompetition).order_by(
-        ArenaCompetition.created_at.desc()
-    ).limit(limit).all()
-    
+
+    competitions = (
+        db.query(ArenaCompetition)
+        .order_by(ArenaCompetition.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
     return {
         "competitions": [c.to_dict() for c in competitions],
-        "total": len(competitions)
+        "total": len(competitions),
     }
 
 
@@ -2185,17 +2299,19 @@ async def get_arena_history(
 async def get_arena_stats(db: Session = Depends(get_db)):
     """
     Get arena statistics.
-    
+
     Returns aggregated statistics about arena competitions,
     including win rates for each agent type.
     """
     from .models import ArenaCompetition, ArenaCompetitionStatus
-    
+
     # Get all completed competitions
-    completed = db.query(ArenaCompetition).filter(
-        ArenaCompetition.status == ArenaCompetitionStatus.COMPLETED
-    ).all()
-    
+    completed = (
+        db.query(ArenaCompetition)
+        .filter(ArenaCompetition.status == ArenaCompetitionStatus.COMPLETED)
+        .all()
+    )
+
     if not completed:
         return {
             "total_competitions": 0,
@@ -2204,18 +2320,22 @@ async def get_arena_stats(db: Session = Depends(get_db)):
             "agent_a_win_rate": 0.0,
             "agent_b_win_rate": 0.0,
             "avg_profit_agent_a": 0.0,
-            "avg_profit_agent_b": 0.0
+            "avg_profit_agent_b": 0.0,
         }
-    
+
     agent_a_wins = sum(1 for c in completed if c.winner == "agent_a")
     agent_b_wins = sum(1 for c in completed if c.winner == "agent_b")
-    
+
     total = len(completed)
-    
+
     # Calculate average profits
-    avg_profit_a = sum(c.agent_a_profit or 0 for c in completed) / total if total > 0 else 0
-    avg_profit_b = sum(c.agent_b_profit or 0 for c in completed) / total if total > 0 else 0
-    
+    avg_profit_a = (
+        sum(c.agent_a_profit or 0 for c in completed) / total if total > 0 else 0
+    )
+    avg_profit_b = (
+        sum(c.agent_b_profit or 0 for c in completed) / total if total > 0 else 0
+    )
+
     return {
         "total_competitions": total,
         "agent_a_wins": agent_a_wins,
@@ -2235,31 +2355,37 @@ async def get_arena_stats(db: Session = Depends(get_db)):
 # =============================================================================
 
 # Autonomous loop configuration
-AUTONOMOUS_SCAN_ENABLED = os.environ.get("AUTONOMOUS_SCAN_ENABLED", "false").lower() == "true"
+AUTONOMOUS_SCAN_ENABLED = (
+    os.environ.get("AUTONOMOUS_SCAN_ENABLED", "false").lower() == "true"
+)
 AUTONOMOUS_SCAN_INTERVAL_MIN = int(ConfigManager.get("MARKET_SCAN_INTERVAL")) // 60
-AUTONOMOUS_SCAN_INTERVAL_MAX = (int(ConfigManager.get("MARKET_SCAN_INTERVAL")) // 60) * 2
+AUTONOMOUS_SCAN_INTERVAL_MAX = (
+    int(ConfigManager.get("MARKET_SCAN_INTERVAL")) // 60
+) * 2
 
 AUTONOMOUS_MIN_BID_THRESHOLD = ConfigManager.get("MIN_BID_THRESHOLD")
 
 
-async def generate_proposal(job_title: str, job_description: str, bid_amount: int) -> str:
+async def generate_proposal(
+    job_title: str, job_description: str, bid_amount: int
+) -> str:
     """
     Generate a proposal for a job using LLM.
-    
+
     Args:
         job_title: The job title
         job_description: The job description
         bid_amount: The proposed bid amount in dollars
-        
+
     Returns:
         Generated proposal text
     """
     logger = get_logger(__name__)
-    
+
     try:
         # Use LLM with stealth mode for human-like typing
         llm = LLMService.with_cloud()
-        
+
         prompt = f"""Generate a professional proposal for the following freelance job:
 
 Job Title: {job_title}
@@ -2275,16 +2401,16 @@ Write a compelling proposal that:
 4. Includes a timeline for completion
 
 Keep it concise but professional. Around 150-200 words."""
-        
+
         result = llm.complete(
             prompt=prompt,
             temperature=0.7,
             max_tokens=500,
-            stealth_mode=True  # Add human-like delay
+            stealth_mode=True,  # Add human-like delay
         )
-        
+
         return result.get("content", "Proposal generation failed.")
-        
+
     except Exception as e:
         logger.error(f"Error generating proposal: {e}")
         return f"Professional proposal for {job_title} - ${bid_amount} budget"
@@ -2300,91 +2426,119 @@ async def run_autonomous_loop():
     5. Sends Telegram notification for user approval
     """
     from .database import SessionLocal
-    
+
     logger = get_logger(__name__)
     logger.info("[AUTONOMOUS] Starting autonomous job scanning loop")
-    
+
     # Initialize notifier
     notifier = TelegramNotifier()
-    
+
     while True:
         try:
             logger.info("[AUTONOMOUS] Scanning marketplace for new jobs...")
-            
+
             # Scan marketplace for jobs
             scan_result = await run_single_scan(max_posts=10)
-            
+
             if not scan_result.get("success"):
-                logger.warning(f"[AUTONOMOUS] Scan failed: {scan_result.get('message')}")
+                logger.warning(
+                    f"[AUTONOMOUS] Scan failed: {scan_result.get('message')}"
+                )
             else:
                 suitable_jobs = scan_result.get("suitable_jobs", [])
                 logger.info(f"[AUTONOMOUS] Found {len(suitable_jobs)} suitable jobs")
-                
+
                 # Get database session
                 db = SessionLocal()
-                
+
                 try:
                     # Get all existing job IDs/URLs we've already bid on
-                    existing_bids = db.query(Bid).filter(
-                        Bid.status.in_([BidStatus.SUBMITTED, BidStatus.PENDING, BidStatus.APPROVED])
-                    ).all()
-                    
+                    existing_bids = (
+                        db.query(Bid)
+                        .filter(
+                            Bid.status.in_(
+                                [
+                                    BidStatus.SUBMITTED,
+                                    BidStatus.PENDING,
+                                    BidStatus.APPROVED,
+                                ]
+                            )
+                        )
+                        .all()
+                    )
+
                     # Create set of existing job identifiers for quick lookup
                     existing_job_titles = {bid.job_title for bid in existing_bids}
-                    
-                    logger.info(f"[AUTONOMOUS] Already have {len(existing_job_titles)} bids in progress")
-                    
+
+                    logger.info(
+                        f"[AUTONOMOUS] Already have {len(existing_job_titles)} bids in progress"
+                    )
+
                     # Process each suitable job
                     for job in suitable_jobs:
                         job_title = job.get("posting", {}).get("title", "")
                         job_description = job.get("posting", {}).get("description", "")
                         bid_amount = job.get("evaluation", {}).get("bid_amount", 0)
-                        
+
                         # Skip if already bid on this job
                         if job_title in existing_job_titles:
-                            logger.info(f"[AUTONOMOUS] Skipping already-bid job: {job_title}")
+                            logger.info(
+                                f"[AUTONOMOUS] Skipping already-bid job: {job_title}"
+                            )
                             continue
-                        
+
                         # Skip if below minimum bid threshold
                         if bid_amount < AUTONOMOUS_MIN_BID_THRESHOLD:
-                            logger.info(f"[AUTONOMOUS] Skipping low-value job: {job_title} (${bid_amount})")
+                            logger.info(
+                                f"[AUTONOMOUS] Skipping low-value job: {job_title} (${bid_amount})"
+                            )
                             continue
-                        
-                        logger.info(f"[AUTONOMOUS] Processing job: {job_title} - ${bid_amount}")
-                        
+
+                        logger.info(
+                            f"[AUTONOMOUS] Processing job: {job_title} - ${bid_amount}"
+                        )
+
                         # Generate proposal
                         proposal = await generate_proposal(
                             job_title=job_title,
                             job_description=job_description,
-                            bid_amount=bid_amount
+                            bid_amount=bid_amount,
                         )
-                        
+
                         # Create bid record with PENDING status
                         bid = Bid(
                             job_title=job_title,
-                            job_description=job_description[:2000],  # Limit description length
+                            job_description=job_description[
+                                :2000
+                            ],  # Limit description length
                             job_url=job.get("posting", {}).get("url"),
                             bid_amount=bid_amount * 100,  # Store in cents
                             proposal=proposal,
                             status=BidStatus.PENDING,
-                            is_suitable=job.get("evaluation", {}).get("is_suitable", True),
-                            evaluation_reasoning=job.get("evaluation", {}).get("reasoning", ""),
-                            evaluation_confidence=int(job.get("evaluation", {}).get("confidence", 0.5) * 100),
+                            is_suitable=job.get("evaluation", {}).get(
+                                "is_suitable", True
+                            ),
+                            evaluation_reasoning=job.get("evaluation", {}).get(
+                                "reasoning", ""
+                            ),
+                            evaluation_confidence=int(
+                                job.get("evaluation", {}).get("confidence", 0.5) * 100
+                            ),
                             marketplace=os.environ.get("MARKETPLACE_URL", "unknown"),
-                            skills_matched=job.get("posting", {}).get("skills", [])
+                            skills_matched=job.get("posting", {}).get("skills", []),
                         )
                         db.add(bid)
                         db.commit()
-                        
+
                         # Send Telegram notification for approval
                         notification_message = f"""🤖 *New Job Opportunity*
 
 *Title:* {job_title}
 *Bid Amount:* ${bid_amount}
-*Confidence:* {int(job.get('evaluation', {}).get('confidence', 0.5) * 100)}%
+*Confidence:* {int(job.get("evaluation", {}).get("confidence", 0.5) * 100)}%
 
 *Evaluation:*
-{job.get('evaluation', {}).get('reasoning', 'No reasoning provided')}
+{job.get("evaluation", {}).get("reasoning", "No reasoning provided")}
 
 *Proposal Preview:*
 {proposal[:300]}...
@@ -2392,17 +2546,23 @@ async def run_autonomous_loop():
 Reply with APPROVE to submit bid or REJECT to skip."""
 
                         await notifier.send_urgent_message(notification_message)
-                        logger.info(f"[AUTONOMOUS] Sent notification for approval: {job_title}")
-                        
+                        logger.info(
+                            f"[AUTONOMOUS] Sent notification for approval: {job_title}"
+                        )
+
                 finally:
                     db.close()
-                    
+
         except Exception as e:
             logger.error(f"[AUTONOMOUS] Error in scan loop: {e}")
-        
+
         # Random sleep between 15-30 minutes
-        sleep_minutes = random.randint(AUTONOMOUS_SCAN_INTERVAL_MIN, AUTONOMOUS_SCAN_INTERVAL_MAX)
-        logger.info(f"[AUTONOMOUS] Sleeping for {sleep_minutes} minutes until next scan...")
+        sleep_minutes = random.randint(
+            AUTONOMOUS_SCAN_INTERVAL_MIN, AUTONOMOUS_SCAN_INTERVAL_MAX
+        )
+        logger.info(
+            f"[AUTONOMOUS] Sleeping for {sleep_minutes} minutes until next scan..."
+        )
         await asyncio.sleep(sleep_minutes * 60)
 
 
@@ -2417,17 +2577,518 @@ _autonomous_loop_task = None
 async def start_autonomous_loop():
     """Start the autonomous scanning loop if enabled."""
     global _autonomous_loop_task
-    
+
     if AUTONOMOUS_SCAN_ENABLED:
         logger = get_logger(__name__)
         logger.info("[STARTUP] Autonomous scanning is ENABLED")
-        
+
         # Create and start the background task
         _autonomous_loop_task = asyncio.create_task(run_autonomous_loop())
         logger.info("[STARTUP] Autonomous scanning loop started")
     else:
         logger = get_logger(__name__)
-        logger.info("[STARTUP] Autonomous scanning is DISABLED (set AUTONOMOUS_SCAN_ENABLED=true to enable)")
+        logger.info(
+            "[STARTUP] Autonomous scanning is DISABLED (set AUTONOMOUS_SCAN_ENABLED=true to enable)"
+        )
+
+
+# =============================================================================
+# SYSTEM MODE ENDPOINTS (Issue #88: Training Mode Toggle)
+# =============================================================================
+
+
+@app.get("/api/v1/system/mode", response_model=dict)
+async def get_system_mode():
+    """
+    Get current system mode (training or production).
+
+    This endpoint returns the current state of TRAINING_MODE configuration.
+
+    Response:
+        - training_mode: Boolean indicating if training mode is enabled
+        - status: Description of current mode
+        - available_modes: List of available modes
+    """
+    from src.config.config_manager import ConfigManager
+
+    training_mode = ConfigManager.get("TRAINING_MODE", False)
+
+    return {
+        "training_mode": training_mode,
+        "status": "training" if training_mode else "production",
+        "available_modes": ["production", "training"],
+    }
+
+
+@app.post("/api/v1/system/mode", response_model=dict)
+async def set_system_mode(training_mode: bool = False):
+    """
+    Set system mode (training or production).
+
+    This endpoint allows toggling between training and production mode.
+
+    When training mode is enabled:
+    - Market scanner runs normally and evaluates jobs
+    - Bids are evaluated and generated but marked as simulated (not submitted)
+    - Results are tracked in simulation_bids table for analysis
+
+    Args:
+        training_mode: Boolean to enable/disable training mode
+
+    Response:
+        - training_mode: Boolean indicating new mode state
+        - status: Description of new mode
+        - message: Confirmation message
+    """
+    from src.config.config_manager import ConfigManager
+
+    ConfigManager._config_cache["TRAINING_MODE"] = training_mode
+    mode = "training" if training_mode else "production"
+
+    return {
+        "training_mode": training_mode,
+        "status": mode,
+        "message": f"System mode changed to {mode}",
+    }
+
+
+# =============================================================================
+# FINANCIAL WALLET ENDPOINTS (Issues #92, #93, #95)
+# =============================================================================
+
+
+@app.get("/api/v1/financial/status", response_model=dict)
+async def get_financial_status():
+    """
+    Get wallet and budget status.
+
+    Returns the current financial state of the virtual wallet including balance,
+    spending, earnings, and budget information.
+
+    Response:
+        - balance_dollars: Current wallet balance in dollars
+        - total_spent_dollars: Total amount spent on operations
+        - total_earned_dollars: Total revenue from completed tasks
+        - budget_cap_dollars: Budget cap for current period
+        - budget_spent_dollars: Amount spent in current budget period
+        - budget_remaining_dollars: Remaining budget for current period
+        - budget_percentage_used: Percentage of budget used (0-100)
+        - budget_reset_period: Reset period (daily, weekly, monthly)
+    """
+    from src.agent_execution.virtual_wallet import get_virtual_wallet
+
+    wallet = get_virtual_wallet()
+    return wallet.get_wallet_status()
+
+
+@app.post("/api/v1/financial/seed", response_model=dict)
+async def add_seed_money(amount_dollars: float):
+    """
+    Add seed money to wallet.
+
+    Adds funds to the virtual wallet to replenish the balance for operations.
+
+    Args:
+        amount_dollars: Amount of seed money to add in dollars
+
+    Response:
+        - success: Boolean indicating if seed money was added
+        - new_balance_dollars: Updated wallet balance
+        - message: Confirmation message
+    """
+    from src.agent_execution.virtual_wallet import get_virtual_wallet
+
+    wallet = get_virtual_wallet()
+    amount_cents = int(amount_dollars * 100)
+
+    if amount_cents <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+
+    success = wallet.add_seed_money(amount_cents)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to add seed money")
+
+    status = wallet.get_wallet_status()
+
+    return {
+        "success": True,
+        "new_balance_dollars": status["balance_dollars"],
+        "message": f"Added ${amount_dollars:.2f} to wallet",
+    }
+
+
+@app.post("/api/v1/financial/budget", response_model=dict)
+async def set_budget(
+    budget_cap_dollars: float,
+    reset_period: str = "weekly",
+):
+    """
+    Set budget cap and reset period.
+
+    Configures the budget cap and reset period for operational expenses.
+
+    Args:
+        budget_cap_dollars: New budget cap in dollars
+        reset_period: Reset period (daily, weekly, monthly)
+
+    Response:
+        - success: Boolean indicating if budget was updated
+        - budget_cap_dollars: New budget cap
+        - reset_period: New reset period
+        - message: Confirmation message
+    """
+    from src.agent_execution.virtual_wallet import get_virtual_wallet
+
+    valid_periods = ["daily", "weekly", "monthly"]
+    if reset_period not in valid_periods:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid reset period. Must be one of: {', '.join(valid_periods)}",
+        )
+
+    wallet = get_virtual_wallet()
+    budget_cap_cents = int(budget_cap_dollars * 100)
+
+    if budget_cap_cents <= 0:
+        raise HTTPException(status_code=400, detail="Budget cap must be positive")
+
+    success = wallet.set_budget_cap(budget_cap_cents, reset_period)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to set budget cap")
+
+    return {
+        "success": True,
+        "budget_cap_dollars": budget_cap_dollars,
+        "reset_period": reset_period,
+        "message": f"Budget set to ${budget_cap_dollars:.2f} per {reset_period}",
+    }
+
+
+@app.get("/api/v1/financial/roi/marketplace", response_model=dict)
+async def get_roi_by_marketplace(marketplace: Optional[str] = None):
+    """
+    Get ROI statistics by marketplace.
+
+    Returns cost and revenue breakdowns per marketplace with ROI calculations.
+
+    Args:
+        marketplace: Optional filter by specific marketplace
+
+    Response:
+        - Dictionary with ROI statistics per marketplace
+    """
+    from src.agent_execution.cost_tracker import get_cost_tracker
+
+    tracker = get_cost_tracker()
+    return tracker.calculate_roi_by_marketplace(marketplace=marketplace)
+
+
+@app.get("/api/v1/financial/roi/strategy", response_model=dict)
+async def get_roi_by_strategy(strategy_type: Optional[str] = None):
+    """
+    Get ROI statistics by bidding strategy.
+
+    Returns cost and revenue breakdowns per strategy type with ROI calculations.
+
+    Args:
+        strategy_type: Optional filter by specific strategy type
+
+    Response:
+        - Dictionary with ROI statistics per strategy
+    """
+    from src.agent_execution.cost_tracker import get_cost_tracker
+
+    tracker = get_cost_tracker()
+    return tracker.calculate_roi_by_strategy(strategy_type=strategy_type)
+
+
+@app.get("/api/v1/financial/roi/profitable", response_model=list)
+async def get_profitable_strategies(min_entries: int = 10):
+    """
+    Get list of profitable strategies sorted by ROI.
+
+    Returns strategies with positive ROI, sorted by profitability.
+
+    Args:
+        min_entries: Minimum number of entries to consider a strategy valid
+
+    Response:
+        - List of strategies with ROI information
+    """
+    from src.agent_execution.cost_tracker import get_cost_tracker
+
+    tracker = get_cost_tracker()
+    return tracker.get_profitable_strategies(min_entries=min_entries)
+
+
+@app.get("/api/v1/financial/costs/history", response_model=list)
+async def get_cost_history(
+    limit: int = 100,
+    task_id: Optional[str] = None,
+    bid_id: Optional[str] = None,
+):
+    """
+    Get cost history.
+
+    Returns cost entries for tracking and analysis.
+
+    Args:
+        limit: Maximum number of entries to return
+        task_id: Optional filter by task ID
+        bid_id: Optional filter by bid ID
+
+    Response:
+        - List of cost entries
+    """
+    from src.agent_execution.cost_tracker import get_cost_tracker
+
+    tracker = get_cost_tracker()
+    cost_entries = tracker.get_cost_history(
+        limit=limit,
+        task_id=task_id,
+        bid_id=bid_id,
+    )
+
+    return [entry.to_dict() for entry in cost_entries]
+
+
+# =============================================================================
+# CONFIDENCE TRACKER ENDPOINTS (Issue #96)
+# =============================================================================
+
+
+@app.get("/api/v1/confidence/recommendation", response_model=dict)
+async def get_confidence_recommendation():
+    """
+    Get recommended confidence threshold for bidding.
+
+    Analyzes historical performance to recommend optimal threshold
+    for maximizing profitability.
+
+    Response:
+        - recommended_threshold: Recommended threshold value
+        - confidence: Confidence score (0-100)
+        - win_rate: Historical win rate
+        - expected_value_dollars: Expected profit per bid
+        - reasoning: Explanation of recommendation
+    """
+    from src.agent_execution.confidence_tracker import get_confidence_tracker
+
+    tracker = get_confidence_tracker()
+    return tracker.get_recommended_threshold()
+
+
+@app.get("/api/v1/confidence/summary", response_model=dict)
+async def get_confidence_summary(threshold: int):
+    """
+    Get detailed summary for a specific threshold.
+
+    Returns performance statistics for a given confidence threshold.
+
+    Args:
+        threshold: Threshold to analyze
+
+    Response:
+        - threshold: Threshold value
+        - total_bids: Total bids at this threshold
+        - wins: Number of wins
+        - losses: Number of losses
+        - win_rate: Win rate (0-1)
+        - win_rate_percentage: Win rate as percentage
+        - avg_profit_dollars: Average profit per win
+        - confidence_score: Current confidence score (0-100)
+    """
+    from src.agent_execution.confidence_tracker import get_confidence_tracker
+
+    tracker = get_confidence_tracker()
+    return tracker.get_threshold_summary(threshold)
+
+
+@app.get("/api/v1/confidence/history", response_model=list)
+async def get_confidence_history(
+    limit: int = 50,
+    threshold: Optional[int] = None,
+):
+    """
+    Get confidence tracking history.
+
+    Returns historical confidence entries for analysis.
+
+    Args:
+        limit: Maximum number of entries to return
+        threshold: Optional filter by threshold
+
+    Response:
+        - List of confidence entries
+    """
+    from src.agent_execution.confidence_tracker import get_confidence_tracker
+
+    tracker = get_confidence_tracker()
+    return tracker.get_recent_history(limit=limit, threshold=threshold)
+
+
+# =============================================================================
+# SIMULATION ENGINE ENDPOINTS (Issues #89, #91)
+# =============================================================================
+
+
+@app.get("/api/v1/simulation/profit", response_model=dict)
+async def get_simulation_profit(
+    strategy_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Get total simulated profit/loss.
+
+    Calculates total profit/loss based on simulated outcomes.
+    Can filter by strategy type and date range.
+
+    Args:
+        strategy_type: Filter by strategy type (aggressive, conservative, balanced)
+        start_date: Start date for filter (YYYY-MM-DD)
+        end_date: End date for filter (YYYY-MM-DD)
+
+    Response:
+        - total_profit_dollars: Total profit/loss
+        - total_bids: Number of bids
+        - wins: Number of wins
+        - losses: Number of losses
+        - win_rate_percentage: Win rate percentage
+        - average_bid_dollars: Average bid amount
+    """
+    from src.agent_execution.simulation_engine import get_simulation_engine
+
+    engine = get_simulation_engine()
+    date_filter = {}
+    if start_date or end_date:
+        if start_date:
+            date_filter["start"] = start_date
+        if end_date:
+            date_filter["end"] = end_date
+
+    return engine.calculate_total_profit(
+        strategy_type=strategy_type, date_filter=date_filter if date_filter else None
+    )
+
+
+@app.get("/api/v1/simulation/compare", response_model=dict)
+async def compare_simulation_strategies(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Compare performance of different bidding strategies.
+
+    Compares aggressive, conservative, and balanced strategies.
+
+    Args:
+        start_date: Start date for filter (YYYY-MM-DD)
+        end_date: End date for filter (YYYY-MM-DD)
+
+    Response:
+        - strategies: Dictionary with stats per strategy
+        - best_strategy: Name of best performing strategy
+        - best_win_rate: Win rate of best strategy
+        - best_profit_dollars: Profit of best strategy
+        - insights: List of insights
+    """
+    from src.agent_execution.simulation_engine import get_simulation_engine
+
+    engine = get_simulation_engine()
+    date_filter = {}
+    if start_date or end_date:
+        if start_date:
+            date_filter["start"] = start_date
+        if end_date:
+            date_filter["end"] = end_date
+
+    return engine.compare_strategies(date_filter=date_filter if date_filter else None)
+
+
+@app.get("/api/v1/simulation/strategy", response_model=dict)
+async def get_simulation_strategy_summary(
+    strategy_type: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Get performance summary for a specific strategy.
+
+    Returns detailed statistics for a given bidding strategy.
+
+    Args:
+        strategy_type: Strategy type (aggressive, conservative, balanced)
+        start_date: Start date for filter (YYYY-MM-DD)
+        end_date: End date for filter (YYYY-MM-DD)
+
+    Response:
+        - strategy_type: Strategy name
+        - win_rate_percentage: Win rate
+        - total_profit_dollars: Total profit
+        - total_bids: Number of bids
+        - wins: Number of wins
+        - losses: Number of losses
+        - average_bid_dollars: Average bid amount
+    """
+    from src.agent_execution.simulation_engine import get_simulation_engine
+
+    if strategy_type not in ["aggressive", "conservative", "balanced"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid strategy type. Must be one of: aggressive, conservative, balanced",
+        )
+
+    engine = get_simulation_engine()
+    date_filter = {}
+    if start_date or end_date:
+        if start_date:
+            date_filter["start"] = start_date
+        if end_date:
+            date_filter["end"] = end_date
+
+    return engine.get_strategy_summary(
+        strategy_type=strategy_type, date_filter=date_filter if date_filter else None
+    )
+
+
+@app.get("/api/v1/simulation/history", response_model=list)
+async def get_simulation_history(
+    limit: int = 100,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Get recent simulation bid history.
+
+    Returns recent simulation bids for review and analysis.
+
+    Args:
+        limit: Maximum number of simulations to return
+        start_date: Start date for filter (YYYY-MM-DD)
+        end_date: End date for filter (YYYY-MM-DD)
+
+    Response:
+        - List of simulation bid entries
+    """
+    from src.agent_execution.simulation_engine import get_simulation_engine
+
+    engine = get_simulation_engine()
+    date_filter = {}
+    if start_date or end_date:
+        if start_date:
+            date_filter["start"] = start_date
+        if end_date:
+            date_filter["end"] = end_date
+
+    simulations = engine.get_recent_simulations(
+        limit=limit, date_filter=date_filter if date_filter else None
+    )
+
+    return [sim.to_dict() for sim in simulations]
+
 
 # Register scheduler routes
 register_scheduler_routes(app)
@@ -2436,4 +3097,5 @@ register_analytics_routes(app)
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

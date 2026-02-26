@@ -29,20 +29,15 @@ Usage:
 
 import asyncio
 import json
-import logging
-import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from croniter import croniter
-from sqlalchemy import Column, String, Text, DateTime, Boolean, Integer, Float, Enum as SQLEnum
 from sqlalchemy.orm import Session
 from sqlalchemy.future import select
-from sqlalchemy.exc import IntegrityError
 import pytz
 
 from .errors import SchedulingError
-from ..api.models import Base, ScheduledTask, ScheduleHistory
-from ..api.database import get_db
+from ..api.models import ScheduledTask, ScheduleHistory
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)

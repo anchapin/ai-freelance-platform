@@ -14,12 +14,10 @@ Coverage: ~20% of critical path
 This test demonstrates all major components working together in a realistic scenario.
 """
 
-import pytest
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from unittest.mock import AsyncMock, patch
 
-from src.api.models import Task, TaskStatus, Bid, BidStatus
+from src.api.models import TaskStatus, BidStatus
 from .utils import (
     create_test_task,
     create_test_bid,
@@ -94,7 +92,7 @@ class TestCompleteEndToEndWorkflow:
         # STEP 5: PAYMENT PROCESSING
         # =================================================================
         # Client pays for the job
-        payment_webhook = simulate_payment_success(task, amount=40000)
+        simulate_payment_success(task, amount=40000)
         
         task.status = TaskStatus.PAID
         e2e_db.commit()
@@ -170,7 +168,7 @@ class TestCompleteEndToEndWorkflow:
         job = build_job_posting_fixture(budget=800)
         
         # Create task
-        task = create_test_task(
+        create_test_task(
             e2e_db,
             title=job["title"],
             amount_paid=60000,
@@ -302,7 +300,7 @@ class TestWorkflowErrorHandling:
     def test_marketplace_disconnection_in_workflow(self, e2e_db: Session):
         """Test handling marketplace disconnection."""
         
-        task = create_test_task(e2e_db)
+        create_test_task(e2e_db)
         bid = create_test_bid(e2e_db, job_id="job_test_disconnect")
         
         # Marketplace disconnects
@@ -321,7 +319,7 @@ class TestWorkflowErrorHandling:
     def test_resource_cleanup_on_failure(self, e2e_db: Session):
         """Test resource cleanup when workflow fails."""
         
-        task = create_test_task(e2e_db)
+        create_test_task(e2e_db)
         
         cleanup_performed = False
         
@@ -361,7 +359,7 @@ class TestWorkflowPerformance:
         # Place multiple bids quickly
         bid_count = 0
         for marketplace in ["Upwork", "Fiverr", "Toptal"]:
-            bid = create_test_bid(
+            create_test_bid(
                 e2e_db,
                 job_id=job_id,
                 marketplace=marketplace

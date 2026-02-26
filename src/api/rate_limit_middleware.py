@@ -9,13 +9,11 @@ Returns 429 (Too Many Requests) or 402 (Payment Required) status codes.
 
 import time
 import logging
-from typing import Callable, Optional
-from datetime import datetime
+from typing import Callable
 
-from fastapi import Request, HTTPException
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from sqlalchemy.orm import Session
 
 from .database import SessionLocal
 from .models import UserQuota

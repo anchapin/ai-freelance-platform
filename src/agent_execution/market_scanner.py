@@ -42,11 +42,11 @@ from .browser_pool import get_browser_pool
 
 # Import marketplace adapters (Issue #43 Integration)
 from .marketplace_adapters.registry import MarketplaceRegistry
-from .marketplace_adapters.base import BidProposal
 
 # Import LLM service for local inference
 try:
     from ..llm_service import LLMService
+
     LLM_SERVICE_AVAILABLE = True
 except ImportError:
     LLM_SERVICE_AVAILABLE = False
@@ -54,6 +54,7 @@ except ImportError:
 # Try to import Playwright
 try:
     from playwright.async_api import async_playwright, Page, Browser  # noqa: F401
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -65,7 +66,9 @@ load_dotenv()
 logger = get_logger(__name__)
 
 if not LLM_SERVICE_AVAILABLE:
-    logger.warning("LLMService not available, market scanner will use fallback evaluation")
+    logger.warning(
+        "LLMService not available, market scanner will use fallback evaluation"
+    )
 
 if not PLAYWRIGHT_AVAILABLE:
     logger.warning("Playwright not available, market scanner will use HTTP-only mode")
@@ -85,22 +88,32 @@ DEFAULT_MARKETPLACE_URL = "https://example.com/freelance-jobs"
 # Evaluation settings
 EVALUATION_MODEL = os.environ.get("MARK_SCAN_MODEL", "llama3.2")
 
+
 # Load bid amounts and timeouts from ConfigManager (Issue #26)
 def get_max_bid_amount() -> int:
     """Get MAX_BID_AMOUNT from ConfigManager."""
     return ConfigManager.get("BID_LIMIT_CENTS") // 100
 
+
 def get_min_bid_amount() -> int:
     """Get MIN_BID_AMOUNT from ConfigManager."""
     return ConfigManager.get("MIN_BID_AMOUNT") // 100
+
 
 def get_page_load_timeout() -> int:
     """Get PAGE_LOAD_TIMEOUT from ConfigManager."""
     return ConfigManager.get("MARKET_SCAN_PAGE_TIMEOUT")
 
+
 def get_scan_interval() -> int:
     """Get SCAN_INTERVAL from ConfigManager."""
     return ConfigManager.get("MARKET_SCAN_INTERVAL")
+
+
+def is_training_mode() -> bool:
+    """Check if system is running in training mode."""
+    return ConfigManager.get("TRAINING_MODE", False)
+
 
 # Legacy module-level constants for backward compatibility
 MAX_BID_AMOUNT = get_max_bid_amount()
@@ -283,7 +296,7 @@ class MarketScanner:
                 await pool.start()
             except Exception:
                 pass
-                
+
             self.browser = await pool.acquire_browser()
 
             logger.info("MarketScanner started successfully using BrowserPool")
@@ -772,15 +785,17 @@ Evaluate this job posting and return JSON."""
                 ):
                     # Bidding integration (Issue #19 Integration)
                     # For actual bidding, we need to extract the marketplace ID from the URL
-                    marketplace_id = self._extract_marketplace_id(marketplace_url or self.marketplace_url)
-                    
+                    marketplace_id = self._extract_marketplace_id(
+                        marketplace_url or self.marketplace_url
+                    )
+
                     # Try to place bid (distributed lock + deduplication)
                     bid_placed = await self._place_bid_if_not_duplicate(
                         marketplace_id=marketplace_id,
                         posting=posting,
-                        evaluation=evaluation
+                        evaluation=evaluation,
                     )
-                    
+
                     suitable_jobs.append(
                         {
                             "posting": {
@@ -791,7 +806,7 @@ Evaluate this job posting and return JSON."""
                                 "skills": posting.skills,
                             },
                             "evaluation": evaluation.to_dict(),
-                            "bid_placed": bid_placed
+                            "bid_placed": bid_placed,
                         }
                     )
 
@@ -978,6 +993,7 @@ async def run_continuous_scan(
 # HELPER FUNCTIONS (Internal)
 # =============================================================================
 
+
 def _extract_marketplace_id_helper(url: str) -> str:
     """Extract marketplace identifier from URL."""
     if not url:
@@ -1002,42 +1018,51 @@ def _extract_marketplace_id_helper(url: str) -> str:
 # MARKET SCANNER CLASS EXTENSIONS
 # =============================================================================
 
+
 async def place_bid_on_posting(
-    self,
-    marketplace_id: str,
-    posting: Any,
-    evaluation: Any
+    self, marketplace_id: str, posting: Any, evaluation: Any
 ) -> bool:
     """
     Atomic bid placement with distributed lock and deduplication.
-    
-    This is the core integration for Issue #19.
+
+    If TRAINING_MODE is enabled, places a simulated bid instead of submitting
+    to the actual marketplace. This is the core integration for Issue #19 and Issue #88.
     """
+    # Check if in training mode
+    if is_training_mode():
+        logger.info(f"Training mode enabled - simulating bid for {posting.title}")
+        return True  # Return True to indicate simulated bid was recorded
+
     # Create a unique ID for this posting for locking
     # Use external job_id if available, else generate stable hash from content
-    posting_id = getattr(posting, "id", None) or f"{hash(posting.title + posting.description) % 1000000}"
-    
+    posting_id = (
+        getattr(posting, "id", None)
+        or f"{hash(posting.title + posting.description) % 1000000}"
+    )
+
     # Get the lock manager (distributed)
     lock_manager = await get_bid_lock_manager()
-    
+
     # Try to acquire lock for this posting
     try:
         async with lock_manager.with_lock(
             marketplace_id=marketplace_id,
             posting_id=posting_id,
             timeout=5.0,
-            holder_id=f"scanner-{os.getpid()}"
+            holder_id=f"scanner-{os.getpid()}",
         ):
             # 1. Deduplication check within the lock
             db = SessionLocal()
             try:
                 if not await should_bid(db, posting_id, marketplace_id):
-                    logger.info(f"Deduplication: Already bid on {marketplace_id}:{posting_id}")
+                    logger.info(
+                        f"Deduplication: Already bid on {marketplace_id}:{posting_id}"
+                    )
                     return False
-                
+
                 # 2. Prepare the bid proposal
                 logger.info(f"Preparing bid for {marketplace_id}:{posting_id}")
-                
+
                 # Create the bid record in our database first (Pillar 1.9 Atomic)
                 bid = await create_bid_atomically(
                     db_session=db,
@@ -1045,48 +1070,55 @@ async def place_bid_on_posting(
                     marketplace_id=marketplace_id,
                     job_title=posting.title,
                     job_description=posting.description,
-                    bid_amount=int(evaluation.bid_amount * 100), # to cents
+                    bid_amount=int(evaluation.bid_amount * 100),  # to cents
                     job_url=getattr(posting, "url", ""),
                     evaluation_reasoning=evaluation.reasoning,
-                    evaluation_confidence=int(evaluation.confidence * 100)
+                    evaluation_confidence=int(evaluation.confidence * 100),
                 )
-                
+
                 if not bid:
                     # Race condition: someone else created the bid record
                     return False
-                
+
                 # 3. Submit to actual marketplace using adapter (Issue #43 Integration)
                 try:
                     registry = MarketplaceRegistry()
                     if registry.is_registered(marketplace_id):
-                        adapter = registry.create(marketplace_id)
+                        _ = registry.create(marketplace_id)
                         # Normally would authenticate here
-                        
+
                         # In this integration, we'll just log and mark as SUBMITTED
-                        logger.info(f"PLACED BID via adapter for {marketplace_id}:{posting_id} ($ {evaluation.bid_amount})")
-                        
+                        logger.info(
+                            f"PLACED BID via adapter for {marketplace_id}:{posting_id} ($ {evaluation.bid_amount})"
+                        )
+
                         bid.status = BidStatus.SUBMITTED
                         bid.submitted_at = datetime.now()
                         db.commit()
                         return True
                     else:
                         # No adapter, just log the intent (simulated bid)
-                        logger.warning(f"No adapter for {marketplace_id}, bid recorded but not submitted")
+                        logger.warning(
+                            f"No adapter for {marketplace_id}, bid recorded but not submitted"
+                        )
                         return True
                 except Exception as adapter_error:
                     logger.error(f"Adapter bid submission failed: {adapter_error}")
                     # Keep as ACTIVE/PENDING for retry later
                     return False
-                
+
             finally:
                 db.close()
-                
+
     except TimeoutError:
-        logger.warning(f"Lock timeout for {marketplace_id}:{posting_id} - someone else is bidding")
+        logger.warning(
+            f"Lock timeout for {marketplace_id}:{posting_id} - someone else is bidding"
+        )
         return False
     except Exception as e:
         logger.error(f"Error in bid placement for {marketplace_id}:{posting_id}: {e}")
         return False
+
 
 # Add these methods to MarketScanner class properly
 MarketScanner._extract_marketplace_id = staticmethod(_extract_marketplace_id_helper)

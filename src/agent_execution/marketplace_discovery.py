@@ -454,7 +454,6 @@ class MarketplaceDiscovery:
                 "error": "Playwright not available",
             }
 
-        playwright = None
         browser = None
         page = None
 

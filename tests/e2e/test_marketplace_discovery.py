@@ -12,7 +12,7 @@ Coverage: ~20% of critical path
 
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, patch, Mock
+from unittest.mock import AsyncMock
 from datetime import datetime, timedelta, timezone
 
 from .utils import build_marketplace_fixture

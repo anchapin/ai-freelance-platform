@@ -15,21 +15,18 @@ Focuses on:
 """
 
 import pytest
-import asyncio
-import json
 import uuid
-from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from datetime import datetime, timezone
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 
 from src.api.models import (
-    Base, Task, TaskStatus, ReviewStatus, EscalationLog, Bid, BidStatus,
+    Base, Task, TaskStatus, EscalationLog, Bid, BidStatus,
     ArenaCompetition, ArenaCompetitionStatus
 )
 from src.agent_execution.bid_lock_manager import BidLockManager
-from src.agent_execution.bid_deduplication import should_bid, mark_bid_withdrawn, create_bid_atomically
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -780,7 +777,7 @@ def test_distributed_tracing_propagation():
     assert get_trace_id() == trace_id
     
     # Verify logging integration (if initialized)
-    logger = logging.getLogger("test_trace")
+    logging.getLogger("test_trace")
     # We can't easily check the log output format here without complex setup,
     # but we can verify the context is set.
     
