@@ -41,12 +41,12 @@ TASK_TYPE_BASIC_ADMIN = "basic_admin"  # Simple tasks, suitable for local models
 TASK_TYPE_COMPLEX = "complex"  # Complex tasks requiring powerful models
 TASK_TYPE_DISTILLED = "distilled"  # Tasks handled by fine-tuned local model
 
-# Load MIN_CLOUD_REVENUE from ConfigManager
-from .config import get_config as get_config_manager
+# Import Config Manager (Issue #26)
+from .config.config_manager import ConfigManager
 
 # Revenue threshold for cloud vs local model selection (in cents)
-# Loaded from ConfigManager - see src/config/manager.py for validation
-MIN_CLOUD_REVENUE: int = None  # Will be initialized below
+# Loaded from ConfigManager - see src/config/config_manager.py for defaults
+MIN_CLOUD_REVENUE: int = ConfigManager.get("MIN_CLOUD_REVENUE")
 
 
 class ModelConfig:
@@ -178,14 +178,6 @@ class ModelConfig:
                 os.environ.get("API_KEY", "dummy-key-for-local"),
                 False,
             )
-
-
-# Initialize MIN_CLOUD_REVENUE from ConfigManager
-try:
-    MIN_CLOUD_REVENUE = get_config_manager().MIN_CLOUD_REVENUE
-except Exception:
-    # Fallback in case ConfigManager fails
-    MIN_CLOUD_REVENUE = int(os.environ.get("MIN_CLOUD_REVENUE", "3000"))
 
 
 # Global default model config

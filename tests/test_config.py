@@ -65,6 +65,7 @@ class TestValidationCriticalEnvVars:
         monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_key")
         monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
         monkeypatch.setenv("DATABASE_URL", "sqlite:///./data/tasks.db")
+        monkeypatch.setenv("CLIENT_AUTH_SECRET", "secure-test-secret-1234567890")
 
         # Should not raise
         validate_critical_env_vars()

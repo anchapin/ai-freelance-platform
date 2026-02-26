@@ -72,7 +72,68 @@ from ..utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+class APMManager:
+    """Centralized APM configuration and initialization manager"""
 
+    _instance: Optional["APMManager"] = None
+    _initialized: bool = False
+
+    def __new__(cls) -> "APMManager":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        """Initialize APM manager (singleton pattern)"""
+        if self._initialized:
+            return
+
+        self.environment = os.environ.get("ENVIRONMENT", "development")
+        self.apm_enabled = os.environ.get("APM_ENABLED", "true").lower() == "true"
+        self.apm_backend = os.environ.get("APM_BACKEND", "jaeger").lower()
+        self.apm_service_name = os.environ.get("APM_SERVICE_NAME", "arbitrage-ai")
+        self.apm_version = os.environ.get("APM_VERSION", "0.1.0")
+        self.apm_environment = os.environ.get("APM_ENVIRONMENT", self.environment)
+
+        # Sampling configuration
+        self.trace_sample_rate = float(
+            os.environ.get("TRACE_SAMPLE_RATE", "0.1" if self.environment == "production" else "1.0")
+        )
+
+        # APM backend endpoints
+        self.jaeger_endpoint = os.environ.get(
+            "JAEGER_ENDPOINT", "http://localhost:14268/api/traces"
+        )
+        self.otlp_endpoint = os.environ.get(
+            "OTLP_ENDPOINT", "http://localhost:4317"
+        )
+        self.datadog_endpoint = os.environ.get(
+            "DATADOG_ENDPOINT", None
+        )
+        self.datadog_api_key = os.environ.get(
+            "DATADOG_API_KEY", None
+        )
+
+        self.tracer_provider: Optional[TracerProvider] = None
+        self.meter_provider: Optional[MeterProvider] = None
+        self.tracer: Optional[trace.Tracer] = None
+        self.meter: Optional[metrics.Meter] = None
+
+        # Metrics instruments
+        self.task_execution_time: Optional[Any] = None
+        self.task_completion_counter: Optional[Any] = None
+        self.task_error_counter: Optional[Any] = None
+        self.llm_call_duration: Optional[Any] = None
+        self.llm_token_usage: Optional[Any] = None
+        self.marketplace_scan_duration: Optional[Any] = None
+        self.bid_placement_counter: Optional[Any] = None
+        self.payment_processing_duration: Optional[Any] = None
+        self.rag_query_duration: Optional[Any] = None
+        self.arena_competition_duration: Optional[Any] = None
+        self.http_request_duration: Optional[Any] = None
+        self.http_request_counter: Optional[Any] = None
+
+        self._initialized = True
 
     def initialize(self) -> None:
         """Initialize APM infrastructure"""
