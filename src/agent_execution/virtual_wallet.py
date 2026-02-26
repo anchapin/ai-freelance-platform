@@ -29,7 +29,7 @@ from sqlalchemy import (
     JSON,
 )
 
-from .database import SessionLocal
+from ..api.database import SessionLocal
 from ..api.models import Base
 from ..config.config_manager import ConfigManager
 from ..utils.logger import get_logger
