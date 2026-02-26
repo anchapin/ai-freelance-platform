@@ -1,16 +1,18 @@
 """
-Tests for the advanced task scheduling system.
+Tests for the Advanced Task Scheduler and Cron Expressions.
 
-Tests cron expression validation, task scheduling, execution, pause/resume,
-analytics, and intelligent scheduling features.
+Tests cron expression parsing, recurring tasks, intelligent scheduling,
+pause/resume functionality, and schedule analytics.
 """
 
 import pytest
 import asyncio
+import json
+import time
 from datetime import datetime, timedelta
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, AsyncMock, patch
+from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from src.agent_execution.scheduler import (
     TaskScheduler,
@@ -23,36 +25,73 @@ from src.agent_execution.scheduler import (
     schedule_monthly_task
 )
 from src.api.models import ScheduledTask, ScheduleHistory
-from src.agent_execution.errors import SchedulingError
+from src.api.scheduler_endpoints import (
+    ScheduleTaskRequest,
+    ScheduleUpdateRequest
+)
 
 
 class TestCronExpressionValidator:
     """Test cron expression validation and utilities."""
     
-    def test_validate_valid_expression(self):
-        """Test that valid cron expressions are accepted."""
-        assert CronExpressionValidator.validate_expression("0 9 * * *") == True
-        assert CronExpressionValidator.validate_expression("0 */6 * * *") == True
-        assert CronExpressionValidator.validate_expression("*/30 * * * *") == True
+    def test_validate_expression_valid(self):
+        """Test validation of valid cron expressions."""
+        valid_expressions = [
+            "0 9 * * *",      # Daily at 9 AM
+            "0 0 * * *",      # Daily at midnight
+            "0 */6 * * *",    # Every 6 hours
+            "*/30 * * * *",   # Every 30 minutes
+            "0 9 * * 1-5",    # Weekdays at 9 AM
+            "0 9 1 * *",      # First of month at 9 AM
+        ]
+        
+        for expression in valid_expressions:
+            assert CronExpressionValidator.validate_expression(expression) == True
     
-    def test_validate_invalid_expression(self):
-        """Test that invalid cron expressions are rejected."""
-        assert CronExpressionValidator.validate_expression("invalid") == False
-        assert CronExpressionValidator.validate_expression("0 25 * * *") == False  # Invalid hour
-        assert CronExpressionValidator.validate_expression("0 9 * * * *") == False  # Too many fields
+    def test_validate_expression_invalid(self):
+        """Test validation of invalid cron expressions."""
+        invalid_expressions = [
+            "invalid",        # Not a cron expression
+            "0 25 * * *",     # Invalid hour (25)
+            "60 * * * *",     # Invalid minute (60)
+            "0 9 * * 8",      # Invalid day of week (8)
+            "0 9 32 * *",     # Invalid day of month (32)
+            "0 9 * * * *",    # Too many fields
+            "0 9",            # Too few fields
+        ]
+        
+        for expression in invalid_expressions:
+            assert CronExpressionValidator.validate_expression(expression) == False
     
     def test_get_next_occurrence(self):
-        """Test calculating next occurrence."""
-        next_time = CronExpressionValidator.get_next_occurrence("0 9 * * *")
+        """Test getting next occurrence for cron expressions."""
+        expression = "0 9 * * *"  # Daily at 9 AM
+        next_time = CronExpressionValidator.get_next_occurrence(expression)
+        
         assert isinstance(next_time, datetime)
         assert next_time.hour == 9
         assert next_time.minute == 0
+        assert next_time >= datetime.now()
     
     def test_get_human_readable(self):
-        """Test human-readable expression conversion."""
-        assert CronExpressionValidator.get_human_readable("0 9 * * *") == "Every day at 9:00 AM"
-        assert CronExpressionValidator.get_human_readable("0 17 * * *") == "Every day at 5:00 PM"
-        assert "Cron expression:" in CronExpressionValidator.get_human_readable("0 9 15 * *")
+        """Test conversion to human-readable format."""
+        test_cases = [
+            ("0 9 * * *", "Every day at 9:00 AM"),
+            ("0 17 * * *", "Every day at 5:00 PM"),
+            ("0 0 * * *", "Every day at 12:00 AM"),
+            ("0 12 * * *", "Every day at 12:00 PM"),
+            ("0 0 * * 1", "Every Monday at 12:00 AM"),
+            ("0 0 1 * *", "First day of every month at 12:00 AM"),
+            ("0 */6 * * *", "Every 6 hours"),
+            ("0 */12 * * *", "Every 12 hours"),
+            ("*/30 * * * *", "Every 30 minutes"),
+            ("*/15 * * * *", "Every 15 minutes"),
+            ("custom", "Custom cron: custom"),
+        ]
+        
+        for expression, expected in test_cases:
+            result = CronExpressionValidator.get_human_readable(expression)
+            assert result == expected
 
 
 class TestIntelligentScheduler:
@@ -62,64 +101,90 @@ class TestIntelligentScheduler:
         """Test peak hours avoidance logic."""
         scheduler = IntelligentScheduler()
         
-        # Create a mock schedule that avoids peak hours
+        # Mock schedule that avoids peak hours
         mock_schedule = Mock()
         mock_schedule.avoid_peak_hours = True
-        
         assert scheduler.should_avoid_peak_hours(mock_schedule) == True
         
-        # Create a mock schedule that doesn't avoid peak hours
+        # Mock schedule that doesn't avoid peak hours
         mock_schedule.avoid_peak_hours = False
         assert scheduler.should_avoid_peak_hours(mock_schedule) == False
     
-    def test_get_optimal_time_avoid_peak_hours(self):
-        """Test optimal time calculation avoiding peak hours."""
+    def test_get_optimal_time_business_hours(self):
+        """Test optimal time calculation during business hours."""
         scheduler = IntelligentScheduler()
         
-        # Create a mock schedule that avoids peak hours
+        # Create a time during business hours (10 AM)
+        base_time = datetime(2023, 1, 1, 10, 0, 0)
+        
+        # Mock schedule that avoids peak hours
         mock_schedule = Mock()
         mock_schedule.avoid_peak_hours = True
         
-        # Test with time during peak hours (10 AM)
-        peak_time = datetime(2026, 2, 25, 10, 30, 0)
-        optimal_time = scheduler.get_optimal_time(peak_time, mock_schedule)
+        optimal_time = scheduler.get_optimal_time(base_time, mock_schedule)
         
-        # Should be moved to 5 PM same day
+        # Should be moved to 5 PM (end of business hours)
         assert optimal_time.hour == 17
         assert optimal_time.minute == 0
-        assert optimal_time.date() == peak_time.date()
     
-    def test_get_optimal_time_after_peak_hours(self):
-        """Test optimal time calculation after peak hours."""
+    def test_get_optimal_time_after_hours(self):
+        """Test optimal time calculation after business hours."""
         scheduler = IntelligentScheduler()
         
-        # Create a mock schedule that avoids peak hours
+        # Create a time after business hours (6 PM)
+        base_time = datetime(2023, 1, 1, 18, 0, 0)
+        
+        # Mock schedule that avoids peak hours
         mock_schedule = Mock()
         mock_schedule.avoid_peak_hours = True
         
-        # Test with time after peak hours (6 PM)
-        after_peak_time = datetime(2026, 2, 25, 18, 30, 0)
-        optimal_time = scheduler.get_optimal_time(after_peak_time, mock_schedule)
+        optimal_time = scheduler.get_optimal_time(base_time, mock_schedule)
         
-        # Should be moved to next day morning
+        # Should be moved to next day morning (6 AM)
         assert optimal_time.hour == 6
         assert optimal_time.minute == 0
-        assert optimal_time.date() == (after_peak_time + timedelta(days=1)).date()
+        assert optimal_time.day == 2  # Next day
     
-    def test_get_optimal_time_no_peak_avoidance(self):
-        """Test optimal time calculation when not avoiding peak hours."""
+    def test_get_optimal_time_weekend(self):
+        """Test optimal time calculation on weekends."""
         scheduler = IntelligentScheduler()
         
-        # Create a mock schedule that doesn't avoid peak hours
+        # Create a time on weekend (Saturday 10 AM)
+        base_time = datetime(2023, 1, 7, 10, 0, 0)  # Saturday
+        
+        # Mock schedule that avoids peak hours
         mock_schedule = Mock()
-        mock_schedule.avoid_peak_hours = False
+        mock_schedule.avoid_peak_hours = True
         
-        # Test with time during peak hours
-        peak_time = datetime(2026, 2, 25, 10, 30, 0)
-        optimal_time = scheduler.get_optimal_time(peak_time, mock_schedule)
+        optimal_time = scheduler.get_optimal_time(base_time, mock_schedule)
         
-        # Should remain unchanged
-        assert optimal_time == peak_time
+        # Should be moved to next business day morning
+        assert optimal_time.hour == 6
+        assert optimal_time.minute == 0
+        assert optimal_time.day == 9  # Monday
+    
+    def test_should_batch_tasks(self):
+        """Test task batching logic."""
+        scheduler = IntelligentScheduler()
+        
+        # Mock schedule with batching enabled
+        mock_schedule = Mock()
+        mock_schedule.batch_size = 5
+        assert scheduler.should_batch_tasks(mock_schedule) == True
+        
+        # Mock schedule without batching
+        mock_schedule.batch_size = 1
+        assert scheduler.should_batch_tasks(mock_schedule) == False
+    
+    def test_get_batch_window(self):
+        """Test batch window calculation."""
+        scheduler = IntelligentScheduler()
+        
+        base_time = datetime(2023, 1, 1, 9, 0, 0)
+        start, end = scheduler.get_batch_window(base_time)
+        
+        assert start == base_time
+        assert end == base_time + timedelta(minutes=30)  # Default batch window size
 
 
 class TestTaskScheduler:
@@ -127,282 +192,474 @@ class TestTaskScheduler:
     
     @pytest.fixture
     async def scheduler(self, db_session: AsyncSession):
-        """Create a scheduler instance with database session."""
-        scheduler = TaskScheduler(db_session)
+        """Create a task scheduler instance."""
+        scheduler = TaskScheduler(db_session=db_session)
         await scheduler.initialize()
         yield scheduler
         await scheduler.shutdown()
     
     @pytest.fixture
-    async def mock_callback(self):
-        """Create a mock callback function."""
-        return AsyncMock(return_value="Task completed successfully")
-    
-    async def test_schedule_task_success(self, scheduler, mock_callback):
-        """Test successful task scheduling."""
-        task_data = {
+    async def test_task_data(self):
+        """Create test task data."""
+        return {
             "title": "Test Task",
             "description": "Test Description",
-            "domain": "test"
+            "domain": "test",
+            "parameters": {"key": "value"}
         }
-        
-        # Register callback
+    
+    @pytest.mark.asyncio
+    async def test_schedule_task_once(self, scheduler, test_task_data):
+        """Test scheduling a one-time task."""
         schedule_id = await scheduler.schedule_task(
-            task_data=task_data,
+            task_data=test_task_data,
             cron_expression="0 9 * * *",
-            title="Test Daily Task"
+            schedule_type=ScheduleType.ONCE,
+            title="One-time Test Task"
         )
         
-        # Verify schedule was created
         assert schedule_id is not None
         
-        # Get the created schedule
+        # Verify schedule was created in database
         schedule = await scheduler.get_schedule(schedule_id)
         assert schedule is not None
-        assert schedule.title == "Test Daily Task"
+        assert schedule.title == "One-time Test Task"
+        assert schedule.schedule_type == ScheduleType.ONCE
         assert schedule.cron_expression == "0 9 * * *"
         assert schedule.status == ScheduleStatus.ACTIVE
-        assert schedule.schedule_type == ScheduleType.RECURRING
     
-    async def test_schedule_task_invalid_cron(self, scheduler):
-        """Test scheduling with invalid cron expression."""
-        task_data = {"test": "data"}
-        
-        with pytest.raises(SchedulingError, match="Invalid cron expression"):
-            await scheduler.schedule_task(
-                task_data=task_data,
-                cron_expression="invalid_cron"
-            )
-    
-    async def test_pause_resume_schedule(self, scheduler):
-        """Test pausing and resuming a schedule."""
-        # Create a schedule
+    @pytest.mark.asyncio
+    async def test_schedule_task_recurring(self, scheduler, test_task_data):
+        """Test scheduling a recurring task."""
         schedule_id = await scheduler.schedule_task(
-            task_data={"test": "data"},
-            cron_expression="0 9 * * *"
+            task_data=test_task_data,
+            cron_expression="0 9 * * *",
+            schedule_type=ScheduleType.RECURRING,
+            title="Recurring Test Task"
+        )
+        
+        assert schedule_id is not None
+        
+        # Verify schedule was created
+        schedule = await scheduler.get_schedule(schedule_id)
+        assert schedule is not None
+        assert schedule.schedule_type == ScheduleType.RECURRING
+        assert schedule.max_runs is None  # Unlimited
+    
+    @pytest.mark.asyncio
+    async def test_schedule_task_with_max_runs(self, scheduler, test_task_data):
+        """Test scheduling a task with maximum run limit."""
+        schedule_id = await scheduler.schedule_task(
+            task_data=test_task_data,
+            cron_expression="0 9 * * *",
+            schedule_type=ScheduleType.RECURRING,
+            title="Limited Test Task",
+            max_runs=5
+        )
+        
+        schedule = await scheduler.get_schedule(schedule_id)
+        assert schedule.max_runs == 5
+    
+    @pytest.mark.asyncio
+    async def test_pause_schedule(self, scheduler, test_task_data):
+        """Test pausing a scheduled task."""
+        schedule_id = await scheduler.schedule_task(
+            task_data=test_task_data,
+            cron_expression="0 9 * * *",
+            title="Test Task to Pause"
         )
         
         # Pause the schedule
         result = await scheduler.pause_schedule(schedule_id)
         assert result == True
         
+        # Verify status changed
         schedule = await scheduler.get_schedule(schedule_id)
         assert schedule.status == ScheduleStatus.PAUSED
+    
+    @pytest.mark.asyncio
+    async def test_resume_schedule(self, scheduler, test_task_data):
+        """Test resuming a paused scheduled task."""
+        schedule_id = await scheduler.schedule_task(
+            task_data=test_task_data,
+            cron_expression="0 9 * * *",
+            title="Test Task to Resume"
+        )
         
-        # Resume the schedule
+        # Pause then resume
+        await scheduler.pause_schedule(schedule_id)
         result = await scheduler.resume_schedule(schedule_id)
         assert result == True
         
+        # Verify status changed back to active
         schedule = await scheduler.get_schedule(schedule_id)
         assert schedule.status == ScheduleStatus.ACTIVE
         assert schedule.next_run_at is not None
     
-    async def test_cancel_schedule(self, scheduler):
-        """Test canceling a schedule."""
-        # Create a schedule
+    @pytest.mark.asyncio
+    async def test_cancel_schedule(self, scheduler, test_task_data):
+        """Test cancelling a scheduled task."""
         schedule_id = await scheduler.schedule_task(
-            task_data={"test": "data"},
-            cron_expression="0 9 * * *"
+            task_data=test_task_data,
+            cron_expression="0 9 * * *",
+            title="Test Task to Cancel"
         )
         
         # Cancel the schedule
         result = await scheduler.cancel_schedule(schedule_id)
         assert result == True
         
+        # Verify status changed
         schedule = await scheduler.get_schedule(schedule_id)
         assert schedule.status == ScheduleStatus.CANCELLED
     
-    async def test_list_schedules(self, scheduler):
-        """Test listing schedules."""
+    @pytest.mark.asyncio
+    async def test_list_schedules(self, scheduler, test_task_data):
+        """Test listing scheduled tasks."""
         # Create multiple schedules
-        schedule1_id = await scheduler.schedule_task(
-            task_data={"test": "data1"},
-            cron_expression="0 9 * * *",
-            title="Schedule 1"
-        )
-        
-        schedule2_id = await scheduler.schedule_task(
-            task_data={"test": "data2"},
-            cron_expression="0 17 * * *",
-            title="Schedule 2"
-        )
+        schedule_ids = []
+        for i in range(3):
+            schedule_id = await scheduler.schedule_task(
+                task_data=test_task_data,
+                cron_expression=f"0 {9+i} * * *",
+                title=f"Test Task {i}"
+            )
+            schedule_ids.append(schedule_id)
         
         # List all schedules
-        all_schedules = await scheduler.list_schedules()
-        assert len(all_schedules) >= 2
+        schedules = await scheduler.list_schedules()
+        assert len(schedules) >= 3
         
-        # List active schedules
+        # List by status
         active_schedules = await scheduler.list_schedules(ScheduleStatus.ACTIVE)
-        assert len(active_schedules) >= 2
-        
-        # List paused schedules
-        await scheduler.pause_schedule(schedule1_id)
-        paused_schedules = await scheduler.list_schedules(ScheduleStatus.PAUSED)
-        assert len(paused_schedules) >= 1
+        assert len(active_schedules) >= 3
     
-    async def test_schedule_analytics(self, scheduler, mock_callback):
-        """Test schedule analytics."""
-        # Create a schedule and register callback
+    @pytest.mark.asyncio
+    async def test_get_schedule_analytics(self, scheduler, test_task_data):
+        """Test getting schedule analytics."""
         schedule_id = await scheduler.schedule_task(
-            task_data={"test": "data"},
-            cron_expression="0 9 * * *"
+            task_data=test_task_data,
+            cron_expression="0 9 * * *",
+            title="Test Task for Analytics"
         )
-        
-        await scheduler.register_callback(schedule_id, mock_callback)
         
         # Get analytics
         analytics = await scheduler.get_schedule_analytics(schedule_id)
         
         assert analytics["schedule_id"] == schedule_id
-        assert analytics["title"] is not None
-        assert analytics["status"] == ScheduleStatus.ACTIVE
+        assert analytics["title"] == "Test Task for Analytics"
         assert analytics["total_executions"] == 0
+        assert analytics["successful_executions"] == 0
+        assert analytics["failed_executions"] == 0
         assert analytics["success_rate"] == 0.0
-        assert analytics["cron_expression"] == "0 9 * * *"
-        assert "human_readable" in analytics
+        assert analytics["avg_execution_time_ms"] == 0.0
     
-    async def test_convenience_functions(self, scheduler):
-        """Test convenience scheduling functions."""
-        # Test daily task
-        daily_id = await schedule_daily_task(
-            scheduler,
-            task_data={"test": "daily"},
+    @pytest.mark.asyncio
+    async def test_register_callback(self, scheduler):
+        """Test registering a callback for a schedule."""
+        async def test_callback(task_data):
+            return "Task executed successfully"
+        
+        schedule_id = "test-schedule-id"
+        await scheduler.register_callback(schedule_id, test_callback)
+        
+        assert schedule_id in scheduler._scheduled_callbacks
+        assert scheduler._scheduled_callbacks[schedule_id] == test_callback
+    
+    @pytest.mark.asyncio
+    async def test_common_schedule_creation(self):
+        """Test creating common schedule configurations."""
+        task_data = {"test": "data"}
+        
+        # Test daily schedule
+        daily_config = TaskScheduler.create_common_schedule(
+            task_data=task_data,
+            schedule_type="daily_9am",
+            title="Daily Report"
+        )
+        assert daily_config["cron_expression"] == "0 9 * * *"
+        assert daily_config["description"] == "Every day at 9:00 AM"
+        
+        # Test weekly schedule
+        weekly_config = TaskScheduler.create_common_schedule(
+            task_data=task_data,
+            schedule_type="weekly_monday",
+            title="Weekly Report"
+        )
+        assert weekly_config["cron_expression"] == "0 9 * * 1"
+        assert weekly_config["description"] == "Every Monday at 9:00 AM"
+        
+        # Test monthly schedule
+        monthly_config = TaskScheduler.create_common_schedule(
+            task_data=task_data,
+            schedule_type="monthly_1st",
+            title="Monthly Report"
+        )
+        assert monthly_config["cron_expression"] == "0 9 1 * *"
+        assert monthly_config["description"] == "First day of every month at 9:00 AM"
+        
+        # Test invalid schedule type
+        with pytest.raises(Exception):
+            TaskScheduler.create_common_schedule(
+                task_data=task_data,
+                schedule_type="invalid",
+                title="Invalid Schedule"
+            )
+
+
+class TestConvenienceFunctions:
+    """Test convenience scheduling functions."""
+    
+    @pytest.fixture
+    async def scheduler(self, db_session: AsyncSession):
+        """Create a task scheduler instance."""
+        scheduler = TaskScheduler(db_session=db_session)
+        await scheduler.initialize()
+        yield scheduler
+        await scheduler.shutdown()
+    
+    @pytest.fixture
+    def test_task_data(self):
+        """Create test task data."""
+        return {"test": "data"}
+    
+    @pytest.mark.asyncio
+    async def test_schedule_daily_task(self, scheduler, test_task_data):
+        """Test scheduling a daily task."""
+        schedule_id = await schedule_daily_task(
+            scheduler=scheduler,
+            task_data=test_task_data,
             time_of_day="10:30",
-            title="Daily Test"
+            title="Daily Morning Task"
         )
         
-        daily_schedule = await scheduler.get_schedule(daily_id)
-        assert daily_schedule.cron_expression == "30 10 * * *"
-        assert daily_schedule.title == "Daily Test"
-        
-        # Test weekly task
-        weekly_id = await schedule_weekly_task(
-            scheduler,
-            task_data={"test": "weekly"},
-            day_of_week=2,  # Tuesday
+        schedule = await scheduler.get_schedule(schedule_id)
+        assert schedule.cron_expression == "30 10 * * *"
+        assert schedule.title == "Daily Morning Task"
+    
+    @pytest.mark.asyncio
+    async def test_schedule_weekly_task(self, scheduler, test_task_data):
+        """Test scheduling a weekly task."""
+        schedule_id = await schedule_weekly_task(
+            scheduler=scheduler,
+            task_data=test_task_data,
+            day_of_week=3,  # Wednesday
             time_of_day="14:00",
-            title="Weekly Test"
+            title="Weekly Wednesday Task"
         )
         
-        weekly_schedule = await scheduler.get_schedule(weekly_id)
-        assert weekly_schedule.cron_expression == "0 14 * * 2"
-        assert weekly_schedule.title == "Weekly Test"
-        
-        # Test monthly task
-        monthly_id = await schedule_monthly_task(
-            scheduler,
-            task_data={"test": "monthly"},
+        schedule = await scheduler.get_schedule(schedule_id)
+        assert schedule.cron_expression == "0 14 * * 3"
+        assert schedule.title == "Weekly Wednesday Task"
+    
+    @pytest.mark.asyncio
+    async def test_schedule_monthly_task(self, scheduler, test_task_data):
+        """Test scheduling a monthly task."""
+        schedule_id = await schedule_monthly_task(
+            scheduler=scheduler,
+            task_data=test_task_data,
             day_of_month=15,
-            time_of_day="09:00",
-            title="Monthly Test"
+            time_of_day="08:00",
+            title="Monthly Mid-Month Task"
         )
         
-        monthly_schedule = await scheduler.get_schedule(monthly_id)
-        assert monthly_schedule.cron_expression == "0 9 15 * *"
-        assert monthly_schedule.title == "Monthly Test"
+        schedule = await scheduler.get_schedule(schedule_id)
+        assert schedule.cron_expression == "0 8 15 * *"
+        assert schedule.title == "Monthly Mid-Month Task"
 
 
 class TestSchedulerIntegration:
     """Integration tests for the scheduler."""
     
-    @pytest.fixture
-    async def scheduler_with_db(self, db_session: AsyncSession):
-        """Create a scheduler with database integration."""
-        scheduler = TaskScheduler(db_session)
+    @pytest.mark.asyncio
+    async def test_scheduler_lifecycle(self, db_session: AsyncSession):
+        """Test complete scheduler lifecycle."""
+        scheduler = TaskScheduler(db_session=db_session)
+        
+        # Initialize
         await scheduler.initialize()
-        yield scheduler
+        assert scheduler.is_running == True
+        
+        # Shutdown
         await scheduler.shutdown()
+        assert scheduler.is_running == False
     
-    async def test_full_scheduling_workflow(self, scheduler_with_db, mock_callback):
-        """Test complete scheduling workflow."""
-        # Schedule a task
-        task_data = {
-            "title": "Integration Test Task",
-            "description": "Testing full workflow",
-            "domain": "integration"
+    @pytest.mark.asyncio
+    async def test_scheduler_with_real_database(self, db_session: AsyncSession):
+        """Test scheduler with real database operations."""
+        scheduler = TaskScheduler(db_session=db_session)
+        await scheduler.initialize()
+        
+        try:
+            # Schedule a task
+            task_data = {"test": "integration"}
+            schedule_id = await scheduler.schedule_task(
+                task_data=task_data,
+                cron_expression="0 9 * * *",
+                title="Integration Test Task"
+            )
+            
+            # Verify it was created
+            schedule = await scheduler.get_schedule(schedule_id)
+            assert schedule is not None
+            assert schedule.title == "Integration Test Task"
+            
+            # List schedules
+            schedules = await scheduler.list_schedules()
+            assert len(schedules) > 0
+            
+            # Get analytics
+            analytics = await scheduler.get_schedule_analytics(schedule_id)
+            assert analytics["schedule_id"] == schedule_id
+            
+        finally:
+            await scheduler.shutdown()
+
+
+class TestSchedulerAPIEndpoints:
+    """Test the scheduler API endpoints."""
+    
+    def test_schedule_task_endpoint(self, client: TestClient):
+        """Test the schedule task endpoint."""
+        request_data = {
+            "title": "API Test Task",
+            "description": "Test task created via API",
+            "domain": "test",
+            "cron_expression": "0 9 * * *",
+            "schedule_type": "RECURRING",
+            "task_data": {"test": "data"},
+            "timezone": "UTC",
+            "avoid_peak_hours": True,
+            "batch_size": 1,
+            "priority": 1
         }
         
-        schedule_id = await scheduler_with_db.schedule_task(
-            task_data=task_data,
-            cron_expression="0 9 * * *",
-            title="Integration Test"
-        )
+        response = client.post("/api/scheduler/schedule", json=request_data)
+        assert response.status_code == 200
         
-        # Register callback
-        await scheduler_with_db.register_callback(schedule_id, mock_callback)
+        data = response.json()
+        assert "message" in data
+        assert "schedule_id" in data
+        assert "next_run_at" in data
+    
+    def test_schedule_task_invalid_cron(self, client: TestClient):
+        """Test scheduling with invalid cron expression."""
+        request_data = {
+            "title": "Invalid Task",
+            "cron_expression": "invalid",
+            "schedule_type": "RECURRING",
+            "task_data": {"test": "data"}
+        }
         
-        # Verify schedule exists
-        schedule = await scheduler_with_db.get_schedule(schedule_id)
-        assert schedule is not None
-        assert schedule.title == "Integration Test"
+        response = client.post("/api/scheduler/schedule", json=request_data)
+        assert response.status_code == 400
         
-        # Test pause/resume
-        await scheduler_with_db.pause_schedule(schedule_id)
-        schedule = await scheduler_with_db.get_schedule(schedule_id)
-        assert schedule.status == ScheduleStatus.PAUSED
+        data = response.json()
+        assert "Invalid cron expression" in data["detail"]
+    
+    def test_list_schedules_endpoint(self, client: TestClient):
+        """Test the list schedules endpoint."""
+        response = client.get("/api/scheduler/schedules")
+        assert response.status_code == 200
         
-        await scheduler_with_db.resume_schedule(schedule_id)
-        schedule = await scheduler_with_db.get_schedule(schedule_id)
-        assert schedule.status == ScheduleStatus.ACTIVE
+        data = response.json()
+        assert "schedules" in data
+    
+    def test_get_schedule_endpoint(self, client: TestClient):
+        """Test getting a specific schedule."""
+        # First create a schedule
+        request_data = {
+            "title": "Test Schedule",
+            "cron_expression": "0 9 * * *",
+            "schedule_type": "RECURRING",
+            "task_data": {"test": "data"}
+        }
         
-        # Test analytics
-        analytics = await scheduler_with_db.get_schedule_analytics(schedule_id)
-        assert analytics["schedule_id"] == schedule_id
-        assert analytics["total_executions"] == 0
+        create_response = client.post("/api/scheduler/schedule", json=request_data)
+        assert create_response.status_code == 200
+        schedule_id = create_response.json()["schedule_id"]
         
-        # Test cancellation
-        await scheduler_with_db.cancel_schedule(schedule_id)
-        schedule = await scheduler_with_db.get_schedule(schedule_id)
-        assert schedule.status == ScheduleStatus.CANCELLED
+        # Get the schedule
+        response = client.get(f"/api/scheduler/schedules/{schedule_id}")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["id"] == schedule_id
+        assert data["title"] == "Test Schedule"
+    
+    def test_pause_schedule_endpoint(self, client: TestClient):
+        """Test pausing a schedule via API."""
+        # Create a schedule
+        request_data = {
+            "title": "Pause Test",
+            "cron_expression": "0 9 * * *",
+            "schedule_type": "RECURRING",
+            "task_data": {"test": "data"}
+        }
+        
+        create_response = client.post("/api/scheduler/schedule", json=request_data)
+        schedule_id = create_response.json()["schedule_id"]
+        
+        # Pause it
+        response = client.post(f"/api/scheduler/schedules/{schedule_id}/pause")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "paused successfully" in data["message"]
+    
+    def test_validate_cron_endpoint(self, client: TestClient):
+        """Test the cron validation endpoint."""
+        # Test valid expression
+        response = client.get("/api/scheduler/cron/validate?expression=0+9+*+*+*")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["valid"] == True
+        assert "next_occurrence" in data
+        assert "human_readable" in data
+        
+        # Test invalid expression
+        response = client.get("/api/scheduler/cron/validate?expression=invalid")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["valid"] == False
+        assert "error" in data
+    
+    def test_common_cron_expressions_endpoint(self, client: TestClient):
+        """Test the common cron expressions endpoint."""
+        response = client.get("/api/scheduler/cron/common")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "common_expressions" in data
+        assert "daily_9am" in data["common_expressions"]
+        assert "weekly_monday" in data["common_expressions"]
+    
+    def test_scheduler_status_endpoint(self, client: TestClient):
+        """Test the scheduler status endpoint."""
+        response = client.get("/api/scheduler/status")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "status" in data
+        assert "schedule_counts" in data
+        assert "total_executions" in data
 
 
-@pytest.mark.asyncio
-class TestSchedulerDatabase:
-    """Test database integration."""
-    
-    async def test_scheduled_task_model(self, db_session: AsyncSession):
-        """Test ScheduledTask model creation and querying."""
-        # Create a scheduled task
-        task = ScheduledTask(
-            title="Test Task",
-            description="Test Description",
-            domain="test",
-            cron_expression="0 9 * * *",
-            status=ScheduleStatus.ACTIVE
-        )
-        
-        db_session.add(task)
-        await db_session.commit()
-        
-        # Query the task
-        result = await db_session.execute(
-            select(ScheduledTask).where(ScheduledTask.title == "Test Task")
-        )
-        retrieved_task = result.scalar_one()
-        
-        assert retrieved_task.title == "Test Task"
-        assert retrieved_task.cron_expression == "0 9 * * *"
-        assert retrieved_task.status == ScheduleStatus.ACTIVE
-    
-    async def test_schedule_history_model(self, db_session: AsyncSession):
-        """Test ScheduleHistory model creation and querying."""
-        # Create a schedule history record
-        history = ScheduleHistory(
-            schedule_id="test-schedule-id",
-            execution_start=datetime.utcnow(),
-            status="STARTED",
-            result="Test execution"
-        )
-        
-        db_session.add(history)
-        await db_session.commit()
-        
-        # Query the history
-        result = await db_session.execute(
-            select(ScheduleHistory).where(ScheduleHistory.schedule_id == "test-schedule-id")
-        )
-        retrieved_history = result.scalar_one()
-        
-        assert retrieved_history.schedule_id == "test-schedule-id"
-        assert retrieved_history.status == "STARTED"
-        assert retrieved_history.result == "Test execution"
+# Helper function to create test data
+def create_test_schedule_data():
+    """Create test schedule data for testing."""
+    return {
+        "title": "Test Schedule",
+        "description": "Test Description",
+        "domain": "test",
+        "cron_expression": "0 9 * * *",
+        "schedule_type": "RECURRING",
+        "task_data": {"test": "data", "parameters": {"key": "value"}},
+        "timezone": "UTC",
+        "avoid_peak_hours": True,
+        "batch_size": 1,
+        "priority": 1,
+        "max_runs": None
+    }

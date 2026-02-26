@@ -65,6 +65,10 @@ from ..agent_execution.arena import (
     ArenaLearningLogger
 )
 
+# Import Scheduler modules
+from ..agent_execution.scheduler import TaskScheduler
+from .scheduler_endpoints import register_scheduler_routes
+
 # Import Experience Vector Database for few-shot learning (RAG)
 try:
     from ..experience_vector_db import store_successful_task
@@ -2021,6 +2025,9 @@ async def start_autonomous_loop():
     else:
         logger = get_logger(__name__)
         logger.info("[STARTUP] Autonomous scanning is DISABLED (set AUTONOMOUS_SCAN_ENABLED=true to enable)")
+
+# Register scheduler routes
+register_scheduler_routes(app)
 
 
 if __name__ == "__main__":
