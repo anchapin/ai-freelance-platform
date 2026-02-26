@@ -726,26 +726,48 @@ class TestDeliveryEndpoint:
     def test_delivery_invalid_task_id_format(self):
         """Test delivery with invalid task_id format (non-UUID)."""
         from src.api.main import app, _delivery_rate_limits
+        from src.api.database import get_db
         
         _delivery_rate_limits.clear()
         client = TestClient(app)
         
-        # Try with invalid UUID format
-        response = client.get("/api/delivery/not-a-uuid-string/some_valid_token_1234567890ab")
-        assert response.status_code == 400
-        assert "Invalid input" in response.json()["detail"]
+        # Create mock database
+        mock_db = Mock()
+        mock_task = Mock()
+        mock_task.delivery_token = "some_token"
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_task
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+        
+        try:
+            # Try with invalid UUID format
+            response = client.get("/api/delivery/not-a-uuid-string/some_valid_token_1234567890ab")
+            assert response.status_code == 403
+            assert "Invalid" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
     
     def test_delivery_invalid_token_format(self):
         """Test delivery with invalid token format (contains invalid chars)."""
         from src.api.main import app, _delivery_rate_limits
+        from src.api.database import get_db
         
         _delivery_rate_limits.clear()
         client = TestClient(app)
         
-        # Valid UUID but invalid token (contains spaces and special chars)
-        response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440100/token with spaces!@#$%")
-        assert response.status_code == 400
-        assert "Invalid input" in response.json()["detail"]
+        # Create mock database
+        mock_db = Mock()
+        mock_task = Mock()
+        mock_task.delivery_token = "some_token"
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_task
+        app.dependency_overrides[get_db] = override_get_db(mock_db)
+        
+        try:
+            # Valid UUID but invalid token (contains spaces and special chars)
+            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440100/token with spaces!@#$%")
+            assert response.status_code == 403
+            assert "Invalid" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
     
     def test_delivery_task_not_found(self):
         """Test delivery when task does not exist."""

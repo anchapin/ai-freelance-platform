@@ -111,7 +111,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning
-      - ./src/utils/apm_dashboard.json:/etc/grafana/provisioning/dashboards/apm_dashboard.json
+      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards
     depends_on:
       - prometheus
     healthcheck:

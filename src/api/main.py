@@ -110,6 +110,92 @@ DELIVERY_LOCKOUT_SECONDS = ConfigManager.get("DELIVERY_LOCKOUT_SECONDS")
 # In-memory rate limiter: { task_id: (fail_count, first_fail_timestamp) }
 _delivery_rate_limits: dict[str, tuple[int, float]] = {}
 
+# IP-level rate limiter: { ip: (attempt_count, first_attempt_timestamp) }
+_delivery_ip_rate_limits: dict[str, tuple[int, float]] = {}
+
+
+class AddressValidationModel(BaseModel):
+    """Validation model for delivery addresses."""
+    address: str
+    city: str
+    postal_code: str
+    country: str
+
+    @field_validator("address")
+    @classmethod
+    def validate_address(cls, v: str) -> str:
+        import re
+        if not re.match(r"^[a-zA-Z0-9\s,.-]+$", v):
+            raise ValueError("Contains invalid characters")
+        return v
+
+    @field_validator("city", "country")
+    @classmethod
+    def validate_no_numbers(cls, v: str) -> str:
+        import re
+        if not re.match(r"^[a-zA-Z\s,.-]+$", v):
+            raise ValueError("Contains invalid characters or numbers")
+        return v
+
+    @field_validator("country")
+    @classmethod
+    def validate_country_code(cls, v: str) -> str:
+        if len(v) != 2 or not v.isalpha():
+            raise ValueError("Must be a 2-letter ISO country code")
+        return v.upper()
+
+
+class DeliveryAmountModel(BaseModel):
+    """Validation model for delivery amounts."""
+    amount_cents: int
+    currency: str = "USD"
+
+    @field_validator("amount_cents")
+    @classmethod
+    def validate_positive_amount(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("Amount must be positive")
+        if v > 100000000:  # $1M in cents
+            raise ValueError("Amount exceeds maximum allowed")
+        return v
+
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, v: str) -> str:
+        if v.upper() not in ["USD", "EUR", "GBP"]:
+            raise ValueError("Unsupported currency")
+        return v.upper()
+
+
+class DeliveryTimestampModel(BaseModel):
+    """Validation model for delivery timestamps."""
+    created_at: datetime
+    expires_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_not_future(cls, v: datetime) -> datetime:
+        if v > datetime.now(v.tzinfo or timezone.utc):
+            raise ValueError("Created at cannot be in the future")
+        return v
+
+    @field_validator("expires_at")
+    @classmethod
+    def validate_not_past(cls, v: datetime, info: ValidationInfo) -> datetime:
+        if v < datetime.now(v.tzinfo or timezone.utc):
+            raise ValueError("Expires at cannot be in the past")
+        
+        # Check logical ordering if created_at is available
+        created_at = info.data.get("created_at")
+        if created_at and v <= created_at:
+            raise ValueError("Expires at must be after created at")
+            
+        # Max TTL check (e.g., 7 days)
+        if v > datetime.now(timezone.utc) + timedelta(days=7):
+            raise ValueError("Expires at too far in future")
+            
+        return v
+
 
 def _check_delivery_rate_limit(task_id: str) -> bool:
     """
@@ -1415,6 +1501,30 @@ async def get_client_discount_info(
     }
 
 
+def _check_ip_delivery_rate_limit(ip: str) -> bool:
+    """Check if an IP is rate-limited for delivery attempts."""
+    entry = _delivery_ip_rate_limits.get(ip)
+    if entry is None:
+        return True
+    
+    attempt_count, first_attempt_ts = entry
+    if _time.time() - first_attempt_ts > 3600: # 1 hour window
+        del _delivery_ip_rate_limits[ip]
+        return True
+        
+    return attempt_count < 20
+
+
+def _record_ip_delivery_attempt(ip: str) -> None:
+    """Record a delivery attempt from an IP."""
+    entry = _delivery_ip_rate_limits.get(ip)
+    if entry is None:
+        _delivery_ip_rate_limits[ip] = (1, _time.time())
+    else:
+        attempt_count, first_attempt_ts = entry
+        _delivery_ip_rate_limits[ip] = (attempt_count + 1, first_attempt_ts)
+
+
 @app.get("/api/delivery/{task_id}/{token}")
 async def get_secure_delivery(
     task_id: str,
@@ -1426,19 +1536,26 @@ async def get_secure_delivery(
     Secure delivery link endpoint (hardened — Issue #18).
 
     Security checks:
-    1. Rate limiting per task_id (max 5 failed attempts per hour)
-    2. Token verification (constant-time comparison via secrets.compare_digest)
-    3. Token expiration check
-    4. One-time use: token is invalidated after successful download
-    5. Audit logging for all attempts
+    1. Rate limiting per IP (max 20 attempts per hour)
+    2. Rate limiting per task_id (max 5 failed attempts per hour)
+    3. Token verification (constant-time comparison via secrets.compare_digest)
+    4. Token expiration check
+    5. One-time use: token is invalidated after successful download
+    6. Audit logging for all attempts
     """
     logger = get_logger(__name__)
     client_ip = request.client.host if request.client else "unknown"
 
-    # 1. Rate limiting
+    # 1. IP-level rate limiting
+    if not _check_ip_delivery_rate_limit(client_ip):
+        logger.warning(f"[DELIVERY] IP rate limited: ip={client_ip}")
+        raise HTTPException(status_code=429, detail="Too many delivery requests from your IP. Try again later.")
+    _record_ip_delivery_attempt(client_ip)
+
+    # 2. Task-level rate limiting
     if not _check_delivery_rate_limit(task_id):
-        logger.warning(f"[DELIVERY] Rate limited: task={task_id} ip={client_ip}")
-        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
+        logger.warning(f"[DELIVERY] Task rate limited: task={task_id} ip={client_ip}")
+        raise HTTPException(status_code=429, detail="Too many failed attempts for this task. Try again later.")
 
     task = db.query(Task).filter(Task.id == task_id).first()
 
@@ -1478,8 +1595,6 @@ async def get_secure_delivery(
     task.delivery_token_used = True
     db.commit()
 
-    logger.info(f"[DELIVERY] Success: task={task_id} ip={client_ip}")
-
     # Return the delivery data with diverse output types
     result_url = None
     if task.result_type in ["docx", "pdf"]:
@@ -1489,36 +1604,47 @@ async def get_secure_delivery(
     else:
         result_url = task.result_image_url
 
-    return {
-        "task_id": task.id,
-        "title": task.title,
-        "domain": task.domain,
-        "result_type": task.result_type,
-        "result_url": result_url,
-        "result_image_url": task.result_image_url,
-        "result_document_url": task.result_document_url,
-        "result_spreadsheet_url": task.result_spreadsheet_url,
-        "delivered_at": datetime.now(timezone.utc).isoformat()
-    }
+    logger.info(f"[DELIVERY] Success: task={task_id} ip={client_ip}")
 
-
+    return JSONResponse(
+        content={
+            "task_id": task.id,
+            "title": task.title,
+            "domain": task.domain,
+            "result_type": task.result_type,
+            "result_url": result_url,
+            "result_image_url": task.result_image_url,
+            "result_document_url": task.result_document_url,
+            "result_spreadsheet_url": task.result_spreadsheet_url,
+            "delivered_at": datetime.now(timezone.utc).isoformat()
+        },
+                                headers={
+                                    "X-Content-Type-Options": "nosniff",
+                                    "X-Frame-Options": "DENY",
+                                    "X-XSS-Protection": "1; mode=block",
+                                    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+                                    "Content-Security-Policy": "default-src 'none'"
+                                }
+                        )
+    
 @app.post("/api/client/calculate-price-with-discount")
 async def calculate_price_with_discount(
     domain: str,
     complexity: str = "medium",
     urgency: str = "standard",
-    client_email: str | None = None,
+    email: str | None = None,
+    token: str | None = None,
     db: Session = Depends(get_db)
 ):
     """
-    Calculate price with repeat-client discount applied.
-    
-    If client_email is provided, calculates the discount based on
-    the client's completed task history.
+    Calculate price with repeat-client discount applied (authenticated).
+
+    If email and token are provided, validates ownership and calculates
+    the discount based on the client's completed task history.
     """
     # First calculate base price
     base_price = calculate_task_price(domain, complexity, urgency)
-    
+
     # Default response without discount
     response = {
         "base_price": base_price,
@@ -1528,19 +1654,23 @@ async def calculate_price_with_discount(
         "is_repeat_client": False,
         "completed_orders": 0
     }
-    
+
     # If client email provided, check for repeat-client discount
-    if client_email:
+    if email:
+        # Verify token if provided
+        if token and not verify_client_token(email, token):
+            raise HTTPException(status_code=403, detail="Invalid authentication token")
+
         completed_count = db.query(Task).filter(
-            Task.client_email == client_email,
+            Task.client_email == email,
             Task.status == TaskStatus.COMPLETED
         ).count()
-        
+
         if completed_count > 0:
             discount = get_client_discount(completed_count)
             discount_amount = round(base_price * discount)
             final_price = base_price - discount_amount
-            
+
             response = {
                 "base_price": base_price,
                 "discount": discount_amount,
@@ -1550,9 +1680,8 @@ async def calculate_price_with_discount(
                 "completed_orders": completed_count,
                 "discount_tier": get_discount_tier(completed_count)
             }
-    
-    return response
 
+    return response
 
 # =============================================================================
 # ADMIN METRICS ENDPOINT (Pillar 1.6)
@@ -1903,8 +2032,9 @@ async def get_arena_stats(db: Session = Depends(get_db)):
 
 # Autonomous loop configuration
 AUTONOMOUS_SCAN_ENABLED = os.environ.get("AUTONOMOUS_SCAN_ENABLED", "false").lower() == "true"
-AUTONOMOUS_SCAN_INTERVAL_MIN = ConfigManager.get("MARKET_SCAN_INTERVAL") // 60
-AUTONOMOUS_SCAN_INTERVAL_MAX = (ConfigManager.get("MARKET_SCAN_INTERVAL") // 60) * 2
+AUTONOMOUS_SCAN_INTERVAL_MIN = int(ConfigManager.get("MARKET_SCAN_INTERVAL")) // 60
+AUTONOMOUS_SCAN_INTERVAL_MAX = (int(ConfigManager.get("MARKET_SCAN_INTERVAL")) // 60) * 2
+
 AUTONOMOUS_MIN_BID_THRESHOLD = ConfigManager.get("MIN_BID_THRESHOLD")
 
 

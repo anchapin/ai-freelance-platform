@@ -7,6 +7,7 @@ managing recurring tasks, and viewing schedule analytics.
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -169,10 +170,10 @@ async def schedule_daily_task_endpoint(
 
 @router.post("/schedule/weekly")
 async def schedule_weekly_task_endpoint(
+    background_tasks: BackgroundTasks,
     request: ScheduleTaskRequest,
     day_of_week: int = 1,  # Monday
     time_of_day: str = "09:00",
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
@@ -213,10 +214,10 @@ async def schedule_weekly_task_endpoint(
 
 @router.post("/schedule/monthly")
 async def schedule_monthly_task_endpoint(
+    background_tasks: BackgroundTasks,
     request: ScheduleTaskRequest,
     day_of_month: int = 1,
     time_of_day: str = "09:00",
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """

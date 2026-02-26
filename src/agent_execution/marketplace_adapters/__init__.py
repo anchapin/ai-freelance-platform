@@ -23,6 +23,11 @@ from .fiverr_adapter import FiverrAdapter
 from .upwork_adapter import UpworkAdapter
 from .peoplehour_adapter import PeoplePerHourAdapter
 
+# Register adapters in the registry
+MarketplaceRegistry.register("fiverr", FiverrAdapter)
+MarketplaceRegistry.register("upwork", UpworkAdapter)
+MarketplaceRegistry.register("peoplehour", PeoplePerHourAdapter)
+
 __all__ = [
     "MarketplaceAdapter",
     "SearchQuery",

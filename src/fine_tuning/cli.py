@@ -315,6 +315,35 @@ class FineTuningCLI:
         else:
             print(f"✗ Failed to rollback {model_name}")
 
+    def auto_pipeline(
+        self,
+        base_model: str,
+        domain: Optional[str] = None,
+        suffix: Optional[str] = None,
+    ) -> None:
+        """
+        Run end-to-end fine-tuning pipeline automatically.
+
+        Args:
+            base_model: Base model to fine-tune
+            domain: Optional domain filter
+            suffix: Optional model suffix
+        """
+        print(f"🚀 Starting automatic fine-tuning pipeline for {base_model}...")
+
+        # 1. Prepare dataset
+        dataset_path = self.prepare_dataset(format="openai", domain=domain)
+
+        # 2. Create OpenAI job
+        self.create_openai_job(
+            model=base_model,
+            training_file=dataset_path,
+            suffix=suffix or f"{domain or 'general'}-auto",
+        )
+
+        print("\n✅ End-to-end pipeline initiated successfully!")
+        print("Use 'ft-cli list-models' to track progress.")
+
     @staticmethod
     def print_help() -> None:
         """Print help message."""
@@ -326,6 +355,7 @@ Usage:
   ft-cli create-openai-job <model> <training_file> [--suffix <suffix>] [--validation-file <file>]
   ft-cli check-job-status <job_id>
   ft-cli create-ollama-script <base_model> <dataset_file> <output_model_name>
+  ft-cli auto-pipeline <base_model> [--domain <domain>] [--suffix <suffix>]
   ft-cli evaluate-model <name> <type> <test_file> [--cost <cost>]
   ft-cli setup-ab-test <test_id> <model_a> <model_b>
   ft-cli register-model <name> <base_model> <job_id> <dataset_size> [--accuracy <accuracy>] [--cost <cost>]
@@ -415,6 +445,20 @@ def main():
                 print("Usage: ft-cli rollback-model <model_name> <version>")
                 return
             cli.rollback_model(sys.argv[2], int(sys.argv[3]))
+
+        elif command == "auto-pipeline":
+            if len(sys.argv) < 3:
+                print("Usage: ft-cli auto-pipeline <base_model>")
+                return
+            base_model = sys.argv[2]
+            kwargs = {}
+            if "--domain" in sys.argv:
+                idx = sys.argv.index("--domain")
+                kwargs["domain"] = sys.argv[idx + 1]
+            if "--suffix" in sys.argv:
+                idx = sys.argv.index("--suffix")
+                kwargs["suffix"] = sys.argv[idx + 1]
+            cli.auto_pipeline(base_model, **kwargs)
 
         else:
             print(f"Unknown command: {command}")
