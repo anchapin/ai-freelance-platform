@@ -3090,6 +3090,306 @@ async def get_simulation_history(
     return [sim.to_dict() for sim in simulations]
 
 
+# =============================================================================
+# THRESHOLD PETITION ENDPOINTS (Issue #98)
+# =============================================================================
+
+
+@app.post("/api/v1/confidence/threshold/petition", response_model=dict)
+async def create_threshold_petition(
+    requested_threshold_dollars: float,
+):
+    """
+    Create a threshold petition for human approval.
+
+    When the agent performs well enough to warrant a threshold increase,
+    it creates a petition that requires human approval before the increase
+    is applied.
+
+    Args:
+        requested_threshold_dollars: Requested threshold in dollars
+
+    Response:
+        - petition: Created petition details
+        - message: Confirmation message
+    """
+    from src.api.database import SessionLocal
+    from src.api.models import ThresholdPetition
+    from src.agent_execution.confidence_tracker import get_confidence_tracker
+
+    db = SessionLocal()
+    try:
+        import uuid
+        from datetime import datetime
+
+        # Get current threshold recommendation and stats
+        tracker = get_confidence_tracker()
+        recommendation = tracker.get_recommended_threshold()
+        history = tracker.get_recent_history(limit=50)
+
+        # Calculate supporting statistics
+        total_bids = len(history)
+        wins = sum(1 for h in history if h.get("won"))
+        win_rate = wins / total_bids if total_bids > 0 else 0
+        avg_profit = sum(h.get("profit_cents", 0) for h in history if h.get("won"))
+        avg_profit = avg_profit / wins if wins > 0 else 0
+
+        # Calculate current streak
+        current_streak = tracker.current_streak_wins
+
+        # Get current threshold from recommendation
+        current_threshold_cents = int(
+            recommendation.get("recommended_threshold", 50) * 100
+        )
+        requested_threshold_cents = int(requested_threshold_dollars * 100)
+
+        # Create petition
+        petition = ThresholdPetition(
+            id=str(uuid.uuid4()),
+            current_threshold_cents=current_threshold_cents,
+            requested_threshold_cents=requested_threshold_cents,
+            confidence_score=recommendation.get("confidence"),
+            win_rate=win_rate,
+            avg_profit_cents=int(avg_profit),
+            current_streak=current_streak,
+            supporting_data=recommendation,
+            status="PENDING",
+            created_at=datetime.utcnow(),
+        )
+
+        db.add(petition)
+        db.commit()
+        db.refresh(petition)
+
+        # Send Telegram notification
+        try:
+            from src.utils.notifications import TelegramNotifier
+
+            notifier = TelegramNotifier()
+
+            message = (
+                f"📊 THRESHOLD PETITION\n\n"
+                f"Current: ${petition.current_threshold_cents / 100:.2f}\n"
+                f"Requested: ${petition.requested_threshold_cents / 100:.2f}\n"
+                f"Confidence: {petition.confidence_score}/100\n"
+                f"Win Rate: {petition.win_rate * 100:.1f}%\n"
+                f"Avg Profit: ${petition.avg_profit_cents / 100:.2f}\n"
+                f"Streak: {petition.current_streak} wins\n\n"
+                f"Reply APPROVE or REJECT to this petition."
+            )
+
+            msg_id = notifier.send_alert(message)
+
+            if msg_id:
+                petition.telegram_message_id = str(msg_id)
+                petition.telegram_sent_at = datetime.utcnow()
+                db.commit()
+
+        except Exception as e:
+            logger.error(f"Failed to send Telegram notification for petition: {e}")
+
+        return {
+            "petition": petition.to_dict(),
+            "message": "Threshold petition created and awaiting approval",
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to create threshold petition: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/confidence/threshold", response_model=dict)
+async def get_current_threshold():
+    """
+    Get current threshold value.
+
+    Returns the current recommended threshold and petition status.
+
+    Response:
+        - recommended_threshold: Recommended threshold value
+        - confidence: Confidence score
+        - has_pending_petition: Whether there's a pending petition
+        - pending_petition_id: ID of pending petition if exists
+    """
+    from src.agent_execution.confidence_tracker import get_confidence_tracker
+    from src.api.database import SessionLocal
+    from src.api.models import ThresholdPetition
+
+    tracker = get_confidence_tracker()
+    recommendation = tracker.get_recommended_threshold()
+
+    # Check for pending petitions
+    db = SessionLocal()
+    try:
+        pending_petition = (
+            db.query(ThresholdPetition)
+            .filter_by(status="PENDING")
+            .order_by(ThresholdPetition.created_at.desc())
+            .first()
+        )
+
+        return {
+            "recommended_threshold": recommendation.get("recommended_threshold"),
+            "confidence": recommendation.get("confidence"),
+            "has_pending_petition": pending_petition is not None,
+            "pending_petition_id": pending_petition.id if pending_petition else None,
+        }
+
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/confidence/threshold/petitions", response_model=list)
+async def list_threshold_petitions(
+    status: Optional[str] = None,
+    limit: int = 20,
+):
+    """
+    List threshold petitions.
+
+    Returns petitions, optionally filtered by status.
+
+    Args:
+        status: Optional filter by status (PENDING, APPROVED, REJECTED)
+        limit: Maximum number of petitions to return
+
+    Response:
+        - List of petitions
+    """
+    from src.api.database import SessionLocal
+    from src.api.models import ThresholdPetition
+
+    db = SessionLocal()
+    try:
+        query = db.query(ThresholdPetition)
+
+        if status:
+            query = query.filter(ThresholdPetition.status == status.upper())
+
+        query = query.order_by(ThresholdPetition.created_at.desc()).limit(limit)
+
+        petitions = query.all()
+
+        return [petition.to_dict() for petition in petitions]
+
+    finally:
+        db.close()
+
+
+@app.post(
+    "/api/v1/confidence/threshold/petitions/{petition_id}/decision", response_model=dict
+)
+async def decide_threshold_petition(
+    petition_id: str,
+    decision: str,
+    reasoning: Optional[str] = None,
+):
+    """
+    Make a decision on a threshold petition.
+
+    Human operator approves or rejects a petition, which updates
+    the threshold configuration accordingly.
+
+    Args:
+        petition_id: ID of the petition
+        decision: Decision (APPROVE or REJECT)
+        reasoning: Optional reasoning for the decision
+
+    Response:
+        - petition: Updated petition details
+        - message: Confirmation message
+    """
+    from src.api.database import SessionLocal
+    from src.api.models import ThresholdPetition
+
+    db = SessionLocal()
+    try:
+        from datetime import datetime
+
+        # Validate decision
+        decision = decision.upper()
+        if decision not in ["APPROVE", "REJECT", "APPROVED", "REJECTED"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Decision must be one of: APPROVE, REJECT, APPROVED, REJECTED",
+            )
+
+        # Normalize decision
+        if decision == "APPROVE":
+            decision = "APPROVED"
+        elif decision == "REJECT":
+            decision = "REJECTED"
+
+        # Find petition
+        petition = db.query(ThresholdPetition).filter_by(id=petition_id).first()
+
+        if not petition:
+            raise HTTPException(status_code=404, detail="Petition not found")
+
+        if petition.status != "PENDING":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Petition is already {petition.status}",
+            )
+
+        # Update petition
+        petition.status = decision
+        petition.human_decision = decision
+        petition.decided_at = datetime.utcnow()
+        petition.decision_reasoning = reasoning
+
+        db.commit()
+
+        # If approved, update threshold configuration
+        if decision == "APPROVED":
+            # Update threshold in config or tracker
+            logger.info(
+                f"Threshold petition APPROVED: {petition.current_threshold_cents} -> "
+                f"{petition.requested_threshold_cents}"
+            )
+
+        # Send confirmation notification
+        try:
+            from src.utils.notifications import TelegramNotifier
+
+            notifier = TelegramNotifier()
+
+            if decision == "APPROVED":
+                message = (
+                    f"✅ PETITION APPROVED\n\n"
+                    f"Threshold updated to ${petition.requested_threshold_cents / 100:.2f}\n"
+                    f"Reasoning: {reasoning or 'No reasoning provided'}"
+                )
+            else:
+                message = (
+                    f"❌ PETITION REJECTED\n\n"
+                    f"Threshold remains at ${petition.current_threshold_cents / 100:.2f}\n"
+                    f"Reasoning: {reasoning or 'No reasoning provided'}"
+                )
+
+            notifier.send_alert(message)
+
+        except Exception as e:
+            logger.error(f"Failed to send confirmation notification: {e}")
+
+        return {
+            "petition": petition.to_dict(),
+            "message": f"Petition {decision} successfully",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to decide petition: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
 # Register scheduler routes
 register_scheduler_routes(app)
 register_analytics_routes(app)

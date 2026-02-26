@@ -1335,3 +1335,75 @@ class SimulationBid(Base):
             if self.outcome_updated_at
             else None,
         }
+
+
+class ThresholdPetition(Base):
+    """
+    Threshold Petition Model for Human Oversight
+
+    Stores petitions for bid threshold increases that require human approval.
+    Enables weekly review of agent performance and threshold adjustments.
+
+    Issue #98: Threshold Petition System
+    """
+
+    __tablename__ = "threshold_petitions"
+
+    __table_args__ = (
+        Index("idx_petition_status", "status"),
+        Index("idx_petition_created_at", "created_at"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Threshold values
+    current_threshold_cents = Column(Integer, nullable=False)
+    requested_threshold_cents = Column(Integer, nullable=False)
+    confidence_score = Column(Integer, nullable=True)
+
+    # Supporting data
+    win_rate = Column(Float, nullable=True)
+    avg_profit_cents = Column(Integer, nullable=True)
+    current_streak = Column(Integer, nullable=True)
+    supporting_data = Column(JSON, nullable=True)
+
+    # Decision
+    status = Column(
+        String, default="PENDING", nullable=False
+    )  # APPROVED, REJECTED, PENDING
+    human_decision = Column(String, nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+    decision_reasoning = Column(Text, nullable=True)
+
+    # Notification
+    telegram_message_id = Column(String, nullable=True)  # Track notification message
+    telegram_sent_at = Column(DateTime, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "current_threshold_dollars": self.current_threshold_cents / 100,
+            "current_threshold_cents": self.current_threshold_cents,
+            "requested_threshold_dollars": self.requested_threshold_cents / 100,
+            "requested_threshold_cents": self.requested_threshold_cents,
+            "confidence_score": self.confidence_score,
+            "win_rate": self.win_rate,
+            "avg_profit_dollars": self.avg_profit_cents / 100
+            if self.avg_profit_cents
+            else None,
+            "avg_profit_cents": self.avg_profit_cents,
+            "current_streak": self.current_streak,
+            "supporting_data": self.supporting_data,
+            "status": self.status,
+            "human_decision": self.human_decision,
+            "decided_at": self.decided_at.isoformat() if self.decided_at else None,
+            "decision_reasoning": self.decision_reasoning,
+            "telegram_sent_at": self.telegram_sent_at.isoformat()
+            if self.telegram_sent_at
+            else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
