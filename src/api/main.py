@@ -84,6 +84,16 @@ import asyncio
 import random
 import logging
 
+# Import WebSocket manager for real-time updates (Issue #47)
+from .websocket_manager import (
+    get_websocket_manager,
+    WebSocketManager,
+    WebSocketMessageType,
+    TaskStatus as WS_TaskStatus,
+    BidStatus as WS_BidStatus,
+    NotificationType,
+)
+
 # Import Agent execution modules
 from ..agent_execution.planning import (
     ResearchAndPlanOrchestrator,
@@ -2826,6 +2836,781 @@ async def start_autonomous_loop():
         logger.info(
             "[STARTUP] Autonomous scanning is DISABLED (set AUTONOMOUS_SCAN_ENABLED=true to enable)"
         )
+
+
+# =============================================================================
+# WEBSOCKET ENDPOINTS (Issue #47)
+# =============================================================================
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time task updates and notifications."""
+    manager = get_websocket_manager()
+    await manager.connect_client(websocket, client_id=None)  # Client ID will be set during auth
+
+
+@app.post("/api/ws/subscribe/task")
+async def subscribe_to_task(
+    request: Request,
+    client: AuthenticatedClient = Depends(require_client_auth),
+    db: Session = Depends(get_db),
+):
+    """Subscribe a client to task updates."""
+    data = await request.json()
+    task_id = data.get("task_id")
+    
+    if not task_id:
+        raise HTTPException(status_code=400, detail="task_id is required")
+    
+    # Verify client has access to this task
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task or task.client_email != client.email:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    manager = get_websocket_manager()
+    success = await manager.subscribe_to_task(client.email, task_id)
+    
+    if success:
+        return {"message": f"Subscribed to task {task_id}"}
+    else:
+        raise HTTPException(status_code=400, detail="Failed to subscribe")
+
+
+@app.post("/api/ws/subscribe/bid")
+async def subscribe_to_bid(
+    request: Request,
+    client: AuthenticatedClient = Depends(require_client_auth),
+    db: Session = Depends(get_db),
+):
+    """Subscribe a client to bid updates."""
+    data = await request.json()
+    bid_id = data.get("bid_id")
+    
+    if not bid_id:
+        raise HTTPException(status_code=400, detail="bid_id is required")
+    
+    # Verify client has access to this bid
+    bid = db.query(Bid).filter(Bid.id == bid_id).first()
+    if not bid:
+        raise HTTPException(status_code=404, detail="Bid not found")
+    
+    manager = get_websocket_manager()
+    success = await manager.subscribe_to_bid(client.email, bid_id)
+    
+    if success:
+        return {"message": f"Subscribed to bid {bid_id}"}
+    else:
+        raise HTTPException(status_code=400, detail="Failed to subscribe")
+
+
+@app.post("/api/ws/unsubscribe/task")
+async def unsubscribe_from_task(
+    request: Request,
+    client: AuthenticatedClient = Depends(require_client_auth),
+):
+    """Unsubscribe a client from task updates."""
+    data = await request.json()
+    task_id = data.get("task_id")
+    
+    if not task_id:
+        raise HTTPException(status_code=400, detail="task_id is required")
+    
+    manager = get_websocket_manager()
+    await manager.unsubscribe_from_task(client.email, task_id)
+    
+    return {"message": f"Unsubscribed from task {task_id}"}
+
+
+@app.post("/api/ws/unsubscribe/bid")
+async def unsubscribe_from_bid(
+    request: Request,
+    client: AuthenticatedClient = Depends(require_client_auth),
+):
+    """Unsubscribe a client from bid updates."""
+    data = await request.json()
+    bid_id = data.get("bid_id")
+    
+    if not bid_id:
+        raise HTTPException(status_code=400, detail="bid_id is required")
+    
+    manager = get_websocket_manager()
+    await manager.unsubscribe_from_bid(client.email, bid_id)
+    
+    return {"message": f"Unsubscribed from bid {bid_id}"}
+
+
+@app.post("/api/ws/send-notification")
+async def send_notification(
+    request: Request,
+    client: AuthenticatedClient = Depends(require_client_auth),
+):
+    """Send a notification to a specific client."""
+    data = await request.json()
+    notification_type = data.get("type", "info")
+    title = data.get("title", "")
+    message = data.get("message", "")
+    duration = data.get("duration")
+    persistent = data.get("persistent", False)
+    
+    if not title or not message:
+        raise HTTPException(status_code=400, detail="title and message are required")
+    
+    manager = get_websocket_manager()
+    await manager.send_notification(
+        client.email,
+        notification_type,
+        title,
+        message,
+        duration,
+        persistent
+    )
+    
+    return {"message": "Notification sent"}
+
+
+@app.get("/api/ws/status")
+async def get_websocket_status():
+    """Get WebSocket connection status and statistics."""
+    manager = get_websocket_manager()
+    
+    return {
+        "active_connections": manager.get_connection_count(),
+        "subscriptions": manager.get_subscriptions_count(),
+        "status": "running"
+    }
+
+
+# =============================================================================
+# INTEGRATE WEBSOCKET MANAGER WITH TASK PROCESSING
+# =============================================================================
+
+# Update process_task_async to send WebSocket notifications
+async def process_task_async(task_id: str, use_planning_workflow: bool = True):
+    """
+    Process a task asynchronously after payment is confirmed.
+
+    This function is called as a background task when a task is marked as PAID.
+    It retrieves the task from the database, executes the appropriate task
+    using the Research & Plan workflow (or TaskRouter as fallback), and updates
+    the database with the result.
+
+    The Research & Plan workflow includes:
+    1. Context Extraction: Agent analyzes uploaded files (PDF/Excel) to extract context
+    2. Work Plan Generation: Agent creates a detailed work plan
+    3. Plan Execution: Agent executes the plan in the E2B sandbox
+    4. Artifact Review: ArtifactReviewer checks the final document against the plan
+
+    For high-value tasks (is_high_value=True), the Agent Arena is used to guarantee
+    faster completion and higher success rate by running two agents in parallel.
+
+    Args:
+        task_id: The ID of the task to process
+        use_planning_workflow: Whether to use the Research & Plan workflow (default: True)
+    """
+    # Create a new database session for this background task
+    from .database import SessionLocal
+    import os
+
+    # Initialize logger
+    logger = get_logger(__name__)
+
+    # Get WebSocket manager for real-time updates
+    websocket_manager = get_websocket_manager()
+
+    db = None
+    try:
+        db = SessionLocal()
+
+        # Retrieve the task from the database
+        task = db.query(Task).filter(Task.id == task_id).first()
+
+        if not task:
+            logger.error(f"Task {task_id} not found for processing")
+            return
+
+        if task.status != TaskStatus.PAID:
+            logger.warning(
+                f"Task {task_id} is not in PAID status, current status: {task.status}"
+            )
+            return
+
+        # Send WebSocket notification that task has started
+        await websocket_manager.send_task_update(
+            task_id=task_id,
+            status=WS_TaskStatus.PROCESSING,
+            message="Task started execution",
+            progress=0.0
+        )
+
+        # Get API key from environment
+        e2b_api_key = os.environ.get("E2B_API_KEY")
+
+        # Build the user request - include title and description for better routing
+        user_request = (
+            task.description or f"Create a {task.domain} visualization for {task.title}"
+        )
+
+        # Use the CSV data stored in the task, or fall back to sample data if not provided
+        csv_data = task.csv_data
+        if not csv_data and not task.file_content:
+            logger.warning(f"No data found for task {task_id}, using sample data")
+            csv_data = """category,value
+Sales,150
+Marketing,200
+Engineering,300
+Operations,120
+Support,180"""
+
+        # =====================================================
+        # HIGH-VALUE TASK: Route to Agent Arena for guaranteed success
+        # This ensures faster completion and higher success rate for paying clients
+        # =====================================================
+        if task.is_high_value:
+            logger.info("HIGH-VALUE TASK - Routing to Agent Arena")
+
+            # Update status to indicate arena processing
+            task.status = TaskStatus.PROCESSING
+            db.commit()
+
+            # Send WebSocket notification about arena processing
+            await websocket_manager.send_task_update(
+                task_id=task_id,
+                status=WS_TaskStatus.PROCESSING,
+                message="Processing in Agent Arena (high-value task)",
+                progress=10.0
+            )
+
+            # Run the arena competition
+            arena_result = await run_agent_arena(
+                user_request=user_request,
+                domain=task.domain,
+                csv_data=csv_data,
+                file_content=task.file_content,
+                filename=task.filename,
+                file_type=task.file_type,
+                api_key=e2b_api_key,
+                competition_type=CompetitionType.MODEL,  # Model competition: local vs cloud
+                task_revenue=task.amount_paid or 500,
+                enable_learning=True,
+                task_data={
+                    "id": task.id,
+                    "domain": task.domain,
+                    "description": user_request,
+                    "client_email": task.client_email,
+                },
+            )
+
+            # Extract the winning result
+            winner = arena_result.get("winner")
+            winning_agent = arena_result.get(winner, {})
+            winning_result = winning_agent.get("result", {})
+
+            # Get review info from the winning agent
+            review_approved = winning_result.get("approved", False)
+            review_feedback = winning_result.get("feedback", "")
+
+            # Determine output format from work plan if available
+            try:
+                plan_data = json.loads(task.work_plan) if task.work_plan else {}
+                output_format = plan_data.get("output_format", "image")
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                output_format = "image"
+
+            # Store the winning artifact URL
+            winning_artifact_url = arena_result.get("winning_artifact_url", "")
+
+            if winning_artifact_url:
+                # Store result based on output format
+                task.result_type = output_format
+
+                if output_format in ["docx", "pdf"]:
+                    task.result_document_url = winning_artifact_url
+                elif output_format == "xlsx":
+                    task.result_spreadsheet_url = winning_artifact_url
+                else:
+                    task.result_image_url = winning_artifact_url
+
+            # Store arena execution details
+            task.execution_log = {
+                "arena_result": arena_result,
+                "winner": winner,
+                "profit_breakdown": {
+                    "agent_a": arena_result.get("agent_a", {}).get("profit", {}),
+                    "agent_b": arena_result.get("agent_b", {}).get("profit", {}),
+                },
+            }
+            task.review_approved = review_approved
+            task.review_feedback = review_feedback
+            task.retry_count = 0
+
+            if review_approved:
+                task.status = TaskStatus.COMPLETED
+                logger.info(f"COMPLETED via Agent Arena (winner: {winner})")
+
+                # Send WebSocket notification of completion
+                await websocket_manager.send_task_completed(
+                    task_id=task_id,
+                    result_url=winning_artifact_url,
+                    message=f"Task completed successfully via Agent Arena (winner: {winner})"
+                )
+
+                # Log success to learning systems
+                experience_logger.log_success(task)
+
+                # Log to arena learning systems
+                try:
+                    from ..agent_execution.arena import ArenaLearningLogger
+
+                    arena_logger = ArenaLearningLogger()
+                    arena_logger.log_winner(
+                        arena_result,
+                        {
+                            "id": task.id,
+                            "domain": task.domain,
+                            "description": user_request,
+                        },
+                    )
+                except Exception as e:
+                    logger.error(f"Error logging arena learning: {e}")
+            else:
+                # Arena failed - escalate for human review
+                error_message = (
+                    f"Arena competition failed. Winner feedback: {review_feedback}"
+                )
+                task.last_error = error_message
+                
+                # Send WebSocket notification of failure
+                await websocket_manager.send_task_error(
+                    task_id=task_id,
+                    error_message="Arena competition failed",
+                    error_details=error_message
+                )
+                
+                await _escalate_task(db, task, "arena_failed", error_message)
+                logger.warning("Arena FAILED - ESCALATED for human review")
+
+            db.commit()
+            logger.info(f"processed via Arena, final status: {task.status}")
+            return
+
+        # Update task status to PLANNING if using planning workflow
+        if use_planning_workflow:
+            task.status = TaskStatus.PLANNING
+            db.commit()
+
+            # Send WebSocket notification about planning phase
+            await websocket_manager.send_task_update(
+                task_id=task_id,
+                status=WS_TaskStatus.PLANNING,
+                message="Generating work plan",
+                progress=20.0
+            )
+
+        if use_planning_workflow:
+            # =====================================================
+            # RESEARCH & PLAN WORKFLOW (NEW AUTONOMY CORE)
+            # =====================================================
+            logger.info("Using Research & Plan workflow")
+
+            # Step 1 & 2: Extract context and generate work plan
+            if use_planning_workflow:
+                task.plan_status = "GENERATING"  # Update plan status
+                db.commit()
+
+                # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Get preferences BEFORE generating work plan
+                client_preferences = None
+                if task.client_email:
+                    logger.info(f"Loading client preferences for {task.client_email}")
+                    client_preferences = get_client_preferences_from_tasks(
+                        task.client_email
+                    )
+                    if client_preferences.get("has_history"):
+                        logger.info(
+                            f"Found {client_preferences['total_previous_tasks']} previous tasks with preferences"
+                        )
+                    else:
+                        logger.info("No previous task history found")
+
+                # Extract context from files
+                context_extractor = ContextExtractor()
+                extracted_context = context_extractor.extract_context(
+                    file_content=task.file_content,
+                    csv_data=csv_data,
+                    filename=task.filename,
+                    file_type=task.file_type,
+                    domain=task.domain,
+                )
+
+                # Store extracted context in task
+                task.extracted_context = extracted_context
+
+                # Generate work plan WITH client preferences
+                plan_generator = WorkPlanGenerator()
+                plan_result = plan_generator.create_work_plan(
+                    user_request=user_request,
+                    domain=task.domain,
+                    extracted_context=extracted_context,
+                    client_preferences=client_preferences,  # Pass preferences to avoid review failures
+                )
+
+                if plan_result.get("success"):
+                    work_plan = plan_result["plan"]
+                    task.work_plan = json.dumps(work_plan)
+                    task.plan_status = "APPROVED"
+                    task.plan_generated_at = datetime.now(timezone.utc)
+                    logger.info(
+                        f"Work plan generated - {work_plan.get('title', 'Untitled')}"
+                    )
+                    
+                    # Send WebSocket notification about plan generation
+                    await websocket_manager.send_task_update(
+                        task_id=task_id,
+                        status=WS_TaskStatus.PLANNING,
+                        message="Work plan generated successfully",
+                        progress=40.0
+                    )
+                else:
+                    task.plan_status = "REJECTED"
+                    logger.warning(
+                        f"Plan generation failed - {plan_result.get('error')}"
+                    )
+                    
+                    # Send WebSocket notification about plan failure
+                    await websocket_manager.send_task_error(
+                        task_id=task_id,
+                        error_message="Work plan generation failed",
+                        error_details=plan_result.get("error", "Unknown error")
+                    )
+
+                db.commit()
+
+            # Step 3: Execute the plan in E2B sandbox
+            task.status = TaskStatus.PROCESSING
+            db.commit()
+
+            # Send WebSocket notification about execution start
+            await websocket_manager.send_task_update(
+                task_id=task_id,
+                status=WS_TaskStatus.PROCESSING,
+                message="Executing work plan",
+                progress=50.0
+            )
+
+            # Execute the workflow
+            orchestrator = ResearchAndPlanOrchestrator()
+            workflow_result = orchestrator.execute_workflow(
+                user_request=user_request,
+                domain=task.domain,
+                csv_data=csv_data,
+                file_content=task.file_content,
+                filename=task.filename,
+                file_type=task.file_type,
+                api_key=e2b_api_key,
+            )
+
+            # Store execution log
+            task.execution_log = workflow_result.get("steps", {})
+            task.retry_count = (
+                workflow_result.get("steps", {})
+                .get("plan_execution", {})
+                .get("result", {})
+                .get("retry_count", 0)
+            )
+
+            # Step 4: Get review results
+            review_result = workflow_result.get("steps", {}).get("artifact_review", {})
+            task.review_approved = review_result.get("approved", False)
+            task.review_feedback = review_result.get("feedback", "")
+            task.review_attempts = review_result.get("attempts", 0)
+
+            if workflow_result.get("success"):
+                # Get the artifact URL
+                artifact_url = workflow_result.get("artifact_url", "")
+
+                # Determine output format from work plan
+                try:
+                    plan_data = json.loads(task.work_plan) if task.work_plan else {}
+                    output_format = plan_data.get("output_format", "image")
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    output_format = "image"
+
+                # Store result based on output format (diverse output types)
+                task.result_type = output_format
+
+                if output_format in ["docx", "pdf"]:
+                    # For documents
+                    task.result_document_url = artifact_url
+                elif output_format == "xlsx":
+                    # For spreadsheets
+                    task.result_spreadsheet_url = artifact_url
+                else:
+                    # For images/visualizations (default)
+                    task.result_image_url = artifact_url
+
+                task.status = TaskStatus.COMPLETED
+                logger.info(
+                    f"Completed successfully with Research & Plan workflow (output: {output_format})"
+                )
+
+                # Send WebSocket notification of completion
+                await websocket_manager.send_task_completed(
+                    task_id=task_id,
+                    result_url=artifact_url,
+                    message=f"Task completed successfully with {output_format} output"
+                )
+
+                # ==========================================================
+                # NEW: Log this success to our continuous learning dataset!
+                # ==========================================================
+                experience_logger.log_success(task)
+
+                # EXPERIENCE VECTOR DATABASE (RAG for Few-Shot Learning): Store successful task
+                if EXPERIENCE_DB_AVAILABLE and task.review_approved:
+                    # Extract the generated code from execution log if available
+                    generated_code = ""
+                    if task.execution_log:
+                        plan_exec = task.execution_log.get("plan_execution", {})
+                        if plan_exec.get("result", {}).get("code"):
+                            generated_code = plan_exec["result"]["code"]
+
+                    # Store the experience for future few-shot learning
+                    if generated_code:
+                        # Extract CSV headers
+                        csv_headers = []
+                        if csv_data:
+                            first_line = csv_data.strip().split("\n")[0]
+                            csv_headers = [h.strip() for h in first_line.split(",")]
+
+                        store_successful_task(
+                            task_id=task_id,
+                            user_request=user_request,
+                            generated_code=generated_code,
+                            domain=task.domain,
+                            task_type="visualization",  # Could be extracted from result_type
+                            output_format=output_format,
+                            csv_headers=csv_headers,
+                        )
+                        logger.info("Stored experience for few-shot learning")
+
+                # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences after task completion
+                if task.client_email and task.review_feedback:
+                    logger.info("Saving client preferences for future tasks")
+                    save_client_preferences(
+                        client_email=task.client_email,
+                        task_id=task_id,
+                        review_feedback=task.review_feedback,
+                        review_approved=task.review_approved or False,
+                        domain=task.domain,
+                        db_session=db,
+                    )
+                else:
+                    logger.info("No client email or feedback to save preferences")
+            else:
+                # Workflow failed - check if should escalate instead of marking as FAILED
+                error_message = workflow_result.get("message", "Workflow failed")
+                task.last_error = error_message
+
+                # Send WebSocket notification of failure
+                await websocket_manager.send_task_error(
+                    task_id=task_id,
+                    error_message="Workflow execution failed",
+                    error_details=error_message
+                )
+
+                # Check if should escalate based on retry count and high-value status
+                should_escalate, escalation_reason = _should_escalate_task(
+                    task, task.retry_count or 0, error_message
+                )
+
+                if should_escalate:
+                    # ESCALATE to human review (Pillar 1.7)
+                    await _escalate_task(db, task, escalation_reason, error_message)
+                    logger.warning(f"ESCALATED for human review - {escalation_reason}")
+                else:
+                    # Mark as FAILED for non-high-value tasks that exhausted retries
+                    task.status = TaskStatus.FAILED
+                    task.review_feedback = error_message
+                    logger.error(f"Failed - {error_message}")
+
+                # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences even on failure
+                if task.client_email and task.review_feedback:
+                    logger.info("Saving client preferences (from failed task)")
+                    save_client_preferences(
+                        client_email=task.client_email,
+                        task_id=task_id,
+                        review_feedback=task.review_feedback,
+                        review_approved=False,  # Failed task
+                        domain=task.domain,
+                        db_session=db,
+                    )
+
+        else:
+            # =====================================================
+            # LEGACY WORKFLOW (Original TaskRouter)
+            # =====================================================
+            logger.info("Using legacy TaskRouter workflow")
+
+            result = execute_task(
+                domain=task.domain,
+                user_request=user_request,
+                csv_data=csv_data or "",
+                file_type=task.file_type,
+                file_content=task.file_content,
+                filename=task.filename,
+            )
+
+            # Update the task with the result based on output format (diverse output types)
+            if result.get("success"):
+                # Check if this is a document/spreadsheet (non-image) result
+                output_format = result.get("output_format", "image")
+
+                # Store result_type for tracking
+                task.result_type = output_format
+
+                if output_format in [OutputFormat.DOCX, OutputFormat.PDF]:
+                    # For documents, store in result_document_url
+                    task.result_document_url = result.get(
+                        "file_url", result.get("image_url", "")
+                    )
+                elif output_format == OutputFormat.XLSX:
+                    # For spreadsheets, store in result_spreadsheet_url
+                    task.result_spreadsheet_url = result.get(
+                        "file_url", result.get("image_url", "")
+                    )
+                else:
+                    # For images/visualizations, store in result_image_url
+                    task.result_image_url = result.get("image_url", "")
+
+                task.status = TaskStatus.COMPLETED
+                logger.info(f"completed successfully with format: {output_format}")
+
+                # Send WebSocket notification of completion
+                await websocket_manager.send_task_completed(
+                    task_id=task_id,
+                    result_url=task.result_image_url or task.result_document_url or task.result_spreadsheet_url,
+                    message=f"Task completed successfully with {output_format} output"
+                )
+
+                # ==========================================================
+                # NEW: Log this success to our continuous learning dataset!
+                # ==========================================================
+                experience_logger.log_success(task)
+            else:
+                # Legacy workflow failed - check if should escalate
+                error_message = result.get("message", "Unknown error")
+                task.last_error = error_message
+
+                # Send WebSocket notification of failure
+                await websocket_manager.send_task_error(
+                    task_id=task_id,
+                    error_message="Legacy workflow failed",
+                    error_details=error_message
+                )
+
+                # Get retry count from result if available
+                retry_count = result.get("retry_count", 0)
+
+                # Check if should escalate based on retry count and high-value status
+                should_escalate, escalation_reason = _should_escalate_task(
+                    task, retry_count, error_message
+                )
+
+                if should_escalate:
+                    # ESCALATE to human review (Pillar 1.7)
+                    await _escalate_task(db, task, escalation_reason, error_message)
+                    logger.warning(f"ESCALATED for human review - {escalation_reason}")
+                else:
+                    # Mark as FAILED
+                    task.status = TaskStatus.FAILED
+                    task.review_feedback = error_message
+                    logger.error(f"failed: {error_message}")
+
+        db.commit()
+        logger.info(f"processed, final status: {task.status}")
+
+    except Exception as e:
+        logger.error(f"Error processing task: {str(e)}")
+        
+        # Send WebSocket notification of error
+        await websocket_manager.send_task_error(
+            task_id=task_id,
+            error_message="Task processing error",
+            error_details=str(e)
+        )
+        
+        # Check if should escalate instead of marking as failed
+        try:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                error_message = str(e)
+                task.last_error = error_message
+
+                # Check if should escalate based on high-value status
+                should_escalate, escalation_reason = _should_escalate_task(
+                    task, task.retry_count or 0, error_message
+                )
+
+                if should_escalate:
+                    # ESCALATE to human review (Pillar 1.7)
+                    await _escalate_task(db, task, escalation_reason, error_message)
+                    logger.warning(f"ESCALATED for human review - {escalation_reason}")
+                else:
+                    # Mark as FAILED
+                    task.status = TaskStatus.FAILED
+                    task.review_feedback = error_message
+                    db.commit()
+        except Exception as e:
+            logger.error(f"Unexpected error in process_paid_task: {e}")
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception as rollback_error:
+                    logger.warning(f"Error rolling back transaction: {rollback_error}")
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception as close_error:
+                logger.warning(f"Error closing database session: {close_error}")
+
+
+# =============================================================================
+# INTEGRATE WEBSOCKET MANAGER WITH BID PROCESSING
+# =============================================================================
+
+# Update bid processing to send WebSocket notifications
+async def process_bid_approval(bid_id: str, approval_status: str, db: Session):
+    """Process bid approval and send WebSocket notifications."""
+    from .models import Bid, BidStatus
+    
+    bid = db.query(Bid).filter(Bid.id == bid_id).first()
+    if not bid:
+        return False
+    
+    # Update bid status
+    if approval_status == "APPROVE":
+        bid.status = BidStatus.SUBMITTED
+        message = "Bid submitted successfully"
+    elif approval_status == "REJECT":
+        bid.status = BidStatus.REJECTED
+        message = "Bid rejected"
+    else:
+        return False
+    
+    db.commit()
+    
+    # Send WebSocket notification
+    websocket_manager = get_websocket_manager()
+    await websocket_manager.send_bid_update(
+        bid_id=bid_id,
+        job_id=bid.job_title,
+        status=WS_BidStatus.SUBMITTED if approval_status == "APPROVE" else WS_BidStatus.REJECTED,
+        message=message,
+        marketplace=bid.marketplace,
+        bid_amount=bid.bid_amount // 100  # Convert to dollars
+    )
+    
+    return True
 
 
 # =============================================================================
