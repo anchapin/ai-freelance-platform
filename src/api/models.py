@@ -1620,3 +1620,35 @@ class VirtualWallet(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class WebhookSecret(Base):
+    """
+    Webhook Secret Model for Stripe
+
+    Stores Stripe webhook signing secrets for verifying webhook events.
+    Multiple secrets can be stored for different environments or rotating keys.
+
+    Used in src/api/main.py:stripe_webhook to verify webhook signatures.
+    """
+
+    __tablename__ = "webhook_secrets"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    secret = Column(String, nullable=False, unique=True)  # Stripe webhook secret
+    name = Column(String, nullable=True)  # Optional name/description
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        """Convert webhook secret to dictionary (excluding the actual secret)."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
