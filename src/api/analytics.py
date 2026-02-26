@@ -205,9 +205,11 @@ class AnalyticsEngine:
             return 0.0
 
         total_time = 0
-        for task in tasks:
-            if task.completed_at:
-                completion_time = (task.completed_at - task.created_at).total_seconds()
+        for task_item in tasks:
+            if task_item.completed_at:
+                completion_time = (
+                    task_item.completed_at - task_item.created_at
+                ).total_seconds()
                 total_time += completion_time
 
         avg_seconds = total_time / len(tasks)
