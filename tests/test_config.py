@@ -7,6 +7,7 @@ Issue #27: Configuration audit and validation
 import os
 import pytest
 from src.config import (
+    ConfigManager,
     validate_critical_env_vars,
     get_all_configured_env_vars,
     validate_urls,
@@ -19,6 +20,14 @@ from src.config import (
     is_debug,
     should_use_redis_locks,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_config_cache():
+    """Reset ConfigManager cache before each test."""
+    ConfigManager.reset_instance()
+    yield
+    ConfigManager.reset_instance()
 
 
 class TestValidationCriticalEnvVars:
