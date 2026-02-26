@@ -8,6 +8,9 @@ Supports both local development and production deployments.
 import os
 from .config_manager import ConfigManager, get_config, ValidationError
 
+# Alias for backward compatibility
+Config = ConfigManager
+
 def get_redis_url() -> str:
     """
     Get Redis connection URL from environment.

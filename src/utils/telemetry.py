@@ -1,4 +1,5 @@
 import os
+from opentelemetry import trace
 from ..config import get_traceloop_url
 from ..utils.logger import get_logger
 
@@ -11,7 +12,6 @@ try:
     TRACELOOP_AVAILABLE = True
 except ImportError:
     TRACELOOP_AVAILABLE = False
-    logger = get_logger(__name__)
 
 try:
     import phoenix as px
@@ -20,6 +20,19 @@ except ImportError:
     PHOENIX_AVAILABLE = False
 
 logger = get_logger(__name__)
+
+
+def get_tracer(name: str) -> trace.Tracer:
+    """
+    Get an OpenTelemetry tracer.
+
+    Args:
+        name: Name of the tracer (usually __name__)
+
+    Returns:
+        Tracer instance
+    """
+    return trace.get_tracer(name)
 
 
 def init_observability():

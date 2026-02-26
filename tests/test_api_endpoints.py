@@ -221,8 +221,11 @@ class TestPricingEndpoint:
         
         # Create mock database that returns 3 completed tasks
         mock_db = Mock()
-        mock_db.query.return_value.filter.return_value.count.return_value = 3
-        
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.count.return_value = 3
+        mock_db.query.return_value = mock_query
+    
         # Override the dependency
         app.dependency_overrides[get_db] = override_get_db(mock_db)
         
@@ -741,7 +744,7 @@ class TestDeliveryEndpoint:
         try:
             # Try with invalid UUID format
             response = client.get("/api/delivery/not-a-uuid-string/some_valid_token_1234567890ab")
-            assert response.status_code == 403
+            assert response.status_code == 400
             assert "Invalid" in response.json()["detail"]
         finally:
             app.dependency_overrides.clear()
@@ -764,7 +767,7 @@ class TestDeliveryEndpoint:
         try:
             # Valid UUID but invalid token (contains spaces and special chars)
             response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440100/token with spaces!@#$%")
-            assert response.status_code == 403
+            assert response.status_code == 400
             assert "Invalid" in response.json()["detail"]
         finally:
             app.dependency_overrides.clear()

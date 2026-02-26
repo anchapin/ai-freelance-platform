@@ -87,6 +87,20 @@ class ConfigManager:
         "TRACELOOP_URL": "http://localhost:6006/v1/traces",
         "TELEGRAM_API_URL": "https://api.telegram.org",
         "BASE_URL": "http://localhost:5173",
+        
+        # Disaster Recovery (Issue #50)
+        "BACKUP_DIR": "data/backups",
+        "RECOVERY_DIR": "data/recovery",
+        "BACKUP_RETENTION_DAYS": 30,
+        "ENCRYPTION_ENABLED": False,
+        "AWS_S3_BACKUP_BUCKET": None,
+        "AWS_ACCESS_KEY_ID": None,
+        "AWS_SECRET_ACCESS_KEY": None,
+        "AWS_REGION": "us-east-1",
+        
+        # Infrastructure
+        "REDIS_URL": "redis://localhost:6379/0",
+        "DATABASE_URL": "sqlite:///./data/tasks.db",
     }
     
     def __init__(self):
