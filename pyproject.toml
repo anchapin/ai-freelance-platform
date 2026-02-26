@@ -38,6 +38,7 @@ dependencies = [
     "playwright>=1.40.0",
     # Distributed Locking and Caching (Issue #19)
     "redis>=5.0.0",
+    "ruff",
 ]
 
 [project.optional-dependencies]
