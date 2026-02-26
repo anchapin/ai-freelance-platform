@@ -79,6 +79,10 @@ class ConfigManager:
         "LOG_LEVEL": "INFO",
         # Training Mode for Simulation & Strategy Testing
         "TRAINING_MODE": False,  # When enabled, prevents real bid submissions
+        # Virtual Wallet & Budget System (Issue #92, #93)
+        "INITIAL_SEED_MONEY": 10000,  # Initial seed money in cents ($100)
+        "BUDGET_CAP_WEEKLY": 50000,  # Weekly budget cap in cents ($500)
+        "BUDGET_RESET_PERIOD": "weekly",  # Reset period: daily, weekly, monthly
         # External URLs
         "OLLAMA_URL": "http://localhost:11434/v1",
         "TRACELOOP_URL": "http://localhost:6006/v1/traces",

@@ -2652,6 +2652,283 @@ async def set_system_mode(training_mode: bool = False):
     }
 
 
+# =============================================================================
+# FINANCIAL WALLET ENDPOINTS (Issues #92, #93, #95)
+# =============================================================================
+
+
+@app.get("/api/v1/financial/status", response_model=dict)
+async def get_financial_status():
+    """
+    Get wallet and budget status.
+
+    Returns the current financial state of the virtual wallet including balance,
+    spending, earnings, and budget information.
+
+    Response:
+        - balance_dollars: Current wallet balance in dollars
+        - total_spent_dollars: Total amount spent on operations
+        - total_earned_dollars: Total revenue from completed tasks
+        - budget_cap_dollars: Budget cap for current period
+        - budget_spent_dollars: Amount spent in current budget period
+        - budget_remaining_dollars: Remaining budget for current period
+        - budget_percentage_used: Percentage of budget used (0-100)
+        - budget_reset_period: Reset period (daily, weekly, monthly)
+    """
+    from src.agent_execution.virtual_wallet import get_virtual_wallet
+
+    wallet = get_virtual_wallet()
+    return wallet.get_wallet_status()
+
+
+@app.post("/api/v1/financial/seed", response_model=dict)
+async def add_seed_money(amount_dollars: float):
+    """
+    Add seed money to wallet.
+
+    Adds funds to the virtual wallet to replenish the balance for operations.
+
+    Args:
+        amount_dollars: Amount of seed money to add in dollars
+
+    Response:
+        - success: Boolean indicating if seed money was added
+        - new_balance_dollars: Updated wallet balance
+        - message: Confirmation message
+    """
+    from src.agent_execution.virtual_wallet import get_virtual_wallet
+
+    wallet = get_virtual_wallet()
+    amount_cents = int(amount_dollars * 100)
+
+    if amount_cents <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+
+    success = wallet.add_seed_money(amount_cents)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to add seed money")
+
+    status = wallet.get_wallet_status()
+
+    return {
+        "success": True,
+        "new_balance_dollars": status["balance_dollars"],
+        "message": f"Added ${amount_dollars:.2f} to wallet",
+    }
+
+
+@app.post("/api/v1/financial/budget", response_model=dict)
+async def set_budget(
+    budget_cap_dollars: float,
+    reset_period: str = "weekly",
+):
+    """
+    Set budget cap and reset period.
+
+    Configures the budget cap and reset period for operational expenses.
+
+    Args:
+        budget_cap_dollars: New budget cap in dollars
+        reset_period: Reset period (daily, weekly, monthly)
+
+    Response:
+        - success: Boolean indicating if budget was updated
+        - budget_cap_dollars: New budget cap
+        - reset_period: New reset period
+        - message: Confirmation message
+    """
+    from src.agent_execution.virtual_wallet import get_virtual_wallet
+
+    valid_periods = ["daily", "weekly", "monthly"]
+    if reset_period not in valid_periods:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid reset period. Must be one of: {', '.join(valid_periods)}",
+        )
+
+    wallet = get_virtual_wallet()
+    budget_cap_cents = int(budget_cap_dollars * 100)
+
+    if budget_cap_cents <= 0:
+        raise HTTPException(status_code=400, detail="Budget cap must be positive")
+
+    success = wallet.set_budget_cap(budget_cap_cents, reset_period)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to set budget cap")
+
+    return {
+        "success": True,
+        "budget_cap_dollars": budget_cap_dollars,
+        "reset_period": reset_period,
+        "message": f"Budget set to ${budget_cap_dollars:.2f} per {reset_period}",
+    }
+
+
+@app.get("/api/v1/financial/roi/marketplace", response_model=dict)
+async def get_roi_by_marketplace(marketplace: Optional[str] = None):
+    """
+    Get ROI statistics by marketplace.
+
+    Returns cost and revenue breakdowns per marketplace with ROI calculations.
+
+    Args:
+        marketplace: Optional filter by specific marketplace
+
+    Response:
+        - Dictionary with ROI statistics per marketplace
+    """
+    from src.agent_execution.cost_tracker import get_cost_tracker
+
+    tracker = get_cost_tracker()
+    return tracker.calculate_roi_by_marketplace(marketplace=marketplace)
+
+
+@app.get("/api/v1/financial/roi/strategy", response_model=dict)
+async def get_roi_by_strategy(strategy_type: Optional[str] = None):
+    """
+    Get ROI statistics by bidding strategy.
+
+    Returns cost and revenue breakdowns per strategy type with ROI calculations.
+
+    Args:
+        strategy_type: Optional filter by specific strategy type
+
+    Response:
+        - Dictionary with ROI statistics per strategy
+    """
+    from src.agent_execution.cost_tracker import get_cost_tracker
+
+    tracker = get_cost_tracker()
+    return tracker.calculate_roi_by_strategy(strategy_type=strategy_type)
+
+
+@app.get("/api/v1/financial/roi/profitable", response_model=list)
+async def get_profitable_strategies(min_entries: int = 10):
+    """
+    Get list of profitable strategies sorted by ROI.
+
+    Returns strategies with positive ROI, sorted by profitability.
+
+    Args:
+        min_entries: Minimum number of entries to consider a strategy valid
+
+    Response:
+        - List of strategies with ROI information
+    """
+    from src.agent_execution.cost_tracker import get_cost_tracker
+
+    tracker = get_cost_tracker()
+    return tracker.get_profitable_strategies(min_entries=min_entries)
+
+
+@app.get("/api/v1/financial/costs/history", response_model=list)
+async def get_cost_history(
+    limit: int = 100,
+    task_id: Optional[str] = None,
+    bid_id: Optional[str] = None,
+):
+    """
+    Get cost history.
+
+    Returns cost entries for tracking and analysis.
+
+    Args:
+        limit: Maximum number of entries to return
+        task_id: Optional filter by task ID
+        bid_id: Optional filter by bid ID
+
+    Response:
+        - List of cost entries
+    """
+    from src.agent_execution.cost_tracker import get_cost_tracker
+
+    tracker = get_cost_tracker()
+    cost_entries = tracker.get_cost_history(
+        limit=limit,
+        task_id=task_id,
+        bid_id=bid_id,
+    )
+
+    return [entry.to_dict() for entry in cost_entries]
+
+
+# =============================================================================
+# CONFIDENCE TRACKER ENDPOINTS (Issue #96)
+# =============================================================================
+
+
+@app.get("/api/v1/confidence/recommendation", response_model=dict)
+async def get_confidence_recommendation():
+    """
+    Get recommended confidence threshold for bidding.
+
+    Analyzes historical performance to recommend optimal threshold
+    for maximizing profitability.
+
+    Response:
+        - recommended_threshold: Recommended threshold value
+        - confidence: Confidence score (0-100)
+        - win_rate: Historical win rate
+        - expected_value_dollars: Expected profit per bid
+        - reasoning: Explanation of recommendation
+    """
+    from src.agent_execution.confidence_tracker import get_confidence_tracker
+
+    tracker = get_confidence_tracker()
+    return tracker.get_recommended_threshold()
+
+
+@app.get("/api/v1/confidence/summary", response_model=dict)
+async def get_confidence_summary(threshold: int):
+    """
+    Get detailed summary for a specific threshold.
+
+    Returns performance statistics for a given confidence threshold.
+
+    Args:
+        threshold: Threshold to analyze
+
+    Response:
+        - threshold: Threshold value
+        - total_bids: Total bids at this threshold
+        - wins: Number of wins
+        - losses: Number of losses
+        - win_rate: Win rate (0-1)
+        - win_rate_percentage: Win rate as percentage
+        - avg_profit_dollars: Average profit per win
+        - confidence_score: Current confidence score (0-100)
+    """
+    from src.agent_execution.confidence_tracker import get_confidence_tracker
+
+    tracker = get_confidence_tracker()
+    return tracker.get_threshold_summary(threshold)
+
+
+@app.get("/api/v1/confidence/history", response_model=list)
+async def get_confidence_history(
+    limit: int = 50,
+    threshold: Optional[int] = None,
+):
+    """
+    Get confidence tracking history.
+
+    Returns historical confidence entries for analysis.
+
+    Args:
+        limit: Maximum number of entries to return
+        threshold: Optional filter by threshold
+
+    Response:
+        - List of confidence entries
+    """
+    from src.agent_execution.confidence_tracker import get_confidence_tracker
+
+    tracker = get_confidence_tracker()
+    return tracker.get_recent_history(limit=limit, threshold=threshold)
+
+
 # Register scheduler routes
 register_scheduler_routes(app)
 register_analytics_routes(app)
