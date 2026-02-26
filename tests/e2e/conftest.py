@@ -13,12 +13,12 @@ Provides:
 import pytest
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, AsyncMock
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 
-from src.api.models import Base, Task, TaskStatus, Bid, BidStatus, ArenaCompetition
-from src.api.models import ArenaCompetitionStatus, EscalationLog, ClientProfile
+from src.api.models import Base, TaskStatus
+from src.api.models import ClientProfile
 
 
 @pytest.fixture

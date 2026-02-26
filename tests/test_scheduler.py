@@ -6,11 +6,8 @@ pause/resume functionality, and schedule analytics.
 """
 
 import pytest
-import asyncio
-import json
-import time
 from datetime import datetime, timedelta
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,11 +20,6 @@ from src.agent_execution.scheduler import (
     schedule_daily_task,
     schedule_weekly_task,
     schedule_monthly_task
-)
-from src.api.models import ScheduledTask, ScheduleHistory
-from src.api.scheduler_endpoints import (
-    ScheduleTaskRequest,
-    ScheduleUpdateRequest
 )
 
 

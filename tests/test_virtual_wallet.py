@@ -10,7 +10,7 @@ from src.agent_execution.virtual_wallet import (
     get_virtual_wallet,
     reset_virtual_wallet,
 )
-from src.config.config_manager import ConfigManager, reset_instance
+from src.config.config_manager import reset_instance
 
 
 @pytest.fixture(autouse=True)

@@ -4,7 +4,7 @@ from ..config import get_traceloop_url
 from ..utils.logger import get_logger
 
 # Import APM initialization (Issue #42)
-from ..utils.apm import init_apm, get_apm_manager
+from ..utils.apm import init_apm
 
 # Import distributed tracing logging integration (Issue #31)
 from ..utils.distributed_tracing import setup_trace_logging

@@ -5,12 +5,9 @@ Implements marketplace adapter for Fiverr platform.
 Handles gig searching, offer placement, and inbox management.
 """
 
-import asyncio
-import json
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 import httpx
-from urllib.parse import urlencode
 
 from .base import (
     MarketplaceAdapter,

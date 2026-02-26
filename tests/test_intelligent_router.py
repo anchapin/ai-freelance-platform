@@ -6,11 +6,9 @@ and integration with existing TaskRouter components.
 """
 
 import pytest
-import asyncio
 import numpy as np
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta
-from dataclasses import asdict
+from unittest.mock import Mock, patch
+from datetime import datetime
 
 from src.agent_execution.intelligent_router import (
     TaskClassifier,
@@ -21,9 +19,7 @@ from src.agent_execution.intelligent_router import (
     get_intelligent_router,
     route_task_intelligently,
 )
-from src.agent_execution.executor import TaskRouter, TaskType, OutputFormat
-from src.utils.logger import get_logger
-from src.api.models import Task, TaskStatus, Bid, BidStatus
+from src.agent_execution.executor import TaskRouter
 
 
 class TestTaskClassifier:
@@ -649,7 +645,6 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_integration_with_task_router(self):
         """Test integration with existing TaskRouter."""
-        from src.agent_execution.executor import TaskRouter
         
         # Create intelligent router
         router = IntelligentRouter()

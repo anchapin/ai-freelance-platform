@@ -4,7 +4,6 @@ Tests for configuration validation and environment variable management.
 Issue #27: Configuration audit and validation
 """
 
-import os
 import pytest
 from src.config import (
     ConfigManager,

@@ -6,12 +6,9 @@ real-time notifications, and integration with task processing.
 """
 
 import pytest
-import asyncio
 import json
 import time
-from datetime import datetime, timedelta
 from unittest.mock import Mock, AsyncMock, patch
-from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,8 +20,6 @@ from src.api.websocket_manager import (
     NotificationType,
     WebSocketMessage,
     TaskUpdateData,
-    BidUpdateData,
-    NotificationData,
     WebSocketAuthError
 )
 from src.api.models import Task, Bid, TaskStatus as DBTaskStatus

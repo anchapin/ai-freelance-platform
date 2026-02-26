@@ -12,16 +12,13 @@ Coverage: ~25% of critical path
 """
 
 import pytest
-from unittest.mock import AsyncMock, patch, Mock
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
-from src.api.models import Task, TaskStatus
+from src.api.models import TaskStatus
 from .utils import (
     create_test_task,
     assert_task_in_state,
-    assert_task_progression,
-    get_task_by_id,
 )
 
 

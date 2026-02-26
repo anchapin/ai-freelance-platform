@@ -9,9 +9,8 @@ from src.agent_execution.cost_tracker import (
     CostTracker,
     get_cost_tracker,
     reset_cost_tracker,
-    CostType,
 )
-from src.config.config_manager import ConfigManager, reset_instance
+from src.config.config_manager import reset_instance
 
 
 @pytest.fixture(autouse=True)

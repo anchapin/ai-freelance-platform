@@ -13,9 +13,8 @@ These tests ensure system resilience and proper error recovery.
 
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta
-from typing import Optional
+from unittest.mock import Mock
+from datetime import datetime
 
 from src.agent_execution.errors import (
     NetworkError,
@@ -129,7 +128,7 @@ def mock_circuit_breaker(monkeypatch):
                 result = func(*args, **kwargs)
                 self.record_success()
                 return result
-            except Exception as e:
+            except Exception:
                 self.record_failure()
                 raise
     
@@ -848,7 +847,7 @@ class TestErrorHandlingIntegration:
             for attempt in range(max_retries):
                 try:
                     return await unreliable_task()
-                except TransientError as e:
+                except TransientError:
                     if attempt == max_retries - 1:
                         raise
                     await asyncio.sleep(0.01)

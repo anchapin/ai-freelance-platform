@@ -10,7 +10,7 @@ from src.agent_execution.confidence_tracker import (
     reset_confidence_tracker,
 )
 from src.api.models import ConfidenceEntry
-from src.config.config_manager import ConfigManager, reset_instance
+from src.config.config_manager import reset_instance
 
 
 @pytest.fixture(autouse=True)

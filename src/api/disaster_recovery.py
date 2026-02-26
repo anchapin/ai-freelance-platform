@@ -5,15 +5,13 @@ This module provides REST API endpoints for disaster recovery operations,
 including backup management, recovery operations, and disaster recovery workflows.
 """
 
-import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from src.api.database import get_db
-from src.api.models import Task, TaskStatus, Bid, BidStatus
 from src.utils.logger import get_logger
 from src.utils.telemetry import get_tracer
 from src.config import Config
@@ -22,15 +20,11 @@ from src.disaster_recovery import (
     RecoveryManager,
     DisasterRecoveryOrchestrator,
     BackupType,
-    RecoveryStatus,
-    BackupStatus,
-    BackupMetadata,
-    RecoveryPlan,
-    RecoveryOperation
+    BackupMetadata
 )
 
 # Import telemetry
-from traceloop.sdk.decorators import task, workflow
+from traceloop.sdk.decorators import task
 
 # Initialize logger and telemetry
 logger = get_logger(__name__)

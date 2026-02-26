@@ -13,33 +13,26 @@ Features:
 - Custom dashboard widgets and visualizations
 """
 
-import asyncio
 import json
-import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
-from collections import defaultdict, Counter
-from dataclasses import dataclass, asdict
-from decimal import Decimal
+from dataclasses import dataclass
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
-import pandas as pd
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, and_, or_, desc, asc
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from src.api.database import get_db
-from src.api.models import Task, TaskStatus, Bid, BidStatus
+from src.api.models import Task, TaskStatus
 from src.utils.logger import get_logger
 from src.utils.telemetry import get_tracer
-from src.config import Config
 
 # Import telemetry
-from traceloop.sdk.decorators import task, workflow
+from traceloop.sdk.decorators import task
 
 # Initialize logger and telemetry
 logger = get_logger(__name__)

@@ -14,12 +14,10 @@ Coverage: ~20% of critical path
 This test demonstrates all major components working together in a realistic scenario.
 """
 
-import pytest
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from unittest.mock import AsyncMock, patch
 
-from src.api.models import Task, TaskStatus, Bid, BidStatus
+from src.api.models import TaskStatus, BidStatus
 from .utils import (
     create_test_task,
     create_test_bid,

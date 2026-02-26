@@ -6,8 +6,8 @@ Tracks costs of fine-tuning and inference to calculate ROI.
 
 import json
 import os
-from dataclasses import dataclass, asdict
-from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 import logging
 

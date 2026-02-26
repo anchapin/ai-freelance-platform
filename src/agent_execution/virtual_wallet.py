@@ -17,16 +17,13 @@ Features:
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from enum import Enum as PyEnum
-import json
 
 from sqlalchemy import (
     Column,
     String,
     Integer,
-    Float,
     Boolean,
     DateTime,
-    JSON,
 )
 
 from ..api.database import SessionLocal

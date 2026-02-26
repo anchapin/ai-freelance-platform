@@ -6,11 +6,9 @@ performance metrics, and API endpoints.
 """
 
 import pytest
-import asyncio
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from datetime import datetime, timedelta
-from decimal import Decimal
 from sqlalchemy.orm import Session
 from fastapi.testclient import TestClient
 
@@ -21,7 +19,6 @@ from src.api.analytics import (
     AnomalyDetection,
     PerformanceAnalytics,
     AnalyticsAPI,
-    router,
     KPIResponse,
     PredictiveInsight,
     PredictionResult,
@@ -30,8 +27,7 @@ from src.api.analytics import (
     AnalyticsSummary,
     TimeSeriesData
 )
-from src.api.models import Task, TaskStatus, Bid, BidStatus
-from src.api.database import get_db
+from src.api.models import TaskStatus
 
 
 class TestAnalyticsEngine:

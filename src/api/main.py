@@ -12,7 +12,7 @@ import time as _time
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator, ValidationInfo, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, Any
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError
 import stripe
@@ -37,7 +37,7 @@ from ..utils.logger import get_logger
 from ..config.config_manager import ConfigManager
 
 # Import file validation utility (Issue #34)
-from ..utils.file_validator import validate_file_upload, MAX_FILE_SIZE_BYTES
+from ..utils.file_validator import validate_file_upload
 
 # Import telemetry for observability
 from ..utils.telemetry import init_observability
@@ -86,7 +86,6 @@ from ..agent_execution.arena import (
 )
 
 # Import Scheduler modules
-from ..agent_execution.scheduler import TaskScheduler
 from .scheduler_endpoints import register_scheduler_routes
 from .analytics import register_analytics_routes
 

@@ -6,7 +6,7 @@ Tracks fine-tuned models, their versions, performance metrics, and deployment st
 
 import json
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 from enum import Enum

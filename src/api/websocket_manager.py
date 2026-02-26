@@ -23,17 +23,14 @@ Usage:
 
 import asyncio
 import json
-import logging
 import time
-import uuid
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Set, Callable, Any, Union
+from datetime import datetime
+from typing import Dict, List, Optional, Set, Any, Union
 from dataclasses import dataclass, asdict
 from enum import Enum as PyEnum
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 import jwt
-from pydantic import BaseModel
 
 from ..utils.logger import get_logger
 from ..config import Config

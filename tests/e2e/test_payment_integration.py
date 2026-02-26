@@ -11,15 +11,11 @@ Tests the complete payment processing workflow:
 Coverage: ~15% of critical path
 """
 
-import pytest
-import json
-from unittest.mock import AsyncMock, patch, Mock
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-import hmac
 import hashlib
 
-from src.api.models import Task, TaskStatus
+from src.api.models import TaskStatus
 from .utils import (
     create_test_task,
     simulate_payment_success,

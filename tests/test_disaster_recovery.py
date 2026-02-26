@@ -11,10 +11,8 @@ import tempfile
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
+from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
 
 from src.api.disaster_recovery import (
     DisasterRecoveryAPI,
@@ -37,7 +35,6 @@ from src.disaster_recovery import (
     RecoveryOperation
 )
 from src.config import Config
-from src.utils.logger import get_logger
 
 
 class TestBackupManager:

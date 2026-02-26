@@ -4,7 +4,6 @@ OpenAI Fine-Tuning Integration
 Handles fine-tuning with OpenAI's API for gpt-3.5-turbo and gpt-4o-mini.
 """
 
-import json
 import os
 from typing import Optional, Dict, Any
 from openai import OpenAI
