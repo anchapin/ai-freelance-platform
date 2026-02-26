@@ -47,6 +47,7 @@ class ConfigManager:
         # Marketplace Scanning Timeouts
         "PAGE_LOAD_TIMEOUT": 30,
         "SCAN_INTERVAL": 300,
+        "MARKET_SCAN_INTERVAL": 300,
         # Sandbox Execution Timeouts
         "DOCKER_SANDBOX_TIMEOUT": 120,
         "SANDBOX_TIMEOUT_SECONDS": 600,
