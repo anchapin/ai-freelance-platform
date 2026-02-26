@@ -13,26 +13,48 @@ from sqlalchemy import (
     JSON,
     UniqueConstraint,
     Index,
+    ForeignKey,
 )
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.ext.hybrid import hybrid_property
 
 Base = declarative_base()
 
 
 class TaskStatus(PyEnum):
+    """Main task status."""
+
     PENDING = "PENDING"
     PAID = "PAID"
-    PLANNING = "PLANNING"  # Agent is analyzing files and creating work plan
-    PROCESSING = "PROCESSING"  # Agent is executing the plan in E2B sandbox
-    REVIEW_REQUIRED = "REVIEW_REQUIRED"  # Artifact needs review
-    REVIEWING = "REVIEWING"  # ArtifactReviewer is checking the result
+    PLANNING = "PLANNING"
+    PROCESSING = "PROCESSING"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    REVIEWING = "REVIEWING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
-    ESCALATION = "ESCALATION"  # Requires human review after max retries (Pillar 1.7)
+    ESCALATION = "ESCALATION"
+
+
+class ExecutionStatus(PyEnum):
+    """Execution-specific status."""
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class PlanningStatus(PyEnum):
+    """Planning-specific status."""
+
+    PENDING = "PENDING"
+    GENERATING = "GENERATING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class ReviewStatus(PyEnum):
-    """Status for human review of escalated tasks."""
+    """Review-specific status."""
 
     PENDING = "PENDING"
     IN_REVIEW = "IN_REVIEW"
@@ -40,11 +62,15 @@ class ReviewStatus(PyEnum):
     REJECTED = "REJECTED"
 
 
-class PlanStatus(PyEnum):
-    PENDING = "PENDING"
-    GENERATING = "GENERATING"
-    APPROVED = "APPROVED"
-    REJECTED = "REJECTED"
+class OutputType(PyEnum):
+    """Output result types."""
+
+    IMAGE = "IMAGE"
+    DOCUMENT = "DOCUMENT"
+    SPREADSHEET = "SPREADSHEET"
+    PDF = "PDF"
+    CODE = "CODE"
+    OTHER = "OTHER"
 
 
 class ArenaCompetitionStatus(PyEnum):
@@ -154,6 +180,14 @@ class ClientProfile(Base):
 
 
 class Task(Base):
+    """
+    Core Task model - reduced to essential fields only.
+
+    Contains only the essential information needed for task tracking,
+    client management, and billing. All other concerns are delegated to
+    related entities via composition.
+    """
+
     __tablename__ = "tasks"
 
     # Performance indexes and unique constraints (Issue #33, #38)
@@ -163,102 +197,232 @@ class Task(Base):
         Index("idx_task_client_email", "client_email"),
         Index("idx_task_status", "status"),
         Index("idx_task_created_at", "created_at"),
-        Index("idx_task_client_status", "client_email", "status"),  # Composite
-        Index("idx_task_status_created", "status", "created_at"),  # Composite
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Task content
     title = Column(String, nullable=False)
     description = Column(String, nullable=False)
     domain = Column(String, nullable=False)
+
+    # Status
     status = Column(Enum(TaskStatus), default=TaskStatus.PENDING, nullable=False)
-    stripe_session_id = Column(
-        String, nullable=True, index=True
-    )  # Unique to prevent duplicate payment sessions (Issue #33)
-    result_image_url = Column(String, nullable=True)  # For image/visualization outputs
-    result_document_url = Column(
-        String, nullable=True
-    )  # For document outputs (docx, pdf)
-    result_spreadsheet_url = Column(
-        String, nullable=True
-    )  # For spreadsheet outputs (xlsx)
-    result_type = Column(String, nullable=True)  # Output type: image, docx, xlsx, pdf
-    csv_data = Column(Text, nullable=True)
-    # New fields for file uploads
-    file_type = Column(String, nullable=True)  # csv, excel, pdf
-    file_content = Column(Text, nullable=True)  # Base64-encoded file content
-    filename = Column(String, nullable=True)  # Original filename
-    # Client tracking fields
-    client_email = Column(String, nullable=True)  # Client email for history tracking
-    amount_paid = Column(Integer, nullable=True)  # Amount paid in cents
-    delivery_token = Column(
-        String, nullable=True, index=True
-    )  # Unique token for secure delivery, one-time use (Issue #18, #33)
-    delivery_token_expires_at = Column(
-        DateTime, nullable=True
-    )  # Token expiration (Issue #18)
-    delivery_token_used = Column(
-        Boolean, default=False
-    )  # One-time use flag (Issue #18)
-    # Timestamp fields for tracking turnaround time
-    created_at = Column(DateTime, default=datetime.utcnow)  # Task creation timestamp
-    completed_at = Column(DateTime, nullable=True)  # Task completion timestamp
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )  # Last update timestamp
 
-    # === NEW: Research & Plan Workflow Fields ===
-    # Work plan fields
-    work_plan = Column(Text, nullable=True)  # JSON string containing the work plan
-    plan_status = Column(Enum(PlanStatus), default=PlanStatus.PENDING, nullable=False)
-    plan_generated_at = Column(DateTime, nullable=True)  # When the plan was generated
+    # Billing and client
+    stripe_session_id = Column(String, nullable=True, index=True)
+    client_email = Column(String, nullable=True, index=True)
+    amount_paid = Column(Integer, nullable=True)  # In cents
+    delivery_token = Column(String, nullable=True, index=True)
+    delivery_token_expires_at = Column(DateTime, nullable=True)
+    delivery_token_used = Column(Boolean, default=False)
+    
+    # Profit protection
+    is_high_value = Column(Boolean, default=False)
 
-    # Analysis context from uploaded files
-    extracted_context = Column(
-        JSON, nullable=True
-    )  # Extracted context from PDF/Excel files
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Review fields for ArtifactReviewer
-    review_feedback = Column(Text, nullable=True)  # Feedback from ArtifactReviewer
-    review_approved = Column(
-        Boolean, default=False
-    )  # Whether the artifact was approved
-    review_attempts = Column(Integer, default=0)  # Number of review attempts
-    last_review_at = Column(
-        DateTime, nullable=True
-    )  # When the last review was performed
+    # Relationships to composed entities (one-to-one)
+    execution = relationship(
+        "TaskExecution", uselist=False, cascade="all, delete-orphan", back_populates="task"
+    )
+    planning = relationship(
+        "TaskPlanning", uselist=False, cascade="all, delete-orphan", back_populates="task"
+    )
+    review = relationship(
+        "TaskReview", uselist=False, cascade="all, delete-orphan", back_populates="task"
+    )
+    arena = relationship(
+        "TaskArena", uselist=False, cascade="all, delete-orphan", back_populates="task"
+    )
+    outputs = relationship(
+        "TaskOutput", cascade="all, delete-orphan", back_populates="task"
+    )
 
-    # Execution tracking
-    execution_log = Column(JSON, nullable=True)  # Log of execution steps
-    retry_count = Column(Integer, default=0)  # Number of retries attempted
+    # Hybrid properties for backward compatibility (Issue #5)
+    @hybrid_property
+    def work_plan(self):
+        return self.planning.plan_content if self.planning else None
 
-    # === NEW: Escalation & Human-in-the-Loop (HITL) Fields (Pillar 1.7) ===
-    # Escalation tracking
-    escalation_reason = Column(
-        String, nullable=True
-    )  # Why task was escalated (e.g., "max_retries_exceeded", "high_value_task_failed")
-    escalated_at = Column(DateTime, nullable=True)  # When task was escalated
-    last_error = Column(Text, nullable=True)  # The error that caused escalation
+    @work_plan.setter
+    def work_plan(self, value):
+        if not self.planning:
+            self.planning = TaskPlanning()
+        self.planning.plan_content = value
 
-    # Human review fields
-    review_status = Column(
-        Enum(ReviewStatus), default=ReviewStatus.PENDING, nullable=False
-    )  # Status of human review
-    human_review_notes = Column(
-        Text, nullable=True
-    )  # Notes from human reviewer after fixing
-    human_reviewer = Column(
-        String, nullable=True
-    )  # Email/name of who reviewed the escalated task
-    reviewed_at = Column(DateTime, nullable=True)  # When human review was completed
+    @hybrid_property
+    def plan_status(self):
+        return self.planning.status if self.planning else None
 
-    # Profit protection - indicates if this is a high-value task requiring special handling
-    is_high_value = Column(
-        Boolean, default=False
-    )  # True if task value >= HIGH_VALUE_THRESHOLD
+    @plan_status.setter
+    def plan_status(self, value):
+        if not self.planning:
+            self.planning = TaskPlanning()
+        # Handle string conversion
+        if isinstance(value, str):
+            try:
+                self.planning.status = PlanningStatus(value.upper())
+            except ValueError:
+                self.planning.status = PlanningStatus.PENDING
+        else:
+            self.planning.status = value
+
+    @hybrid_property
+    def file_content(self):
+        return self.planning.file_content if self.planning else None
+
+    @file_content.setter
+    def file_content(self, value):
+        if not self.planning:
+            self.planning = TaskPlanning()
+        self.planning.file_content = value
+
+    @hybrid_property
+    def filename(self):
+        return self.planning.filename if self.planning else None
+
+    @filename.setter
+    def filename(self, value):
+        if not self.planning:
+            self.planning = TaskPlanning()
+        self.planning.filename = value
+
+    @hybrid_property
+    def file_type(self):
+        return self.planning.file_type if self.planning else None
+
+    @file_type.setter
+    def file_type(self, value):
+        if not self.planning:
+            self.planning = TaskPlanning()
+        self.planning.file_type = value
+
+    @hybrid_property
+    def csv_data(self):
+        return self.planning.file_content if self.planning and self.planning.file_type == "csv" else None
+
+    @csv_data.setter
+    def csv_data(self, value):
+        if not self.planning:
+            self.planning = TaskPlanning()
+        self.planning.file_content = value
+        self.planning.file_type = "csv"
+
+    @hybrid_property
+    def retry_count(self):
+        return self.execution.retry_count if self.execution else 0
+
+    @retry_count.setter
+    def retry_count(self, value):
+        if not self.execution:
+            self.execution = TaskExecution()
+        self.execution.retry_count = value
+
+    @hybrid_property
+    def execution_log(self):
+        return self.execution.execution_logs if self.execution else None
+
+    @execution_log.setter
+    def execution_log(self, value):
+        if not self.execution:
+            self.execution = TaskExecution()
+        self.execution.execution_logs = value
+
+    @hybrid_property
+    def review_feedback(self):
+        return self.review.review_feedback if self.review else None
+
+    @review_feedback.setter
+    def review_feedback(self, value):
+        if not self.review:
+            self.review = TaskReview()
+        self.review.review_feedback = value
+
+    @hybrid_property
+    def review_approved(self):
+        return self.review.approved if self.review else False
+
+    @review_approved.setter
+    def review_approved(self, value):
+        if not self.review:
+            self.review = TaskReview()
+        self.review.approved = value
+
+    @hybrid_property
+    def review_attempts(self):
+        return self.review.review_attempts if self.review else 0
+
+    @review_attempts.setter
+    def review_attempts(self, value):
+        if not self.review:
+            self.review = TaskReview()
+        self.review.review_attempts = value
+
+    @hybrid_property
+    def escalation_reason(self):
+        return self.review.escalation_reason if self.review else None
+
+    @escalation_reason.setter
+    def escalation_reason(self, value):
+        if not self.review:
+            self.review = TaskReview()
+        self.review.escalation_reason = value
+
+    @hybrid_property
+    def last_error(self):
+        return self.review.last_error if self.review else None # Actually could be in execution or review
+
+    @last_error.setter
+    def last_error(self, value):
+        if not self.review:
+            self.review = TaskReview()
+        self.review.last_error = value
+
+    @hybrid_property
+    def review_status(self):
+        return self.review.status if self.review else None
+
+    @review_status.setter
+    def review_status(self, value):
+        if not self.review:
+            self.review = TaskReview()
+        if isinstance(value, str):
+            try:
+                self.review.status = ReviewStatus(value.upper())
+            except ValueError:
+                self.review.status = ReviewStatus.PENDING
+        else:
+            self.review.status = value
+
+    @hybrid_property
+    def extracted_context(self):
+        return self.planning.extracted_context if self.planning else None
+
+    @extracted_context.setter
+    def extracted_context(self, value):
+        if not self.planning:
+            self.planning = TaskPlanning()
+        self.planning.extracted_context = value
+
+    def __init__(self, **kwargs):
+        # List of hybrid properties that should be handled manually
+        hybrid_fields = [
+            "work_plan", "plan_status", "file_content", "filename", 
+            "file_type", "csv_data", "retry_count", "execution_log",
+            "review_feedback", "review_approved", "review_attempts",
+            "escalation_reason", "last_error", "review_status",
+            "extracted_context"
+        ]
+        hybrids = {k: kwargs.pop(k) for k in hybrid_fields if k in kwargs}
+        super().__init__(**kwargs)
+        for k, v in hybrids.items():
+            setattr(self, k, v)
 
     def to_dict(self):
-        return {
+        data = {
             "id": self.id,
             "title": self.title,
             "description": self.description,
@@ -267,54 +431,196 @@ class Task(Base):
             if isinstance(self.status, TaskStatus)
             else self.status,
             "stripe_session_id": self.stripe_session_id,
-            "result_image_url": self.result_image_url,
-            "result_document_url": self.result_document_url,
-            "result_spreadsheet_url": self.result_spreadsheet_url,
-            "result_type": self.result_type,
-            "csv_data": self.csv_data,
-            "file_type": self.file_type,
-            "filename": self.filename,
             "client_email": self.client_email,
             "amount_paid": self.amount_paid,
             "amount_dollars": (self.amount_paid / 100) if self.amount_paid else None,
             "delivery_token": self.delivery_token,
-            "delivery_token_expires_at": self.delivery_token_expires_at.isoformat()
-            if self.delivery_token_expires_at
-            else None,
+            "delivery_token_expires_at": self.delivery_token_expires_at.isoformat() if self.delivery_token_expires_at else None,
             "delivery_token_used": self.delivery_token_used,
+            "is_high_value": self.is_high_value,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            # New fields
+        }
+        
+        # Flattened fields for compatibility (Issue #5)
+        data.update({
             "work_plan": self.work_plan,
-            "plan_status": self.plan_status.value
-            if isinstance(self.plan_status, PlanStatus)
-            else self.plan_status,
-            "plan_generated_at": self.plan_generated_at.isoformat()
-            if self.plan_generated_at
-            else None,
-            "extracted_context": self.extracted_context,
+            "plan_status": self.plan_status.value if isinstance(self.plan_status, PlanningStatus) else self.plan_status,
+            "file_type": self.file_type,
+            "filename": self.filename,
+            "csv_data": self.csv_data,
+            "retry_count": self.retry_count,
+            "execution_log": self.execution_log,
             "review_feedback": self.review_feedback,
             "review_approved": self.review_approved,
             "review_attempts": self.review_attempts,
-            "last_review_at": self.last_review_at.isoformat()
-            if self.last_review_at
-            else None,
-            "execution_log": self.execution_log,
-            "retry_count": self.retry_count,
-            # Escalation fields (Pillar 1.7)
             "escalation_reason": self.escalation_reason,
-            "escalated_at": self.escalated_at.isoformat()
-            if self.escalated_at
-            else None,
             "last_error": self.last_error,
-            "review_status": self.review_status.value
-            if isinstance(self.review_status, ReviewStatus)
-            else self.review_status,
-            "human_review_notes": self.human_review_notes,
-            "human_reviewer": self.human_reviewer,
+            "review_status": self.review_status.value if isinstance(self.review_status, ReviewStatus) else self.review_status,
+            "extracted_context": self.extracted_context,
+        })
+        
+        # Also include nested structure for new code
+        if self.execution:
+            data["execution"] = self.execution.to_dict()
+        if self.planning:
+            data["planning"] = self.planning.to_dict()
+        if self.review:
+            data["review"] = self.review.to_dict()
+        if self.arena:
+            data["arena"] = self.arena.to_dict()
+        if self.outputs:
+            data["outputs"] = [o.to_dict() for o in self.outputs]
+            
+        return data
+
+
+class TaskExecution(Base):
+    """Task execution state and results."""
+
+    __tablename__ = "task_executions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String, ForeignKey("tasks.id"), unique=True, nullable=False)
+
+    status = Column(Enum(ExecutionStatus), default=ExecutionStatus.PENDING, nullable=False)
+    retry_count = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    execution_logs = Column(JSON, nullable=True)
+    sandbox_result = Column(JSON, nullable=True)
+    artifacts = Column(JSON, nullable=True)
+
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    task = relationship("Task", back_populates="execution")
+
+    def to_dict(self):
+        return {
+            "status": self.status.value if isinstance(self.status, ExecutionStatus) else self.status,
+            "retry_count": self.retry_count,
+            "error_message": self.error_message,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+class TaskPlanning(Base):
+    """Task planning and research results."""
+
+    __tablename__ = "task_planning"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String, ForeignKey("tasks.id"), unique=True, nullable=False)
+
+    status = Column(Enum(PlanningStatus), default=PlanningStatus.PENDING, nullable=False)
+    plan_content = Column(Text, nullable=True)
+    research_findings = Column(JSON, nullable=True)
+    extracted_context = Column(JSON, nullable=True)
+
+    # File uploads
+    file_type = Column(String, nullable=True)
+    file_content = Column(Text, nullable=True)
+    filename = Column(String, nullable=True)
+
+    plan_generated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    task = relationship("Task", back_populates="planning")
+
+    def to_dict(self):
+        return {
+            "status": self.status.value if isinstance(self.status, PlanningStatus) else self.status,
+            "plan_content": self.plan_content,
+            "filename": self.filename,
+            "plan_generated_at": self.plan_generated_at.isoformat() if self.plan_generated_at else None,
+        }
+
+
+class TaskReview(Base):
+    """Task review and feedback."""
+
+    __tablename__ = "task_reviews"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String, ForeignKey("tasks.id"), unique=True, nullable=False)
+
+    status = Column(Enum(ReviewStatus), default=ReviewStatus.PENDING, nullable=False)
+    approved = Column(Boolean, default=False)
+    review_feedback = Column(Text, nullable=True)
+    review_attempts = Column(Integer, default=0)
+    
+    # Escalation
+    needs_escalation = Column(Boolean, default=False)
+    escalation_reason = Column(String, nullable=True)
+    escalated_at = Column(DateTime, nullable=True)
+    
+    # Human review
+    human_review_notes = Column(Text, nullable=True)
+    human_reviewer = Column(String, nullable=True)
+    
+    reviewed_at = Column(DateTime, nullable=True)
+
+    task = relationship("Task", back_populates="review")
+
+    def to_dict(self):
+        return {
+            "status": self.status.value if isinstance(self.status, ReviewStatus) else self.status,
+            "approved": self.approved,
+            "review_feedback": self.review_feedback,
+            "review_attempts": self.review_attempts,
+            "needs_escalation": self.needs_escalation,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
-            "is_high_value": self.is_high_value,
+        }
+
+
+class TaskArena(Base):
+    """Arena competition results."""
+
+    __tablename__ = "task_arenas"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String, ForeignKey("tasks.id"), unique=True, nullable=False)
+
+    competition_id = Column(String, nullable=True)
+    winning_model = Column(String, nullable=True)
+    local_score = Column(Float, nullable=True)
+    cloud_score = Column(Float, nullable=True)
+    profit_score = Column(Float, nullable=True)
+
+    completed_at = Column(DateTime, nullable=True)
+
+    task = relationship("Task", back_populates="arena")
+
+    def to_dict(self):
+        return {
+            "winning_model": self.winning_model,
+            "local_score": self.local_score,
+            "cloud_score": self.cloud_score,
+            "profit_score": self.profit_score,
+        }
+
+
+class TaskOutput(Base):
+    """Task output results."""
+
+    __tablename__ = "task_outputs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String, ForeignKey("tasks.id"), nullable=False)
+
+    output_type = Column(Enum(OutputType), nullable=False)
+    output_url = Column(String, nullable=True)
+    output_data = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    task = relationship("Task", back_populates="outputs")
+
+    def to_dict(self):
+        return {
+            "output_type": self.output_type.value if isinstance(self.output_type, OutputType) else self.output_type,
+            "output_url": self.output_url,
         }
 
 

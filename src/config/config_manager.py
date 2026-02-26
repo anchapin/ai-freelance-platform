@@ -49,6 +49,7 @@ class ConfigManager:
         # Sandbox Execution Timeouts
         "DOCKER_SANDBOX_TIMEOUT": 120,
         "SANDBOX_TIMEOUT_SECONDS": 600,
+        "MAX_RETRY_ATTEMPTS": 3,
         
         # Delivery & Security Thresholds
         "DELIVERY_TOKEN_TTL_HOURS": 1,

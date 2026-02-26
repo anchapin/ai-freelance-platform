@@ -84,12 +84,14 @@ logger = get_logger(__name__)
 
 # Import Experience Vector Database for few-shot learning (RAG)
 try:
-    from ..experience_vector_db import store_successful_task
+    from ..experience_vector_db import store_successful_task, get_experience_db
+    from ..async_rag_service import get_async_rag_service
+    from ..background_job_queue import get_background_job_queue
     EXPERIENCE_DB_AVAILABLE = True
 except ImportError:
     EXPERIENCE_DB_AVAILABLE = False
     # Use basic logging for import errors before app logger is ready
-    logging.warning("Experience Vector Database not available, few-shot learning disabled")
+    logging.warning("Experience Vector Database or Background Queue not available")
 
 # =============================================================================
 # ESCALATION & HUMAN-IN-THE-LOOP (HITL) CONFIGURATION (Pillar 1.7)
@@ -765,16 +767,41 @@ Support,180"""
                             first_line = csv_data.strip().split('\n')[0]
                             csv_headers = [h.strip() for h in first_line.split(',')]
                         
-                        store_successful_task(
-                            task_id=task_id,
-                            user_request=user_request,
-                            generated_code=generated_code,
-                            domain=task.domain,
-                            task_type="visualization",  # Could be extracted from result_type
-                            output_format=output_format,
-                            csv_headers=csv_headers
-                        )
-                        logger.info("Stored experience for few-shot learning")
+                        # Use Background Job Queue for non-blocking storage (Issue #6, #25)
+                        queue = get_background_job_queue() if EXPERIENCE_DB_AVAILABLE else None
+                        
+                        # Wrap sync storage in async for background queue
+                        async def async_store_experience(**kwargs):
+                            return await asyncio.to_thread(store_successful_task, **kwargs)
+                            
+                        if queue and queue._running:
+                            await queue.queue_job(
+                                job_type="experience_storage",
+                                task_func=async_store_experience,
+                                task_kwargs={
+                                    "task_id": task_id,
+                                    "user_request": user_request,
+                                    "generated_code": generated_code,
+                                    "domain": task.domain,
+                                    "task_type": "visualization",
+                                    "output_format": output_format,
+                                    "csv_headers": csv_headers
+                                }
+                            )
+                            logger.info("Queued experience storage for few-shot learning")
+                        else:
+                            # Fallback to sync storage (blocking but safe for simple cases)
+                            if EXPERIENCE_DB_AVAILABLE:
+                                store_successful_task(
+                                    task_id=task_id,
+                                    user_request=user_request,
+                                    generated_code=generated_code,
+                                    domain=task.domain,
+                                    task_type="visualization",
+                                    output_format=output_format,
+                                    csv_headers=csv_headers
+                                )
+                                logger.info("Stored experience synchronously (queue not running)")
                 
                 # CLIENT PREFERENCE MEMORY (Pillar 2.5 Gap): Save preferences after task completion
                 if task.client_email and task.review_feedback:
@@ -829,13 +856,29 @@ Support,180"""
             # =====================================================
             logger.info("Using legacy TaskRouter workflow")
             
+            # Fetch few-shot examples asynchronously (Issue #6 Decoupling)
+            few_shot_examples = []
+            if EXPERIENCE_DB_AVAILABLE:
+                try:
+                    rag_service = get_async_rag_service(get_experience_db())
+                    few_shot_examples = await rag_service.get_few_shot_examples(
+                        user_request=user_request,
+                        domain=task.domain,
+                        top_k=2
+                    )
+                    logger.info(f"Retrieved {len(few_shot_examples)} few-shot examples via async service")
+                except Exception as rag_err:
+                    logger.warning(f"Async RAG retrieval failed: {rag_err}")
+            
+            # Call executor with pre-fetched examples
             result = execute_task(
                 domain=task.domain,
                 user_request=user_request,
                 csv_data=csv_data or "",
                 file_type=task.file_type,
                 file_content=task.file_content,
-                filename=task.filename
+                filename=task.filename,
+                few_shot_examples=few_shot_examples
             )
             
             # Update the task with the result based on output format (diverse output types)
@@ -1082,11 +1125,26 @@ async def lifespan(app: FastAPI):
     init_db()
     init_observability()
     
+    # Initialize Background Job Queue (Issue #6, #25)
+    if EXPERIENCE_DB_AVAILABLE:
+        queue = await get_background_job_queue(max_workers=3)
+        logger.info("Background job queue started")
+        
+        # Pre-initialize RAG service
+        vector_db = get_experience_db()
+        if vector_db:
+            get_async_rag_service(vector_db)
+            logger.info("Async RAG service initialized")
+    
     # Start autonomous scanning loop if enabled
     await start_autonomous_loop()
     
     yield
-    # Shutdown logic goes here
+    # Shutdown logic
+    if EXPERIENCE_DB_AVAILABLE:
+        queue = get_background_job_queue()
+        await queue.stop()
+        logger.info("Background job queue stopped")
 
 
 # Update your FastAPI initialization to use the lifespan
@@ -1333,8 +1391,17 @@ async def stripe_webhook(
                 task.status = TaskStatus.PAID
                 db.commit()
                 
-                # Add background task to process the visualization asynchronously
-                background_tasks.add_task(process_task_async, task.id)
+                # Add background task to process the visualization asynchronously (Issue #6, #25)
+                queue = get_background_job_queue() if EXPERIENCE_DB_AVAILABLE else None
+                if queue and queue._running:
+                    await queue.queue_job(
+                        job_type="task_processing",
+                        task_func=process_task_async,
+                        task_args=(task.id,),
+                        max_retries=3
+                    )
+                else:
+                    background_tasks.add_task(process_task_async, task.id)
                 
                 return {"status": "success", "message": f"Task {task.id} marked as PAID, processing started"}
             else:
@@ -2009,15 +2076,24 @@ async def run_arena_competition(
     db.add(competition_record)
     db.commit()
     
-    # Log to learning systems (in background)
+    # Log to learning systems (in background) (Issue #6, #25)
     if submission.task_id:
-        background_tasks.add_task(
-            _log_arena_learning,
-            result,
-            submission.task_id,
-            submission.domain,
-            submission.user_request
-        )
+        queue = get_background_job_queue() if EXPERIENCE_DB_AVAILABLE else None
+        if queue and queue._running:
+            await queue.queue_job(
+                job_type="arena_learning",
+                task_func=_log_arena_learning,
+                task_args=(result, submission.task_id, submission.domain, submission.user_request),
+                max_retries=2
+            )
+        else:
+            background_tasks.add_task(
+                _log_arena_learning,
+                result,
+                submission.task_id,
+                submission.domain,
+                submission.user_request
+            )
     
     # Return the winning result to the client
     return {

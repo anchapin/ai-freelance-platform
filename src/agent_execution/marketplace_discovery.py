@@ -37,7 +37,7 @@ except ImportError:
 # Try to import Playwright
 try:
     from playwright.async_api import async_playwright
-
+    from .browser_pool import get_browser_pool
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -459,14 +459,19 @@ class MarketplaceDiscovery:
         page = None
 
         try:
-            # Use async context manager for playwright - ensures proper cleanup
-            async with async_playwright() as playwright:
-                # Launch browser with proper resource management
-                browser = await playwright.chromium.launch(headless=True)
+            # Use BrowserPool instead of launching new browser (Issue #4)
+            pool = get_browser_pool()
+            # Ensure pool is started
+            try:
+                await pool.start()
+            except Exception:
+                pass
+                
+            browser = await pool.acquire_browser()
 
-                try:
-                    # Create page within try block for automatic cleanup
-                    page = await browser.new_page()
+            try:
+                # Create page
+                page = await browser.new_page()
 
                     try:
                         # Navigate to marketplace with timeout
@@ -526,18 +531,17 @@ class MarketplaceDiscovery:
                         }
 
                     finally:
-                        # Explicitly close page - async context manager will handle playwright
+                        # Explicitly close page
                         try:
                             await page.close()
                         except Exception as e:
                             logger.warning(f"Error closing page for {url}: {e}")
 
                 finally:
-                    # Explicitly close browser - async context manager will handle playwright
-                    try:
-                        await browser.close()
-                    except Exception as e:
-                        logger.warning(f"Error closing browser for {url}: {e}")
+                    # Release browser back to pool instead of closing (Issue #4)
+                    if browser:
+                        pool = get_browser_pool()
+                        await pool.release_browser(browser)
 
         except Exception as e:
             logger.error(f"Marketplace evaluation error: {e}")

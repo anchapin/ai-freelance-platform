@@ -209,8 +209,12 @@ class AsyncRAGService:
 
         # Query ChromaDB
         try:
-            examples = self.vector_db.query_similar_tasks(
-                user_request=user_request, domain=domain, top_k=top_k
+            # Run the synchronous query in a separate thread to avoid blocking the event loop
+            examples = await asyncio.to_thread(
+                self.vector_db.query_similar_tasks,
+                user_request=user_request,
+                domain=domain,
+                top_k=top_k
             )
 
             self.queries_succeeded += 1
