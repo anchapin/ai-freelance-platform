@@ -14,13 +14,11 @@ Features:
 - Logging of all auto-increase attempts
 """
 
-import logging
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum as PyEnum
 
 from sqlalchemy.orm import Session
-from sqlalchemy.future import select
 
 from ..api.database import SessionLocal
 from ..api.models import ThresholdPetition, ConfidenceEntry
