@@ -317,7 +317,7 @@ def get_bid_lock_manager() -> BidLockManager:
     return _bid_lock_manager
 
 
-async def init_bid_lock_manager(ttl: int = 300) -> BidLockManager:
+def init_bid_lock_manager(ttl: int = 300) -> BidLockManager:
     """Initialize the global BidLockManager with custom TTL."""
     global _bid_lock_manager
     _bid_lock_manager = BidLockManager(ttl=ttl)
