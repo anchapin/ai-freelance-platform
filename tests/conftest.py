@@ -19,6 +19,14 @@ import os
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+# =============================================================================
+# DATABASE CONFIGURATION FOR TESTS
+# =============================================================================
+
+# Use in-memory SQLite database for faster tests
+# This prevents disk I/O overhead from slowing down the test suite
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+
 
 # =============================================================================
 # PYTEST CONFIGURATION
@@ -193,23 +201,30 @@ def setup_database():
     Base.metadata.drop_all(bind=engine)
 
 
-@pytest.fixture
-async def db_session():
-    """Provide an async database session for tests."""
-    from src.api.database import AsyncSessionLocal
+@pytest.fixture(scope="session")
+async def setup_async_database():
+    """Create all database tables once for all async tests."""
     from src.api.models import Base
     from src.api.database import async_engine
 
-    # Create all tables for async engine
+    # Create all tables for async engine (once per session)
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async with AsyncSessionLocal() as session:
-        yield session
+    yield
 
-    # Drop all tables after tests
+    # Drop all tables after test session
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.fixture
+async def db_session(setup_async_database):
+    """Provide an async database session for tests."""
+    from src.api.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        yield session
 
 
 @pytest.fixture
