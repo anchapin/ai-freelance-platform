@@ -197,6 +197,8 @@ class Task(Base):
         Index("idx_task_client_email", "client_email"),
         Index("idx_task_status", "status"),
         Index("idx_task_created_at", "created_at"),
+        Index("idx_task_client_status", "client_email", "status"),
+        Index("idx_task_status_created", "status", "created_at"),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -231,21 +233,34 @@ class Task(Base):
         uselist=False,
         cascade="all, delete-orphan",
         back_populates="task",
+        lazy="joined",
     )
     planning = relationship(
         "TaskPlanning",
         uselist=False,
         cascade="all, delete-orphan",
         back_populates="task",
+        lazy="joined",
     )
     review = relationship(
-        "TaskReview", uselist=False, cascade="all, delete-orphan", back_populates="task"
+        "TaskReview",
+        uselist=False,
+        cascade="all, delete-orphan",
+        back_populates="task",
+        lazy="joined",
     )
     arena = relationship(
-        "TaskArena", uselist=False, cascade="all, delete-orphan", back_populates="task"
+        "TaskArena",
+        uselist=False,
+        cascade="all, delete-orphan",
+        back_populates="task",
+        lazy="joined",
     )
     outputs = relationship(
-        "TaskOutput", cascade="all, delete-orphan", back_populates="task"
+        "TaskOutput",
+        cascade="all, delete-orphan",
+        back_populates="task",
+        lazy="joined",
     )
 
     # Hybrid properties for backward compatibility (Issue #5)
