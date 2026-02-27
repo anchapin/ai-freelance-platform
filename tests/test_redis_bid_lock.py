@@ -1,22 +1,22 @@
 """
-Tests for Redis-backed BidLockManager and distributed locking scenarios.
+Tests for Database-backed BidLockManager and distributed locking scenarios.
 
 This test suite validates:
-- Atomic lock acquisition with Redis SET NX
+- Atomic lock acquisition with database unique constraints
 - Lock expiration and TTL handling
 - Concurrent lock contention across multiple "instances"
 - Lock holder identification
-- Error handling and Redis connectivity issues
+- Error handling and database connectivity issues
 - Lock metrics collection
 
-Issue #19: Implement distributed BidLockManager with Redis
+Issue #19: Implement distributed BidLockManager with database
 """
 
 import asyncio
 import pytest
 
-from src.agent_execution.redis_bid_lock_manager import (
-    RedisBidLockManager,
+from src.agent_execution.bid_lock_manager import (
+    BidLockManager,
     get_bid_lock_manager,
     init_bid_lock_manager,
 )
@@ -29,14 +29,13 @@ from src.agent_execution.redis_bid_lock_manager import (
 
 @pytest.fixture
 async def lock_manager():
-    """Create a RedisBidLockManager instance for testing."""
-    manager = RedisBidLockManager(redis_url="redis://localhost:6379/0", ttl=300)
+    """Create a BidLockManager instance for testing."""
+    manager = BidLockManager(ttl=300)
     # Clean up any existing test locks
     await manager.cleanup_all()
     yield manager
     # Cleanup after test
     await manager.cleanup_all()
-    await manager.close()
 
 
 # ============================================================================
@@ -226,7 +225,7 @@ async def test_context_manager_exception_releases_lock(lock_manager):
 @pytest.mark.asyncio
 async def test_concurrent_lock_attempts(lock_manager):
     """Test multiple concurrent lock attempts on same resource.
-    
+
     This test verifies that Redis lock properly serializes access:
     - Multiple holders try to acquire the same lock concurrently
     - All should eventually acquire it (with timeout)
@@ -252,7 +251,7 @@ async def test_concurrent_lock_attempts(lock_manager):
             # Record acquisition order
             async with lock_event:
                 acquisition_order.append(holder_id)
-            
+
             await asyncio.sleep(duration)
             await lock_manager.release_lock(
                 marketplace_id=marketplace_id,
@@ -269,10 +268,10 @@ async def test_concurrent_lock_attempts(lock_manager):
 
     # All should eventually succeed (queued behind lock)
     results = await asyncio.gather(*tasks)
-    
+
     # All should acquire successfully (lock is released after each holder)
     assert all(results), f"Some holders failed to acquire lock: {results}"
-    
+
     # Verify they acquired in some order
     assert len(acquisition_order) == num_concurrent
     assert acquisition_order[0] == "holder_0"  # First to acquire
@@ -422,18 +421,21 @@ async def test_lock_ttl_respected(lock_manager):
 
 @pytest.mark.asyncio
 async def test_health_check_success(lock_manager):
-    """Test successful health check."""
-    is_healthy = await lock_manager.health_check()
-    assert is_healthy is True
+    """Test successful health check - always returns True for DB-backed locks."""
+    metrics = lock_manager.get_metrics()
+    # Database-backed locks don't have health_check - just verify metrics work
+    assert "lock_attempts" in metrics
+    assert "lock_successes" in metrics
 
 
 @pytest.mark.asyncio
 async def test_health_check_failure():
-    """Test health check with invalid Redis URL."""
-    manager = RedisBidLockManager(redis_url="redis://invalid-host:6379/0")
-    is_healthy = await manager.health_check()
-    # Should be False due to invalid host
-    assert is_healthy is False
+    """Test health check with invalid configuration - DB-backed always works."""
+    # Database-backed locks don't fail on connection issues (SQLite is local)
+    # This test is a no-op for DB-backed locks
+    manager = BidLockManager(ttl=300)
+    metrics = manager.get_metrics()
+    assert "lock_attempts" in metrics
 
 
 # ============================================================================
@@ -445,16 +447,22 @@ async def test_health_check_failure():
 async def test_lock_key_generation(lock_manager):
     """Test lock key format."""
     lock_key = lock_manager._make_lock_key("upwork", "job_123")
-    assert lock_key == "bid_lock:upwork:job_123"
+    # Database-backed locks use bid:lock: prefix
+    assert lock_key == "bid:lock:upwork:job_123"
 
 
 @pytest.mark.asyncio
 async def test_holder_id_generation(lock_manager):
-    """Test holder ID generation includes hostname and PID."""
-    holder_id = lock_manager._make_holder_id()
-    assert ":" in holder_id
-    parts = holder_id.split(":")
-    assert len(parts) == 3  # hostname:pid:uuid
+    """Test holder ID parameter - BidLockManager doesn't auto-generate."""
+    # Database-backed locks don't auto-generate holder IDs
+    # They accept holder_id as a parameter (uses "default" if not provided)
+    acquired = await lock_manager.acquire_lock(
+        marketplace_id="upwork",
+        posting_id="job_test",
+        holder_id="custom_holder",
+        timeout=1.0,
+    )
+    assert acquired is True
 
 
 # ============================================================================
@@ -495,17 +503,17 @@ async def test_cleanup_all(lock_manager):
 @pytest.mark.asyncio
 async def test_get_bid_lock_manager():
     """Test singleton pattern for get_bid_lock_manager."""
-    manager1 = await get_bid_lock_manager()
-    manager2 = await get_bid_lock_manager()
+    manager1 = get_bid_lock_manager()
+    manager2 = get_bid_lock_manager()
     assert manager1 is manager2
 
 
 @pytest.mark.asyncio
 async def test_init_bid_lock_manager():
     """Test initialization with custom settings."""
-    manager = await init_bid_lock_manager(redis_url="redis://localhost:6379/0", ttl=600)
+    manager = init_bid_lock_manager(ttl=600)
     assert manager.ttl == 600
-    assert "localhost" in manager.redis_url
+    # Database-backed locks don't have redis_url attribute
 
 
 # ============================================================================
