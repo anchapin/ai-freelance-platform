@@ -23,10 +23,10 @@ if DATABASE_URL.startswith("sqlite"):
         echo=False,
     )
     # Convert to async URL for SQLite
-    if DATABASE_URL.startswith("sqlite://:"):
-        ASYNC_DATABASE_URL = DATABASE_URL.replace("sqlite://:", "sqlite+aiosqlite:")
-    else:
+    if "sqlite:///" in DATABASE_URL:
         ASYNC_DATABASE_URL = DATABASE_URL.replace("sqlite:///", "sqlite+aiosqlite:///")
+    elif DATABASE_URL.startswith("sqlite://"):
+        ASYNC_DATABASE_URL = DATABASE_URL.replace("sqlite://", "sqlite+aiosqlite://")
 else:
     engine = create_engine(DATABASE_URL, echo=False)
     ASYNC_DATABASE_URL = DATABASE_URL.replace(

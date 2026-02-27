@@ -7,7 +7,6 @@ managing recurring tasks, and viewing schedule analytics.
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -19,7 +18,7 @@ from ..agent_execution.scheduler import (
     schedule_weekly_task,
     schedule_monthly_task,
 )
-from ..api.database import get_db, get_async_db
+from ..api.database import get_async_db
 from ..api.models import ScheduledTask, ScheduleHistory
 from ..utils.logger import get_logger
 
@@ -264,7 +263,9 @@ async def schedule_monthly_task_endpoint(
 
 
 @router.get("/schedules")
-async def list_schedules(status: Optional[str] = None, db: Session = Depends(get_db)):
+async def list_schedules(
+    status: Optional[str] = None, db: AsyncSession = Depends(get_async_db)
+):
     """
     List all scheduled tasks, optionally filtered by status.
     """
@@ -306,7 +307,7 @@ async def list_schedules(status: Optional[str] = None, db: Session = Depends(get
 
 
 @router.get("/schedules/{schedule_id}")
-async def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
+async def get_schedule(schedule_id: str, db: AsyncSession = Depends(get_async_db)):
     """
     Get details for a specific schedule.
     """
@@ -356,7 +357,9 @@ async def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
 
 @router.put("/schedules/{schedule_id}")
 async def update_schedule(
-    schedule_id: str, request: ScheduleUpdateRequest, db: Session = Depends(get_db)
+    schedule_id: str,
+    request: ScheduleUpdateRequest,
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Update an existing schedule.
@@ -414,7 +417,7 @@ async def update_schedule(
 
 
 @router.post("/schedules/{schedule_id}/pause")
-async def pause_schedule(schedule_id: str, db: Session = Depends(get_db)):
+async def pause_schedule(schedule_id: str, db: AsyncSession = Depends(get_async_db)):
     """
     Pause a scheduled task.
     """
@@ -436,7 +439,7 @@ async def pause_schedule(schedule_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/schedules/{schedule_id}/resume")
-async def resume_schedule(schedule_id: str, db: Session = Depends(get_db)):
+async def resume_schedule(schedule_id: str, db: AsyncSession = Depends(get_async_db)):
     """
     Resume a paused scheduled task.
     """
@@ -458,7 +461,7 @@ async def resume_schedule(schedule_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/schedules/{schedule_id}/cancel")
-async def cancel_schedule(schedule_id: str, db: Session = Depends(get_db)):
+async def cancel_schedule(schedule_id: str, db: AsyncSession = Depends(get_async_db)):
     """
     Cancel a scheduled task.
     """
@@ -480,7 +483,9 @@ async def cancel_schedule(schedule_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/schedules/{schedule_id}/analytics")
-async def get_schedule_analytics(schedule_id: str, db: Session = Depends(get_db)):
+async def get_schedule_analytics(
+    schedule_id: str, db: AsyncSession = Depends(get_async_db)
+):
     """
     Get analytics for a specific schedule.
     """
@@ -505,7 +510,10 @@ async def get_schedule_analytics(schedule_id: str, db: Session = Depends(get_db)
 
 @router.get("/schedules/{schedule_id}/history")
 async def get_schedule_history(
-    schedule_id: str, limit: int = 50, offset: int = 0, db: Session = Depends(get_db)
+    schedule_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Get execution history for a specific schedule.
@@ -636,30 +644,33 @@ async def get_common_cron_expressions():
 
 
 @router.get("/status")
-async def get_scheduler_status(db: Session = Depends(get_db)):
+async def get_scheduler_status(db: AsyncSession = Depends(get_async_db)):
     """
     Get scheduler status and statistics.
     """
     try:
-        # Count schedules by status
-        from sqlalchemy import func
+        from sqlalchemy import func, select
 
         status_counts = (
-            db.query(ScheduledTask.status, func.count(ScheduledTask.id).label("count"))
-            .group_by(ScheduledTask.status)
-            .all()
-        )
+            await db.execute(
+                select(
+                    ScheduledTask.status, func.count(ScheduledTask.id).label("count")
+                ).group_by(ScheduledTask.status)
+            )
+        ).all()
 
-        # Count total executions
-        total_executions = db.query(func.count(ScheduleHistory.id)).scalar()
+        total_executions = (
+            await db.execute(select(func.count(ScheduleHistory.id)))
+        ).scalar()
 
-        # Count executions in last 24 hours
         yesterday = datetime.utcnow() - timedelta(hours=24)
         recent_executions = (
-            db.query(func.count(ScheduleHistory.id))
-            .filter(ScheduleHistory.execution_start >= yesterday)
-            .scalar()
-        )
+            await db.execute(
+                select(func.count(ScheduleHistory.id)).where(
+                    ScheduleHistory.execution_start >= yesterday
+                )
+            )
+        ).scalar()
 
         return {
             "status": "running",
