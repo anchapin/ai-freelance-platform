@@ -18,6 +18,7 @@ import random
 import time
 from typing import Optional, Dict, Any
 from .llm_health_check import get_health_checker, CircuitBreakerError
+from .config.config_manager import ConfigManager
 
 # Load environment variables from .env file
 # Create a .env file in your project root with the following variables:
@@ -39,9 +40,6 @@ DEFAULT_DISTILLED_MODEL = "distilled-llama3.2"  # Fine-tuned distilled model
 TASK_TYPE_BASIC_ADMIN = "basic_admin"  # Simple tasks, suitable for local models
 TASK_TYPE_COMPLEX = "complex"  # Complex tasks requiring powerful models
 TASK_TYPE_DISTILLED = "distilled"  # Tasks handled by fine-tuned local model
-
-# Import Config Manager (Issue #26)
-from .config.config_manager import ConfigManager
 
 # Revenue threshold for cloud vs local model selection (in cents)
 # Loaded from ConfigManager - see src/config/config_manager.py for defaults
@@ -261,7 +259,7 @@ class LLMService:
             model_config: Optional ModelConfig for task-based model selection.
             enable_fallback: Whether to automatically try local if cloud fails.
             enable_circuit_breaker: Whether to use circuit breaker for Ollama (default: True).
-            """
+        """
         """
         Initialize the LLM Service.
 
@@ -796,7 +794,9 @@ class LLMService:
             print("Attempting fallback to local model...")
 
             # Create local service (with larger timeout for local)
-            local_service = self.with_local(enable_circuit_breaker=self.enable_circuit_breaker)
+            local_service = self.with_local(
+                enable_circuit_breaker=self.enable_circuit_breaker
+            )
 
             try:
                 # Attempt 2: Local with 30s timeout and 5s backoff
@@ -818,7 +818,11 @@ class LLMService:
                 raise last_error if last_error else local_error
 
         # Fallback disabled or already local, re-raise
-        raise last_error if last_error else Exception("Unknown error in complete_with_fallback")
+        raise (
+            last_error
+            if last_error
+            else Exception("Unknown error in complete_with_fallback")
+        )
 
 
 # =============================================================================

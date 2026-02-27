@@ -47,6 +47,7 @@ class ConfigManager:
         # Marketplace Scanning Timeouts
         "PAGE_LOAD_TIMEOUT": 30,
         "SCAN_INTERVAL": 300,
+        "MARKET_SCAN_INTERVAL": 300,
         # Sandbox Execution Timeouts
         "DOCKER_SANDBOX_TIMEOUT": 120,
         "SANDBOX_TIMEOUT_SECONDS": 600,
@@ -214,3 +215,9 @@ class ConfigManager:
 def get_config() -> ConfigManager:
     """Get the global ConfigManager instance."""
     return ConfigManager.get_instance()
+
+
+# Export reset_instance for tests
+def reset_instance():
+    """Reset the configuration cache and singleton instance."""
+    ConfigManager.reset_instance()

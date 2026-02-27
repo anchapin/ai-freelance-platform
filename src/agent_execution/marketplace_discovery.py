@@ -36,8 +36,8 @@ except ImportError:
 
 # Try to import Playwright
 try:
-    from playwright.async_api import async_playwright
     from .browser_pool import get_browser_pool
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -465,7 +465,7 @@ class MarketplaceDiscovery:
                 await pool.start()
             except Exception:
                 pass
-                
+
             browser = await pool.acquire_browser()
 
             try:

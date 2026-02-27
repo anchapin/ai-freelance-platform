@@ -111,7 +111,10 @@ class TestDatasetBuilder:
     def test_validate_examples_with_invalid(self, dataset_builder):
         """Test validation with invalid examples."""
         examples = [
-            {"prompt": "Valid prompt", "response": "Valid response with enough content"},
+            {
+                "prompt": "Valid prompt",
+                "response": "Valid response with enough content",
+            },
             {"prompt": "Short", "response": "Short"},  # Both too short
             {"prompt": "Valid prompt 2", "response": None},  # Missing response
         ]
@@ -150,7 +153,7 @@ class TestDatasetBuilder:
 
         lines = jsonl_str.split("\n")
         # Should have 4 lines (plus possibly empty last line)
-        non_empty_lines = [l for l in lines if l.strip()]
+        non_empty_lines = [line for line in lines if line.strip()]
         assert len(non_empty_lines) == 4
 
         # Each line should be valid JSON
@@ -160,13 +163,17 @@ class TestDatasetBuilder:
 
     def test_split_train_test(self, dataset_builder, sample_examples):
         """Test train/test split."""
-        train, test = dataset_builder.split_train_test(sample_examples, train_ratio=0.75)
+        train, test = dataset_builder.split_train_test(
+            sample_examples, train_ratio=0.75
+        )
 
         assert len(train) == 3
         assert len(test) == 1
         assert len(train) + len(test) == 4
 
-    def test_save_dataset_openai_format(self, dataset_builder, sample_examples, temp_data_dir):
+    def test_save_dataset_openai_format(
+        self, dataset_builder, sample_examples, temp_data_dir
+    ):
         """Test saving dataset in OpenAI format."""
         filepath = dataset_builder.save_dataset(
             sample_examples, "test_openai_dataset", format="openai"
@@ -183,7 +190,9 @@ class TestDatasetBuilder:
                 data = json.loads(line)
                 assert "messages" in data
 
-    def test_save_dataset_alpaca_format(self, dataset_builder, sample_examples, temp_data_dir):
+    def test_save_dataset_alpaca_format(
+        self, dataset_builder, sample_examples, temp_data_dir
+    ):
         """Test saving dataset in Alpaca format."""
         filepath = dataset_builder.save_dataset(
             sample_examples, "test_alpaca_dataset", format="alpaca"
@@ -343,13 +352,19 @@ class TestModelEvaluator:
 
         # Add some results
         evaluator.evaluate_exact_match(
-            predictions=["a", "b"], references=["a", "b"],
-            model_name="model1", model_type="base", latencies_ms=[100, 100]
+            predictions=["a", "b"],
+            references=["a", "b"],
+            model_name="model1",
+            model_type="base",
+            latencies_ms=[100, 100],
         )
 
         evaluator.evaluate_exact_match(
-            predictions=["x", "y"], references=["x", "y"],
-            model_name="model2", model_type="fine_tuned", latencies_ms=[90, 85]
+            predictions=["x", "y"],
+            references=["x", "y"],
+            model_name="model2",
+            model_type="fine_tuned",
+            latencies_ms=[90, 85],
         )
 
         summary = evaluator.get_results_summary()
