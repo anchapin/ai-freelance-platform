@@ -1,6 +1,9 @@
 name: AI Platform CI
 
 on: [push, pull_request]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
@@ -25,7 +28,11 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       
@@ -35,39 +42,31 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
           
-      - name: Get pip cache dir
-        id: pip-cache
-        run: |
-          echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-          
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
-          path: ${{ steps.pip-cache.outputs.dir }}
+          path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-pip-
           
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest pytest-asyncio pytest-cov pytest-timeout
+          pip install -e .[tests] 2>/dev/null || pip install -e .
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout pytest-xdist
           
-      - name: Run Unit Tests with Coverage
+      - name: Run Unit Tests (Shard ${{ matrix.shard }})
         run: |
-          pytest tests/ --ignore=tests/e2e/ -v --cov=src --cov-report=xml --cov-report=term --timeout=300
-          
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.xml
-          fail_ci_if_error: false
-        continue-on-error: true
+          pytest tests/ --ignore=tests/e2e/ -v --cov=src --cov-report=xml --cov-report=term:skip-covered --timeout=300 -n auto -x --dist loadscope --cov-config=pyproject.toml
+        env:
+          PYTEST_XDIST_WORKER_COUNT: 4
+          PYTEST_XDIST_WORKER_ID: ${{ matrix.shard }} - 1
+          PYTHONUNBUFFERED: 1
         
   e2e-tests:
     name: E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       
@@ -77,24 +76,21 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
           
-      - name: Get pip cache dir
-        id: pip-cache
-        run: |
-          echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-          
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
-          path: ${{ steps.pip-cache.outputs.dir }}
+          path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-pip-
           
       - name: Install dependencies
         run: |
-          pip install -e .
+          pip install -e .[tests] 2>/dev/null || pip install -e .
           pip install pytest pytest-asyncio pytest-timeout
           
       - name: Run E2E Tests
         run: |
           pytest tests/e2e/ -v --tb=short --timeout=300
+        env:
+          PYTHONUNBUFFERED: 1
