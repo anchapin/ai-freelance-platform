@@ -51,7 +51,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pytest-asyncio pytest-cov
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout
           
       - name: Run Unit Tests with Coverage
         run: |
@@ -93,7 +93,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pytest-asyncio
+          pip install pytest pytest-asyncio pytest-timeout
           
       - name: Run E2E Tests
         run: |
