@@ -57,10 +57,8 @@ jobs:
           
       - name: Run Unit Tests (Shard ${{ matrix.shard }})
         run: |
-          pytest tests/ --ignore=tests/e2e/ -v --cov=src --cov-report=xml --cov-report=term:skip-covered --timeout=300 -n auto -x --dist loadscope --cov-config=pyproject.toml
+          pytest tests/ --ignore=tests/e2e/ -v --cov=src --cov-report=xml --cov-report=term:skip-covered --timeout=300 --cov-config=pyproject.toml
         env:
-          PYTEST_XDIST_WORKER_COUNT: 4
-          PYTEST_XDIST_WORKER_ID: ${{ matrix.shard }} - 1
           PYTHONUNBUFFERED: 1
         
   e2e-tests:
