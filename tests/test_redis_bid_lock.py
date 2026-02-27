@@ -503,14 +503,6 @@ async def test_cleanup_all(lock_manager):
 @pytest.mark.asyncio
 async def test_get_bid_lock_manager():
     """Test singleton pattern for get_bid_lock_manager."""
-    manager1 = await get_bid_lock_manager()
-    manager2 = await get_bid_lock_manager()
-    assert manager1 is manager2
-
-
-@pytest.mark.asyncio
-async def test_get_bid_lock_manager():
-    """Test singleton pattern for get_bid_lock_manager."""
     manager1 = get_bid_lock_manager()
     manager2 = get_bid_lock_manager()
     assert manager1 is manager2

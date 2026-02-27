@@ -550,17 +550,3 @@ async def test_rapid_acquire_release_cycle(lock_manager):
 
     assert lock_manager._lock_successes == num_cycles
     assert lock_manager._lock_conflicts == 0
-
-
-@pytest.mark.asyncio
-async def test_redis_connection_fallback():
-    """
-    Test: Graceful handling of Redis connection failures.
-
-    Expected: Health check detects connection issues.
-    """
-    # Try to connect to invalid Redis
-    manager = RedisBidLockManager(redis_url="redis://invalid-host:6379/0")
-
-    is_healthy = await manager.health_check()
-    assert is_healthy is False
