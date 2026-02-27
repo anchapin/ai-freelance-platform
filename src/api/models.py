@@ -1083,7 +1083,7 @@ class UserQuota(Base):
 
     # Billing cycle tracking
     billing_cycle_start = Column(DateTime, nullable=False, default=datetime.utcnow)
-    billing_cycle_end = Column(DateTime, nullable=False)
+    billing_cycle_end = Column(DateTime, nullable=True)
 
     # Quota thresholds for alerts
     alert_threshold_percentage = Column(Integer, default=80)  # Alert at 80% usage
