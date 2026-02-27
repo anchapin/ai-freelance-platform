@@ -194,6 +194,45 @@ def setup_database():
 
 
 @pytest.fixture
+async def db_session():
+    """Provide an async database session for tests."""
+    from src.api.database import AsyncSessionLocal
+    from src.api.models import Base
+    from src.api.database import async_engine
+
+    # Create all tables for async engine
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with AsyncSessionLocal() as session:
+        yield session
+
+    # Drop all tables after tests
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.fixture
+def client():
+    """Provide a TestClient for API endpoint testing."""
+    from fastapi.testclient import TestClient
+    from src.api.main import app
+
+    return TestClient(app)
+
+
+@pytest.fixture
+def mock_config():
+    """Create a mock config for WebSocket tests."""
+    from unittest.mock import Mock
+    from src.config import Config
+
+    config = Mock(spec=Config)
+    config.JWT_SECRET_KEY = "test_secret"
+    return config
+
+
+@pytest.fixture
 def sample_task_data():
     """Sample task data for testing."""
     return {

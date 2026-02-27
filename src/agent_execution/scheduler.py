@@ -33,6 +33,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from croniter import croniter
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 import pytz
 
@@ -181,7 +182,7 @@ class IntelligentScheduler:
 class TaskScheduler:
     """Main task scheduler with cron expression support."""
 
-    def __init__(self, db_session: Optional[Session] = None):
+    def __init__(self, db_session: Optional[AsyncSession] = None):
         self.db_session = db_session
         self.validator = CronExpressionValidator()
         self.intelligent_scheduler = IntelligentScheduler()

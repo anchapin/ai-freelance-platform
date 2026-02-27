@@ -89,6 +89,7 @@ from ..agent_execution.arena import (
 # Import Scheduler modules
 from .scheduler_endpoints import register_scheduler_routes
 from .analytics import register_analytics_routes
+from .disaster_recovery import router as disaster_recovery_router
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -3493,6 +3494,9 @@ async def get_auto_threshold_status():
 # Register scheduler routes
 register_scheduler_routes(app)
 register_analytics_routes(app)
+
+# Register disaster recovery routes
+app.include_router(disaster_recovery_router)
 
 
 if __name__ == "__main__":

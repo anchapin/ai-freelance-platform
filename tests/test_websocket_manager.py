@@ -389,7 +389,7 @@ class TestWebSocketIntegration:
             title="Test Task",
             description="Test Description",
             domain="test",
-            status=DBTaskStatus.PAID,
+            status=DBTaskStatus.PAID.value,
             client_email="test@example.com",
         )
         db_session.add(task)
@@ -403,7 +403,7 @@ class TestWebSocketIntegration:
             job_title="Test Job",
             job_description="Test Description",
             bid_amount=10000,
-            status=BidStatus.PENDING,
+            status=BidStatus.PENDING.value,
             marketplace="upwork",
         )
         db_session.add(bid)
