@@ -484,12 +484,17 @@ class PerformanceTracker:
         """
         recommendations = []
 
-        for handler, metrics in self.metrics.items():
+        # Get all unique handlers from metrics
+        all_handlers = set(self.metrics["success_rate"].keys()) | set(
+            self.metrics["avg_execution_time"].keys()
+        )
+
+        for handler in all_handlers:
             # Calculate composite score
-            success_rate = metrics["success_rate"].get(handler, 0.0)
-            avg_time = metrics["avg_execution_time"].get(handler, 0.0)
-            avg_complexity = metrics["avg_complexity"].get(handler, 0.0)
-            volume = metrics["task_volume"].get(handler, 0)
+            success_rate = self.metrics["success_rate"].get(handler, 0.0)
+            avg_time = self.metrics["avg_execution_time"].get(handler, 0.0)
+            avg_complexity = self.metrics["avg_complexity"].get(handler, 0.0)
+            volume = self.metrics["task_volume"].get(handler, 0)
 
             # Composite score formula
             # Higher success rate = better
