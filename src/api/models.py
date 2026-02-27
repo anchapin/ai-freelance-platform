@@ -397,6 +397,16 @@ class Task(Base):
         self.review.escalation_reason = value
 
     @hybrid_property
+    def escalated_at(self):
+        return self.review.escalated_at if self.review else None
+
+    @escalated_at.setter
+    def escalated_at(self, value):
+        if not self.review:
+            self.review = TaskReview()
+        self.review.escalated_at = value
+
+    @hybrid_property
     def last_error(self):
         return (
             self.review.last_error if self.review else None
@@ -449,6 +459,7 @@ class Task(Base):
             "review_approved",
             "review_attempts",
             "escalation_reason",
+            "escalated_at",
             "last_error",
             "review_status",
             "extracted_context",
@@ -1609,28 +1620,29 @@ class VirtualWallet(Base):
 
     def to_dict(self):
         """Convert wallet to dictionary."""
+        balance_cents = self.balance_cents or 0
+        total_spent_cents = self.total_spent_cents or 0
+        total_earned_cents = self.total_earned_cents or 0
+        budget_cap_cents = self.budget_cap_cents or 0
+        budget_spent_cents = self.budget_spent_cents or 0
+
         return {
             "id": self.id,
-            "balance_dollars": self.balance_cents / 100,
-            "balance_cents": self.balance_cents,
-            "total_spent_dollars": self.total_spent_cents / 100,
-            "total_spent_cents": self.total_spent_cents,
-            "total_earned_dollars": self.total_earned_cents / 100,
-            "total_earned_cents": self.total_earned_cents,
-            "budget_cap_dollars": self.budget_cap_cents / 100,
-            "budget_cap_cents": self.budget_cap_cents,
+            "balance_dollars": balance_cents / 100,
+            "balance_cents": balance_cents,
+            "total_spent_dollars": total_spent_cents / 100,
+            "total_spent_cents": total_spent_cents,
+            "total_earned_dollars": total_earned_cents / 100,
+            "total_earned_cents": total_earned_cents,
+            "budget_cap_dollars": budget_cap_cents / 100,
+            "budget_cap_cents": budget_cap_cents,
             "budget_reset_period": self.budget_reset_period,
-            "budget_spent_dollars": self.budget_spent_cents / 100,
-            "budget_spent_cents": self.budget_spent_cents,
-            "budget_remaining_dollars": (
-                self.budget_cap_cents - self.budget_spent_cents
-            )
-            / 100,
-            "budget_remaining_cents": self.budget_cap_cents - self.budget_spent_cents,
-            "budget_percentage_used": (
-                self.budget_spent_cents / self.budget_cap_cents * 100
-            )
-            if self.budget_cap_cents > 0
+            "budget_spent_dollars": budget_spent_cents / 100,
+            "budget_spent_cents": budget_spent_cents,
+            "budget_remaining_dollars": (budget_cap_cents - budget_spent_cents) / 100,
+            "budget_remaining_cents": budget_cap_cents - budget_spent_cents,
+            "budget_percentage_used": (budget_spent_cents / budget_cap_cents * 100)
+            if budget_cap_cents > 0
             else 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

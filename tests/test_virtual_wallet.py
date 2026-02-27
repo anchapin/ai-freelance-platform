@@ -125,14 +125,17 @@ class TestVirtualWalletManager:
         assert success is True
         assert wallet_manager._wallet.balance_cents == initial_balance + 10000
 
-    def test_set_budget_cap(self, wallet_manager):
+    def test_set_budget_cap(self, wallet_manager, db_session):
         """Test setting budget cap."""
         # Set new budget cap to $200 (20000 cents)
         success = wallet_manager.set_budget_cap(20000, "weekly")
 
         assert success is True
-        assert wallet_manager._wallet.budget_cap_cents == 20000
-        assert wallet_manager._wallet.budget_reset_period == "weekly"
+
+        # Query wallet from fresh session to avoid detached instance error
+        wallet = db_session.query(VirtualWallet).filter_by(id="default").first()
+        assert wallet.budget_cap_cents == 20000
+        assert wallet.budget_reset_period == "weekly"
 
     def test_budget_reset(self, wallet_manager):
         """Test automatic budget reset."""

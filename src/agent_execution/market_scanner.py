@@ -102,12 +102,12 @@ def get_min_bid_amount() -> int:
 
 def get_page_load_timeout() -> int:
     """Get PAGE_LOAD_TIMEOUT from ConfigManager."""
-    return ConfigManager.get("MARKET_SCAN_PAGE_TIMEOUT")
+    return ConfigManager.get("MARKET_SCAN_PAGE_TIMEOUT", 30)
 
 
 def get_scan_interval() -> int:
     """Get SCAN_INTERVAL from ConfigManager."""
-    return ConfigManager.get("MARKET_SCAN_INTERVAL")
+    return ConfigManager.get("MARKET_SCAN_INTERVAL", 60)
 
 
 def is_training_mode() -> bool:

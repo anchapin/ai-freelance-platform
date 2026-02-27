@@ -107,6 +107,8 @@ class ConfigManager:
         # Infrastructure
         "REDIS_URL": "redis://localhost:6379/0",
         "DATABASE_URL": "sqlite:///./data/tasks.db",
+        # Authentication
+        "JWT_SECRET_KEY": "CHANGE_ME_IN_PRODUCTION_generate_a_secure_random_32_byte_key",
     }
 
     def __init__(self):

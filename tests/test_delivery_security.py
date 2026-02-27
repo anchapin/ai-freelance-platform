@@ -22,6 +22,7 @@ from src.api.main import (
     app,
     _check_delivery_rate_limit,
     _record_delivery_failure,
+    _record_ip_delivery_attempt,
     _delivery_rate_limits,
     _check_delivery_ip_rate_limit,
     _delivery_ip_rate_limits,
@@ -42,12 +43,14 @@ from pydantic import ValidationError
 def override_get_db(mock_db):
     def _override():
         yield mock_db
+
     return _override
 
 
 # =============================================================================
 # TOKEN GENERATION TESTS
 # =============================================================================
+
 
 class TestTokenGeneration:
     """Test that delivery tokens use strong randomness."""
@@ -73,6 +76,7 @@ class TestTokenGeneration:
 # =============================================================================
 # RATE LIMITING TESTS
 # =============================================================================
+
 
 class TestDeliveryRateLimiting:
     """Test rate limiting on delivery endpoint."""
@@ -108,7 +112,7 @@ class TestDeliveryRateLimiting:
         """Test that lockout resets after the lockout window."""
         _delivery_rate_limits["task-4"] = (
             DELIVERY_MAX_FAILED_ATTEMPTS,
-            time.time() - DELIVERY_LOCKOUT_SECONDS - 1  # expired
+            time.time() - DELIVERY_LOCKOUT_SECONDS - 1,  # expired
         )
         assert _check_delivery_rate_limit("task-4") is True
 
@@ -122,7 +126,7 @@ class TestDeliveryRateLimiting:
             # Exhaust rate limit
             _delivery_rate_limits["550e8400-e29b-41d4-a716-446655440000"] = (
                 DELIVERY_MAX_FAILED_ATTEMPTS,
-                time.time()
+                time.time(),
             )
             response = client.get(
                 "/api/delivery/550e8400-e29b-41d4-a716-446655440000/valid_token_string_123456"
@@ -138,6 +142,7 @@ class TestDeliveryRateLimiting:
 # TOKEN EXPIRATION TESTS
 # =============================================================================
 
+
 class TestTokenExpiration:
     """Test delivery token expiration enforcement."""
 
@@ -152,7 +157,9 @@ class TestTokenExpiration:
         mock_task = Mock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440001"
         mock_task.delivery_token = "valid_token_string_1234567890abc"
-        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) - timedelta(
+            hours=1
+        )
         mock_task.delivery_token_used = False
         mock_task.status = TaskStatus.COMPLETED
         mock_db.query.return_value.filter.return_value.first.return_value = mock_task
@@ -160,7 +167,9 @@ class TestTokenExpiration:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440001/valid_token_string_1234567890abc")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440001/valid_token_string_1234567890abc"
+            )
             assert response.status_code == 403
             assert "expired" in response.json()["detail"].lower()
         finally:
@@ -174,7 +183,9 @@ class TestTokenExpiration:
         mock_task = Mock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440002"
         mock_task.delivery_token = "good_token_string_1234567890abcd"
-        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=24
+        )
         mock_task.delivery_token_used = False
         mock_task.status = TaskStatus.COMPLETED
         mock_task.result_type = "image"
@@ -189,7 +200,9 @@ class TestTokenExpiration:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440002/good_token_string_1234567890abcd")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440002/good_token_string_1234567890abcd"
+            )
             assert response.status_code == 200
         finally:
             app.dependency_overrides.clear()
@@ -217,7 +230,9 @@ class TestTokenExpiration:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440003/old_token_string_1234567890abcdef")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440003/old_token_string_1234567890abcdef"
+            )
             assert response.status_code == 200
         finally:
             app.dependency_overrides.clear()
@@ -226,6 +241,7 @@ class TestTokenExpiration:
 # =============================================================================
 # ONE-TIME USE TESTS
 # =============================================================================
+
 
 class TestOneTimeUseToken:
     """Test that tokens are invalidated after successful download."""
@@ -241,7 +257,9 @@ class TestOneTimeUseToken:
         mock_task = Mock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440004"
         mock_task.delivery_token = "used_token_string_1234567890abcde"
-        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=24
+        )
         mock_task.delivery_token_used = True  # Already used
         mock_task.status = TaskStatus.COMPLETED
         mock_db.query.return_value.filter.return_value.first.return_value = mock_task
@@ -249,7 +267,9 @@ class TestOneTimeUseToken:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440004/used_token_string_1234567890abcde")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440004/used_token_string_1234567890abcde"
+            )
             assert response.status_code == 403
             assert "already been used" in response.json()["detail"].lower()
         finally:
@@ -263,7 +283,9 @@ class TestOneTimeUseToken:
         mock_task = Mock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440005"
         mock_task.delivery_token = "mark_token_string_1234567890abcdefg"
-        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=24
+        )
         mock_task.delivery_token_used = False
         mock_task.status = TaskStatus.COMPLETED
         mock_task.result_type = "image"
@@ -278,7 +300,9 @@ class TestOneTimeUseToken:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440005/mark_token_string_1234567890abcdefg")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440005/mark_token_string_1234567890abcdefg"
+            )
             assert response.status_code == 200
             assert mock_task.delivery_token_used is True
             assert mock_db.commit.called
@@ -289,6 +313,7 @@ class TestOneTimeUseToken:
 # =============================================================================
 # TOKEN VERIFICATION TESTS
 # =============================================================================
+
 
 class TestTokenVerification:
     """Test constant-time token comparison and verification."""
@@ -310,7 +335,9 @@ class TestTokenVerification:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440006/wrong_token_string_1234567890xyz")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440006/wrong_token_string_1234567890xyz"
+            )
             assert response.status_code == 403
         finally:
             app.dependency_overrides.clear()
@@ -329,7 +356,9 @@ class TestTokenVerification:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440007/any_token_string_1234567890abcde")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440007/any_token_string_1234567890abcde"
+            )
             assert response.status_code == 403
         finally:
             app.dependency_overrides.clear()
@@ -343,7 +372,9 @@ class TestTokenVerification:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440099/some_token_string_1234567890")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440099/some_token_string_1234567890"
+            )
             assert response.status_code == 404
         finally:
             app.dependency_overrides.clear()
@@ -352,6 +383,7 @@ class TestTokenVerification:
 # =============================================================================
 # RESPONSE SECURITY TESTS
 # =============================================================================
+
 
 class TestResponseSecurity:
     """Test that responses don't leak sensitive data."""
@@ -367,7 +399,9 @@ class TestResponseSecurity:
         mock_task = Mock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440008"
         mock_task.delivery_token = "secret_token_string_1234567890abcde"
-        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=24
+        )
         mock_task.delivery_token_used = False
         mock_task.status = TaskStatus.COMPLETED
         mock_task.result_type = "image"
@@ -382,7 +416,9 @@ class TestResponseSecurity:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440008/secret_token_string_1234567890abcde")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440008/secret_token_string_1234567890abcde"
+            )
             assert response.status_code == 200
             data = response.json()
             assert "delivery_token" not in data
@@ -397,7 +433,9 @@ class TestResponseSecurity:
         mock_task = Mock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440009"
         mock_task.delivery_token = "ts_token_string_1234567890abcdefg"
-        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_task.delivery_token_expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=24
+        )
         mock_task.delivery_token_used = False
         mock_task.status = TaskStatus.COMPLETED
         mock_task.result_type = "xlsx"
@@ -412,7 +450,9 @@ class TestResponseSecurity:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/550e8400-e29b-41d4-a716-446655440009/ts_token_string_1234567890abcdefg")
+            response = client.get(
+                "/api/delivery/550e8400-e29b-41d4-a716-446655440009/ts_token_string_1234567890abcdefg"
+            )
             assert response.status_code == 200
             data = response.json()
             assert "delivered_at" in data
@@ -425,6 +465,7 @@ class TestResponseSecurity:
 # TTL CONFIGURATION TEST
 # =============================================================================
 
+
 class TestTTLConfiguration:
     """Test that TTL configuration works."""
 
@@ -436,6 +477,7 @@ class TestTTLConfiguration:
 # =============================================================================
 # IP-BASED RATE LIMITING TESTS (NEW - Issue #18)
 # =============================================================================
+
 
 class TestIPBasedRateLimiting:
     """Test IP-based rate limiting to prevent distributed brute force."""
@@ -452,19 +494,19 @@ class TestIPBasedRateLimiting:
     def test_ip_under_limit_allowed(self):
         """Test that attempts under the limit are allowed."""
         for _ in range(DELIVERY_MAX_ATTEMPTS_PER_IP - 1):
-            _record_delivery_failure("task-1", "192.168.1.101")
+            _record_ip_delivery_attempt("192.168.1.101")
         assert _check_delivery_ip_rate_limit("192.168.1.101") is True
 
     def test_ip_at_limit_blocked(self):
         """Test that attempts at the limit are blocked."""
         for _ in range(DELIVERY_MAX_ATTEMPTS_PER_IP):
-            _record_delivery_failure("task-1", "192.168.1.102")
+            _record_ip_delivery_attempt("192.168.1.102")
         assert _check_delivery_ip_rate_limit("192.168.1.102") is False
 
     def test_different_ips_independent(self):
         """Test that rate limits are per-IP."""
         for _ in range(DELIVERY_MAX_ATTEMPTS_PER_IP):
-            _record_delivery_failure("task-1", "192.168.1.103")
+            _record_ip_delivery_attempt("192.168.1.103")
         assert _check_delivery_ip_rate_limit("192.168.1.103") is False
         assert _check_delivery_ip_rate_limit("192.168.1.104") is True
 
@@ -472,7 +514,7 @@ class TestIPBasedRateLimiting:
         """Test that IP lockout resets after the lockout window."""
         _delivery_ip_rate_limits["192.168.1.105"] = (
             DELIVERY_MAX_ATTEMPTS_PER_IP,
-            time.time() - DELIVERY_IP_LOCKOUT_SECONDS - 1  # expired
+            time.time() - DELIVERY_IP_LOCKOUT_SECONDS - 1,  # expired
         )
         assert _check_delivery_ip_rate_limit("192.168.1.105") is True
 
@@ -486,7 +528,7 @@ class TestIPBasedRateLimiting:
             # Exhaust IP rate limit
             _delivery_ip_rate_limits["testclient"] = (
                 DELIVERY_MAX_ATTEMPTS_PER_IP,
-                time.time()
+                time.time(),
             )
             response = client.get(
                 "/api/delivery/550e8400-e29b-41d4-a716-446655440000/token_string_1234567890abcde"
@@ -502,6 +544,7 @@ class TestIPBasedRateLimiting:
 # INPUT VALIDATION TESTS (NEW - Issue #18)
 # =============================================================================
 
+
 class TestInputValidation:
     """Test Pydantic input validation for delivery endpoint."""
 
@@ -509,7 +552,7 @@ class TestInputValidation:
         """Test that valid UUID task_id is accepted."""
         req = DeliveryTokenRequest(
             task_id="550e8400-e29b-41d4-a716-446655440000",
-            token="valid_token_string_1234567890"
+            token="valid_token_string_1234567890",
         )
         assert req.task_id == "550e8400-e29b-41d4-a716-446655440000"
 
@@ -517,8 +560,7 @@ class TestInputValidation:
         """Test that invalid task_id format is rejected."""
         try:
             DeliveryTokenRequest(
-                task_id="not-a-uuid",
-                token="valid_token_string_1234567890"
+                task_id="not-a-uuid", token="valid_token_string_1234567890"
             )
             assert False, "Should have raised ValidationError"
         except ValidationError:
@@ -527,10 +569,7 @@ class TestInputValidation:
     def test_task_id_too_short(self):
         """Test that empty task_id is rejected."""
         try:
-            DeliveryTokenRequest(
-                task_id="",
-                token="valid_token_string_1234567890"
-            )
+            DeliveryTokenRequest(task_id="", token="valid_token_string_1234567890")
             assert False, "Should have raised ValidationError"
         except ValidationError:
             pass
@@ -539,8 +578,7 @@ class TestInputValidation:
         """Test that token shorter than 20 chars is rejected."""
         try:
             DeliveryTokenRequest(
-                task_id="550e8400-e29b-41d4-a716-446655440000",
-                token="short"
+                task_id="550e8400-e29b-41d4-a716-446655440000", token="short"
             )
             assert False, "Should have raised ValidationError"
         except ValidationError:
@@ -550,8 +588,7 @@ class TestInputValidation:
         """Test that token longer than 256 chars is rejected."""
         try:
             DeliveryTokenRequest(
-                task_id="550e8400-e29b-41d4-a716-446655440000",
-                token="x" * 257
+                task_id="550e8400-e29b-41d4-a716-446655440000", token="x" * 257
             )
             assert False, "Should have raised ValidationError"
         except ValidationError:
@@ -562,7 +599,7 @@ class TestInputValidation:
         try:
             DeliveryTokenRequest(
                 task_id="550e8400-e29b-41d4-a716-446655440000",
-                token="invalid token with spaces!"
+                token="invalid token with spaces!",
             )
             assert False, "Should have raised ValidationError"
         except ValidationError:
@@ -572,7 +609,7 @@ class TestInputValidation:
         """Test that alphanumeric token is accepted."""
         req = DeliveryTokenRequest(
             task_id="550e8400-e29b-41d4-a716-446655440000",
-            token="ABCdef123456789-_abcdef"
+            token="ABCdef123456789-_abcdef",
         )
         assert req.token == "ABCdef123456789-_abcdef"
 
@@ -580,7 +617,7 @@ class TestInputValidation:
         """Test that task_id is normalized to lowercase."""
         req = DeliveryTokenRequest(
             task_id="550E8400-E29B-41D4-A716-446655440000",
-            token="valid_token_string_1234567890"
+            token="valid_token_string_1234567890",
         )
         assert req.task_id == "550e8400-e29b-41d4-a716-446655440000"
 
@@ -588,7 +625,7 @@ class TestInputValidation:
         """Test that token whitespace is stripped."""
         req = DeliveryTokenRequest(
             task_id="550e8400-e29b-41d4-a716-446655440000",
-            token="  valid_token_string_1234567890  "
+            token="  valid_token_string_1234567890  ",
         )
         assert req.token == "valid_token_string_1234567890"
 
@@ -614,7 +651,9 @@ class TestInputValidation:
         app.dependency_overrides[get_db] = override_get_db(mock_db)
 
         try:
-            response = client.get("/api/delivery/not-a-uuid/valid_token_string_1234567890")
+            response = client.get(
+                "/api/delivery/not-a-uuid/valid_token_string_1234567890"
+            )
             assert response.status_code == 400
             assert "Invalid input" in response.json()["detail"]
         finally:
@@ -624,6 +663,7 @@ class TestInputValidation:
 # =============================================================================
 # INPUT SANITIZATION TESTS (NEW - Issue #18)
 # =============================================================================
+
 
 class TestInputSanitization:
     """Test string sanitization to prevent injection attacks."""
