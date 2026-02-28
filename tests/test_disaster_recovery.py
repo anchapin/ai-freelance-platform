@@ -728,7 +728,11 @@ class TestDisasterRecoveryAPI:
                 schema_version="1.0.0",
             )
         ]
-        mock_list_backups.return_value = mock_backups
+        mock_list_backups.return_value = BackupListResponse(
+            backups=mock_backups,
+            total=1,
+            available_types=[bt.value for bt in BackupType],
+        )
 
         # Test API call
         response = client.get("/api/disaster-recovery/backups")
