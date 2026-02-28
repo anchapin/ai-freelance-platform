@@ -23,6 +23,7 @@ from src.api.models import Task, TaskStatus, ReviewStatus, EscalationLog
 # FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def mock_db():
     """Create a mock database session with query support."""
@@ -45,6 +46,10 @@ def high_value_task():
     task.escalated_at = None
     task.last_error = None
     task.review_status = ReviewStatus.PENDING
+    task.outputs = []
+    task.result_image_url = None
+    task.result_document_url = None
+    task.result_spreadsheet_url = None
     return task
 
 
@@ -61,6 +66,10 @@ def low_value_task():
     task.escalated_at = None
     task.last_error = None
     task.review_status = ReviewStatus.PENDING
+    task.outputs = []
+    task.result_image_url = None
+    task.result_document_url = None
+    task.result_spreadsheet_url = None
     return task
 
 
@@ -78,6 +87,7 @@ def existing_escalation_log():
 # =============================================================================
 # IDEMPOTENCY TESTS
 # =============================================================================
+
 
 class TestEscalationIdempotency:
     """Test that duplicate escalations are detected and don't re-send notifications."""
@@ -147,6 +157,7 @@ class TestEscalationIdempotency:
 # TRANSACTION SAFETY TESTS
 # =============================================================================
 
+
 class TestTransactionSafety:
     """Test that task status and escalation log are committed atomically."""
 
@@ -174,14 +185,14 @@ class TestTransactionSafety:
         from src.api.main import _escalate_task
 
         with patch("src.api.main.TelegramNotifier"):
-            await _escalate_task(
-                mock_db, low_value_task, "max_retries_exceeded"
-            )
+            await _escalate_task(mock_db, low_value_task, "max_retries_exceeded")
 
         mock_db.begin_nested.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_db_committed_even_on_savepoint_failure(self, mock_db, low_value_task):
+    async def test_db_committed_even_on_savepoint_failure(
+        self, mock_db, low_value_task
+    ):
         """Test task status is still committed even if savepoint fails."""
         from src.api.main import _escalate_task
 
@@ -202,6 +213,7 @@ class TestTransactionSafety:
 # =============================================================================
 # NOTIFICATION TESTS
 # =============================================================================
+
 
 class TestNotificationBehavior:
     """Test Telegram notification gating and failure recovery."""
@@ -224,7 +236,7 @@ class TestNotificationBehavior:
                 context="Reason: max_retries_exceeded\nError: Error",
                 amount_paid=25000,
                 domain="data_analysis",
-                client_email="client@example.com"
+                client_email="client@example.com",
             )
 
     @pytest.mark.asyncio
@@ -236,9 +248,7 @@ class TestNotificationBehavior:
             mock_notifier = MockNotifier.return_value
             mock_notifier.request_human_help = AsyncMock(return_value=True)
 
-            await _escalate_task(
-                mock_db, low_value_task, "max_retries_exceeded"
-            )
+            await _escalate_task(mock_db, low_value_task, "max_retries_exceeded")
 
             mock_notifier.request_human_help.assert_not_called()
 
@@ -262,7 +272,9 @@ class TestNotificationBehavior:
         # Task should still be marked as ESCALATION
         assert high_value_task.status == TaskStatus.ESCALATION
         # DB should have been committed (task status persisted before notification)
-        assert mock_db.commit.call_count >= 2  # savepoint commit + notification error commit
+        assert (
+            mock_db.commit.call_count >= 2
+        )  # savepoint commit + notification error commit
 
     @pytest.mark.asyncio
     async def test_notification_sent_after_db_commit(self, mock_db, high_value_task):
@@ -298,6 +310,7 @@ class TestNotificationBehavior:
 # =============================================================================
 # SHOULD_ESCALATE DECISION TESTS
 # =============================================================================
+
 
 class TestShouldEscalateTask:
     """Test the _should_escalate_task decision logic."""
@@ -362,6 +375,7 @@ class TestShouldEscalateTask:
 # TELEGRAM NOTIFIER RETRY TESTS
 # =============================================================================
 
+
 class TestTelegramNotifierRetry:
     """Test exponential backoff retry logic in TelegramNotifier."""
 
@@ -409,7 +423,7 @@ class TestTelegramNotifierRetry:
                 mock_client = AsyncMock()
                 mock_client.post.side_effect = [
                     mock_response_fail,  # First attempt fails
-                    mock_response_ok     # Second attempt succeeds
+                    mock_response_ok,  # Second attempt succeeds
                 ]
                 # Need to handle the side_effect properly for raise_for_status
                 # Let's use a different approach
