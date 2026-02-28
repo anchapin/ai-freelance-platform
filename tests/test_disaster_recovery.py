@@ -22,6 +22,7 @@ from src.api.disaster_recovery import (
     BackupResponse,
     RecoveryResponse,
     DisasterRecoveryResponse,
+    BackupListResponse,
 )
 from src.disaster_recovery import (
     BackupManager,
