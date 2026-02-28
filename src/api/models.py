@@ -448,11 +448,14 @@ class Task(Base):
     def result_image_url(self):
         if not hasattr(self, "outputs") or not self.outputs:
             return None
-        image_output = next(
-            (o for o in self.outputs if o.output_type == OutputType.IMAGE),
-            None,
-        )
-        return image_output.output_url if image_output else None
+        try:
+            image_output = next(
+                (o for o in self.outputs if o.output_type == OutputType.IMAGE),
+                None,
+            )
+            return image_output.output_url if image_output else None
+        except (TypeError, AttributeError):
+            return None
 
     @result_image_url.setter
     def result_image_url(self, value):
@@ -473,15 +476,18 @@ class Task(Base):
     def result_document_url(self):
         if not hasattr(self, "outputs") or not self.outputs:
             return None
-        doc_output = next(
-            (
-                o
-                for o in self.outputs
-                if o.output_type in (OutputType.DOCUMENT, OutputType.PDF)
-            ),
-            None,
-        )
-        return doc_output.output_url if doc_output else None
+        try:
+            doc_output = next(
+                (
+                    o
+                    for o in self.outputs
+                    if o.output_type in (OutputType.DOCUMENT, OutputType.PDF)
+                ),
+                None,
+            )
+            return doc_output.output_url if doc_output else None
+        except (TypeError, AttributeError):
+            return None
 
     @result_document_url.setter
     def result_document_url(self, value):
@@ -506,11 +512,14 @@ class Task(Base):
     def result_spreadsheet_url(self):
         if not hasattr(self, "outputs") or not self.outputs:
             return None
-        sheet_output = next(
-            (o for o in self.outputs if o.output_type == OutputType.SPREADSHEET),
-            None,
-        )
-        return sheet_output.output_url if sheet_output else None
+        try:
+            sheet_output = next(
+                (o for o in self.outputs if o.output_type == OutputType.SPREADSHEET),
+                None,
+            )
+            return sheet_output.output_url if sheet_output else None
+        except (TypeError, AttributeError):
+            return None
 
     @result_spreadsheet_url.setter
     def result_spreadsheet_url(self, value):
