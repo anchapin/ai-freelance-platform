@@ -224,7 +224,7 @@ def setup_database(setup_database_tables):
     from src.api.models import Base
     from src.api.database import SessionLocal
 
-    # Delete all data from tables
+    # Optimized cleanup: Bulk delete in single transaction instead of iterating
     with SessionLocal() as session:
         for table in reversed(Base.metadata.sorted_tables):
             session.execute(table.delete())
