@@ -444,6 +444,77 @@ class Task(Base):
             self.planning = TaskPlanning()
         self.planning.extracted_context = value
 
+    @hybrid_property
+    def result_image_url(self):
+        image_output = next(
+            (o for o in self.outputs if o.output_type == OutputType.IMAGE),
+            None,
+        )
+        return image_output.output_url if image_output else None
+
+    @result_image_url.setter
+    def result_image_url(self, value):
+        existing = next(
+            (o for o in self.outputs if o.output_type == OutputType.IMAGE),
+            None,
+        )
+        if existing:
+            existing.output_url = value
+        elif value:
+            self.outputs.append(
+                TaskOutput(output_type=OutputType.IMAGE, output_url=value)
+            )
+
+    @hybrid_property
+    def result_document_url(self):
+        doc_output = next(
+            (
+                o
+                for o in self.outputs
+                if o.output_type in (OutputType.DOCUMENT, OutputType.PDF)
+            ),
+            None,
+        )
+        return doc_output.output_url if doc_output else None
+
+    @result_document_url.setter
+    def result_document_url(self, value):
+        existing = next(
+            (
+                o
+                for o in self.outputs
+                if o.output_type in (OutputType.DOCUMENT, OutputType.PDF)
+            ),
+            None,
+        )
+        if existing:
+            existing.output_url = value
+        elif value:
+            self.outputs.append(
+                TaskOutput(output_type=OutputType.DOCUMENT, output_url=value)
+            )
+
+    @hybrid_property
+    def result_spreadsheet_url(self):
+        sheet_output = next(
+            (o for o in self.outputs if o.output_type == OutputType.SPREADSHEET),
+            None,
+        )
+        return sheet_output.output_url if sheet_output else None
+
+    @result_spreadsheet_url.setter
+    def result_spreadsheet_url(self, value):
+        existing = next(
+            (o for o in self.outputs if o.output_type == OutputType.SPREADSHEET),
+            None,
+        )
+        if existing:
+            existing.output_url = value
+        elif value:
+            self.outputs.append(
+                TaskOutput(output_type=OutputType.SPREADSHEET, output_url=value)
+            )
+
     def __init__(self, **kwargs):
         # List of hybrid properties that should be handled manually
         hybrid_fields = [
@@ -463,6 +534,9 @@ class Task(Base):
             "last_error",
             "review_status",
             "extracted_context",
+            "result_image_url",
+            "result_document_url",
+            "result_spreadsheet_url",
         ]
         hybrids = {k: kwargs.pop(k) for k in hybrid_fields if k in kwargs}
         super().__init__(**kwargs)
