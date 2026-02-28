@@ -31,6 +31,9 @@ _test_db_dir = tempfile.mkdtemp()
 _test_db_path = os.path.join(_test_db_dir, "test_tasks.db")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_test_db_path}")
 
+# Disable rate limiting for tests
+os.environ.setdefault("DISABLE_RATE_LIMITING", "true")
+
 # Track whether tables have been created to avoid duplicate creation
 _tables_created = False
 
