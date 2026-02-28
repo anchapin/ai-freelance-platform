@@ -446,6 +446,8 @@ class Task(Base):
 
     @hybrid_property
     def result_image_url(self):
+        if not hasattr(self, "outputs") or not self.outputs:
+            return None
         image_output = next(
             (o for o in self.outputs if o.output_type == OutputType.IMAGE),
             None,
@@ -454,6 +456,8 @@ class Task(Base):
 
     @result_image_url.setter
     def result_image_url(self, value):
+        if not hasattr(self, "outputs"):
+            object.__setattr__(self, "outputs", [])
         existing = next(
             (o for o in self.outputs if o.output_type == OutputType.IMAGE),
             None,
@@ -467,6 +471,8 @@ class Task(Base):
 
     @hybrid_property
     def result_document_url(self):
+        if not hasattr(self, "outputs") or not self.outputs:
+            return None
         doc_output = next(
             (
                 o
@@ -479,6 +485,8 @@ class Task(Base):
 
     @result_document_url.setter
     def result_document_url(self, value):
+        if not hasattr(self, "outputs"):
+            object.__setattr__(self, "outputs", [])
         existing = next(
             (
                 o
@@ -496,6 +504,8 @@ class Task(Base):
 
     @hybrid_property
     def result_spreadsheet_url(self):
+        if not hasattr(self, "outputs") or not self.outputs:
+            return None
         sheet_output = next(
             (o for o in self.outputs if o.output_type == OutputType.SPREADSHEET),
             None,
@@ -504,6 +514,8 @@ class Task(Base):
 
     @result_spreadsheet_url.setter
     def result_spreadsheet_url(self, value):
+        if not hasattr(self, "outputs"):
+            object.__setattr__(self, "outputs", [])
         existing = next(
             (o for o in self.outputs if o.output_type == OutputType.SPREADSHEET),
             None,
