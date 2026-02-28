@@ -220,14 +220,22 @@ def setup_database(setup_database_tables):
     # Tables are created by session-scoped fixture
     yield
 
-    # No need to drop tables - session fixture handles cleanup
+    # Clean up data between tests to ensure isolation
+    from src.api.models import Base
+    from src.api.database import SessionLocal
+
+    # Delete all data from tables
+    with SessionLocal() as session:
+        for table in reversed(Base.metadata.sorted_tables):
+            session.execute(table.delete())
+        session.commit()
 
 
 @pytest.fixture(scope="function")
 async def setup_async_database(setup_database_tables):
     """Create all database tables for async tests if not already created."""
     from src.api.models import Base
-    from src.api.database import async_engine
+    from src.api.database import async_engine, AsyncSessionLocal
 
     global _tables_created
 
@@ -239,7 +247,11 @@ async def setup_async_database(setup_database_tables):
 
     yield
 
-    # No need to drop tables - session fixture handles cleanup
+    # Clean up data between tests to ensure isolation
+    async with AsyncSessionLocal() as session:
+        for table in reversed(Base.metadata.sorted_tables):
+            await session.execute(table.delete())
+        await session.commit()
 
 
 @pytest.fixture
