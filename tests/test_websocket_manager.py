@@ -471,6 +471,7 @@ class TestWebSocketIntegration:
         assert message["data"]["bid_amount"] == 100  # 10000 cents = 100 dollars
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
     async def test_authentication_integration(self, websocket_manager, mock_config):
         """Test JWT authentication integration."""
         # Create manager with config
