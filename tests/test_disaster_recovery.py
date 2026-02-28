@@ -1006,7 +1006,7 @@ class TestDisasterRecoveryErrorHandling:
         recovery_manager = RecoveryManager(mock_config, mock_backup_manager)
 
         # Mock backup metadata
-        backup_metadata = BackupMetadata(
+        backup_metadata = BackupMetadata(  # noqa: F841
             backup_id="test_backup",
             backup_type=BackupType.FULL,
             timestamp=datetime.now(),
@@ -1022,7 +1022,7 @@ class TestDisasterRecoveryErrorHandling:
         )
 
         # Mock plan
-        recovery_plan = RecoveryPlan(
+        recovery_plan = RecoveryPlan(  # noqa: F841
             plan_id="default",
             name="Default Plan",
             description="Test plan",
