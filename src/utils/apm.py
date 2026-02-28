@@ -431,7 +431,7 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         def noop():
             yield
 
-        return noop()
+        return noop
 
     span = manager.tracer.start_span(name)
     if attributes:
