@@ -260,7 +260,7 @@ class Task(Base):
         "TaskOutput",
         cascade="all, delete-orphan",
         back_populates="task",
-        lazy="joined",
+        lazy="selectin",
     )
 
     # Hybrid properties for backward compatibility (Issue #5)
