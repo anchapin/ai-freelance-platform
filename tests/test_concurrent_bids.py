@@ -21,6 +21,16 @@ import time
 from src.agent_execution.bid_lock_manager import (
     BidLockManager,
 )
+from src.api.models import Base
+from src.api.database import engine
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_database_tables():
+    """Create all database tables once per test session."""
+    Base.metadata.create_all(bind=engine)
+    yield
+    Base.metadata.drop_all(bind=engine)
 
 
 # ============================================================================

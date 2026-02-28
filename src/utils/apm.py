@@ -443,7 +443,8 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         try:
             yield span
         finally:
-            span.end()
+            if manager.tracer:
+                span.end()
 
     return span_context()
 
