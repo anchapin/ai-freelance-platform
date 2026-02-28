@@ -1006,7 +1006,7 @@ class TestDisasterRecoveryErrorHandling:
         recovery_manager = RecoveryManager(mock_config, mock_backup_manager)
 
         # Mock backup metadata
-        BackupMetadata(
+        backup_metadata = BackupMetadata(
             backup_id="test_backup",
             backup_type=BackupType.FULL,
             timestamp=datetime.now(),
@@ -1022,7 +1022,7 @@ class TestDisasterRecoveryErrorHandling:
         )
 
         # Mock plan
-        RecoveryPlan(
+        recovery_plan = RecoveryPlan(
             plan_id="default",
             name="Default Plan",
             description="Test plan",
@@ -1042,11 +1042,11 @@ class TestDisasterRecoveryErrorHandling:
             recovery_op = await recovery_manager.execute_recovery(
                 backup_id="test_backup", plan_id="default"
             )
-
-        assert recovery_op.status == RecoveryStatus.FAILED
-        assert (
-            recovery_op.error_message == "Step validate_backup failed: Recovery failed"
-        )
+            assert recovery_op.status == RecoveryStatus.FAILED
+            assert (
+                recovery_op.error_message
+                == "Step validate_backup failed: Recovery failed"
+            )
 
 
 # Performance tests
