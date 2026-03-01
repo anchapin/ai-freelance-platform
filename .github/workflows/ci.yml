@@ -60,6 +60,7 @@ jobs:
           pytest tests/ --ignore=tests/e2e/ -v --cov=src --cov-report=xml --cov-report=term:skip-covered --timeout=300 --cov-config=pyproject.toml
         env:
           PYTHONUNBUFFERED: 1
+          DISABLE_RATE_LIMITING: true
         
   e2e-tests:
     name: E2E Tests
@@ -92,3 +93,4 @@ jobs:
           pytest tests/e2e/ -v --tb=short --timeout=300
         env:
           PYTHONUNBUFFERED: 1
+          DISABLE_RATE_LIMITING: true
