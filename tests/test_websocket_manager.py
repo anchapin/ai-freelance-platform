@@ -27,6 +27,46 @@ from src.api.models import Task, Bid, TaskStatus as DBTaskStatus
 from src.config import Config
 
 
+@pytest.fixture
+async def websocket_manager(db_session: AsyncSession):
+    """Create a WebSocket manager instance."""
+    manager = WebSocketManager()
+    await manager.start()
+    yield manager
+    await manager.stop()
+
+
+@pytest.fixture
+async def test_task(db_session: AsyncSession):
+    """Create a test task."""
+    task = Task(
+        id="test-task-id",
+        title="Test Task",
+        description="Test Description",
+        domain="test",
+        status=DBTaskStatus.PAID.value,
+        client_email="test@example.com",
+    )
+    db_session.add(task)
+    await db_session.commit()
+    return task
+
+
+@pytest.fixture
+async def test_bid(db_session: AsyncSession):
+    """Create a test bid."""
+    bid = Bid(
+        job_title="Test Job",
+        job_description="Test Description",
+        bid_amount=10000,
+        status=BidStatus.PENDING.value,
+        marketplace="upwork",
+    )
+    db_session.add(bid)
+    await db_session.commit()
+    return bid
+
+
 class MockWebSocket:
     """Mock WebSocket for testing."""
 
@@ -55,14 +95,6 @@ class MockWebSocket:
 
 class TestWebSocketManager:
     """Test the WebSocket manager."""
-
-    @pytest.fixture
-    async def websocket_manager(self):
-        """Create a WebSocket manager instance."""
-        manager = WebSocketManager()
-        await manager.start()
-        yield manager
-        await manager.stop()
 
     @pytest.fixture
     def mock_websocket(self):
@@ -372,43 +404,6 @@ class TestWebSocketManager:
 
 class TestWebSocketIntegration:
     """Integration tests for WebSocket functionality."""
-
-    @pytest.fixture
-    async def websocket_manager(self):
-        """Create a WebSocket manager instance."""
-        manager = WebSocketManager()
-        await manager.start()
-        yield manager
-        await manager.stop()
-
-    @pytest.fixture
-    async def test_task(self, db_session: AsyncSession):
-        """Create a test task."""
-        task = Task(
-            id="test-task-id",
-            title="Test Task",
-            description="Test Description",
-            domain="test",
-            status=DBTaskStatus.PAID.value,
-            client_email="test@example.com",
-        )
-        db_session.add(task)
-        await db_session.commit()
-        return task
-
-    @pytest.fixture
-    async def test_bid(self, db_session: AsyncSession):
-        """Create a test bid."""
-        bid = Bid(
-            job_title="Test Job",
-            job_description="Test Description",
-            bid_amount=10000,
-            status=BidStatus.PENDING.value,
-            marketplace="upwork",
-        )
-        db_session.add(bid)
-        await db_session.commit()
-        return bid
 
     @pytest.mark.asyncio
     async def test_task_subscription_integration(self, websocket_manager, test_task):
