@@ -92,8 +92,8 @@ class BidLockManager:
         Retries with short sleeps until timeout.
 
         Args:
-            marketplace_id: ID of the marketplace (e.g., "upwork", "fiverr")
-            posting_id: ID of the job posting
+            marketplace_id: ID of marketplace (e.g., "upwork", "fiverr")
+            posting_id: ID of job posting
             timeout: Maximum time to wait for lock in seconds
             holder_id: Identifier of the lock holder (for debugging)
 
@@ -110,73 +110,79 @@ class BidLockManager:
         lock_key = self._make_lock_key(marketplace_id, posting_id)
         start_time = time.time()
 
-        while True:
+        # Create a single db session per lock acquisition attempt to reduce overhead
+        db = None
+        try:
             db = self._get_db()
-            try:
-                # Clean expired locks
-                self._cleanup_expired_locks(db)
 
-                now = time.time()
+            while True:
+                try:
+                    # Clean expired locks
+                    self._cleanup_expired_locks(db)
 
-                # Try atomic INSERT (unique constraint on lock_key)
-                new_lock = DistributedLock(
-                    id=str(uuid.uuid4()),
-                    lock_key=lock_key,
-                    holder_id=holder_id,
-                    acquired_at=now,
-                    expires_at=now + self.ttl,
-                )
-                db.add(new_lock)
-                db.commit()
+                    now = time.time()
 
-                # Lock acquired successfully
-                self._lock_successes += 1
-                logger.info(
-                    f"Lock acquired: {holder_id} locked {lock_key} (TTL: {self.ttl}s)"
-                )
-                return True
-
-            except IntegrityError:
-                db.rollback()
-
-                # Unique constraint violation — lock exists.
-                # Check if it's expired and can be replaced.
-                existing = (
-                    db.query(DistributedLock)
-                    .filter(DistributedLock.lock_key == lock_key)
-                    .first()
-                )
-
-                if existing and existing.expires_at < time.time():
-                    # Expired — delete and retry immediately
-                    db.delete(existing)
+                    # Try atomic INSERT (unique constraint on lock_key)
+                    new_lock = DistributedLock(
+                        id=str(uuid.uuid4()),
+                        lock_key=lock_key,
+                        holder_id=holder_id,
+                        acquired_at=now,
+                        expires_at=now + self.ttl,
+                    )
+                    db.add(new_lock)
                     db.commit()
-                    continue
 
-                # Lock is held by someone else
-                self._lock_conflicts += 1
-                holder = existing.holder_id if existing else "unknown"
-                logger.warning(
-                    f"Lock conflict: {holder_id} tried to acquire "
-                    f"{lock_key} but it's held by {holder}"
-                )
+                    # Lock acquired successfully
+                    self._lock_successes += 1
+                    logger.info(
+                        f"Lock acquired: {holder_id} locked {lock_key} (TTL: {self.ttl}s)"
+                    )
+                    return True
 
-                # Check timeout
-                elapsed = time.time() - start_time
-                if elapsed > timeout:
-                    self._lock_timeouts += 1
-                    logger.error(f"Lock timeout for {lock_key} after {elapsed:.1f}s")
+                except IntegrityError:
+                    db.rollback()
+
+                    # Unique constraint violation — lock exists.
+                    # Check if it's expired and can be replaced.
+                    existing = (
+                        db.query(DistributedLock)
+                        .filter(DistributedLock.lock_key == lock_key)
+                        .first()
+                    )
+
+                    if existing and existing.expires_at < time.time():
+                        # Expired — delete and retry immediately
+                        db.delete(existing)
+                        db.commit()
+                        continue
+
+                    # Lock is held by someone else
+                    self._lock_conflicts += 1
+                    holder = existing.holder_id if existing else "unknown"
+                    logger.warning(
+                        f"Lock conflict: {holder_id} tried to acquire "
+                        f"{lock_key} but it's held by {holder}"
+                    )
+
+                    # Check timeout
+                    elapsed = time.time() - start_time
+                    if elapsed > timeout:
+                        self._lock_timeouts += 1
+                        logger.error(
+                            f"Lock timeout for {lock_key} after {elapsed:.1f}s"
+                        )
+                        return False
+
+                    # Wait before retrying
+                    await asyncio.sleep(0.1)
+
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"Error acquiring lock {lock_key}: {e}")
                     return False
-
-                # Wait before retrying
-                await asyncio.sleep(0.1)
-
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Error acquiring lock {lock_key}: {e}")
-                return False
-
-            finally:
+        finally:
+            if db:
                 db.close()
 
     async def release_lock(

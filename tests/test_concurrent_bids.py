@@ -21,6 +21,16 @@ import time
 from src.agent_execution.bid_lock_manager import (
     BidLockManager,
 )
+from src.api.models import Base
+from src.api.database import engine
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_database_tables():
+    """Create all database tables once per test session."""
+    Base.metadata.create_all(bind=engine)
+    yield
+    Base.metadata.drop_all(bind=engine)
 
 
 # ============================================================================
@@ -163,6 +173,7 @@ async def test_lock_holder_cannot_steal(lock_manager):
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(60)
 async def test_concurrent_multiple_postings(lock_manager):
     """
     Test: Multiple instances bidding on different postings concurrently.
@@ -375,6 +386,7 @@ async def test_lock_timeout_behavior(lock_manager):
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(60)
 async def test_context_manager_multi_instance(lock_manager):
     """
     Test: Context manager ensures proper cleanup across instances.

@@ -43,7 +43,9 @@ except ImportError:
 
 try:
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+        OTLPMetricExporter,
+    )
 except ImportError:
     OTLPSpanExporter = None
     OTLPMetricExporter = None
@@ -68,8 +70,10 @@ except (ImportError, AttributeError):
 try:
     from opentelemetry.propagate import inject as inject_context
 except ImportError:
+
     def inject_context(x):
         return x
+
 
 # Optional: propagators (may not be installed)
 try:
@@ -117,22 +121,19 @@ class APMManager:
 
         # Sampling configuration
         self.trace_sample_rate = float(
-            os.environ.get("TRACE_SAMPLE_RATE", "0.1" if self.environment == "production" else "1.0")
+            os.environ.get(
+                "TRACE_SAMPLE_RATE",
+                "0.1" if self.environment == "production" else "1.0",
+            )
         )
 
         # APM backend endpoints
         self.jaeger_endpoint = os.environ.get(
             "JAEGER_ENDPOINT", "http://localhost:14268/api/traces"
         )
-        self.otlp_endpoint = os.environ.get(
-            "OTLP_ENDPOINT", "http://localhost:4317"
-        )
-        self.datadog_endpoint = os.environ.get(
-            "DATADOG_ENDPOINT", None
-        )
-        self.datadog_api_key = os.environ.get(
-            "DATADOG_API_KEY", None
-        )
+        self.otlp_endpoint = os.environ.get("OTLP_ENDPOINT", "http://localhost:4317")
+        self.datadog_endpoint = os.environ.get("DATADOG_ENDPOINT", None)
+        self.datadog_api_key = os.environ.get("DATADOG_API_KEY", None)
 
         self.tracer_provider: Optional[TracerProvider] = None
         self.meter_provider: Optional[MeterProvider] = None
@@ -182,12 +183,14 @@ class APMManager:
         """Initialize TracerProvider with sampling"""
         from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
-        resource = Resource.create({
-            "service.name": self.apm_service_name,
-            "service.version": self.apm_version,
-            "deployment.environment": self.apm_environment,
-            "host.name": os.environ.get("HOSTNAME", "unknown"),
-        })
+        resource = Resource.create(
+            {
+                "service.name": self.apm_service_name,
+                "service.version": self.apm_version,
+                "deployment.environment": self.apm_environment,
+                "host.name": os.environ.get("HOSTNAME", "unknown"),
+            }
+        )
 
         self.tracer_provider = TracerProvider(
             resource=resource,
@@ -196,7 +199,9 @@ class APMManager:
 
         trace.set_tracer_provider(self.tracer_provider)
         self.tracer = trace.get_tracer(__name__)
-        logger.info(f"✓ TracerProvider initialized with {self.trace_sample_rate*100}% sampling")
+        logger.info(
+            f"✓ TracerProvider initialized with {self.trace_sample_rate * 100}% sampling"
+        )
 
     def _setup_meter_provider(self) -> None:
         """Initialize MeterProvider for metrics"""
@@ -204,10 +209,12 @@ class APMManager:
             logger.warning("PrometheusMetricReader not available, metrics disabled")
             return
 
-        resource = Resource.create({
-            "service.name": self.apm_service_name,
-            "service.version": self.apm_version,
-        })
+        resource = Resource.create(
+            {
+                "service.name": self.apm_service_name,
+                "service.version": self.apm_version,
+            }
+        )
 
         # Use Prometheus reader for local/production scraping
         prometheus_reader = PrometheusMetricReader()
@@ -227,26 +234,28 @@ class APMManager:
             return
 
         if self.apm_backend == "jaeger" and JaegerExporter:
+            endpoint = self.jaeger_endpoint
+            host = (
+                endpoint.split("://")[1].split(":")[0]
+                if "://" in endpoint
+                else "localhost"
+            )
+            port_str = (
+                endpoint.split("://")[1].split(":")[-1].split("/")[0]
+                if "://" in endpoint
+                else endpoint.split(":")[-1].split("/")[0]
+            )
+            agent_port = int(port_str) if port_str.isdigit() else 6831
             exporter = JaegerExporter(
-                agent_host_name=self.jaeger_endpoint.split("://")[1].split(":")[0]
-                if "://" in self.jaeger_endpoint
-                else "localhost",
-                agent_port=int(
-                    self.jaeger_endpoint.split(":")[-1]
-                    if ":" in self.jaeger_endpoint
-                    else "6831"
-                ),
+                agent_host_name=host,
+                agent_port=agent_port,
             )
-            self.tracer_provider.add_span_processor(
-                BatchSpanProcessor(exporter)
-            )
+            self.tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
             logger.info(f"✓ Jaeger span processor configured: {self.jaeger_endpoint}")
 
         elif self.apm_backend == "otlp" and OTLPSpanExporter:
             exporter = OTLPSpanExporter(endpoint=self.otlp_endpoint)
-            self.tracer_provider.add_span_processor(
-                BatchSpanProcessor(exporter)
-            )
+            self.tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
             logger.info(f"✓ OTLP span processor configured: {self.otlp_endpoint}")
 
         else:
@@ -403,6 +412,7 @@ def init_apm() -> None:
 
 # Decorators and context managers for instrumentation
 
+
 def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
     """
     Create a new span with optional attributes.
@@ -412,14 +422,16 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         attributes: Optional span attributes
 
     Returns:
-        Context manager for the span
+        Context manager for span
     """
     manager = get_apm_manager()
     if not manager.apm_enabled or not manager.tracer:
+
         @contextmanager
         def noop():
             yield
-        return noop()
+
+        return noop
 
     span = manager.tracer.start_span(name)
     if attributes:
@@ -431,7 +443,8 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         try:
             yield span
         finally:
-            span.end()
+            if manager.tracer:
+                span.end()
 
     return span_context()
 
@@ -447,6 +460,7 @@ def instrument_function(
         span_name: Custom span name (defaults to function name)
         record_result: Whether to record result/error in span attributes
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -510,7 +524,9 @@ def record_metric(
         metric.record(value)
 
 
-def add_trace_context_to_headers(headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+def add_trace_context_to_headers(
+    headers: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
     """
     Add trace context to headers for distributed tracing.
 
@@ -532,6 +548,7 @@ def add_trace_context_to_headers(headers: Optional[Dict[str, str]] = None) -> Di
 
 
 # Convenience functions for specific use cases
+
 
 def measure_execution(name: str, attributes: Optional[Dict[str, Any]] = None):
     """

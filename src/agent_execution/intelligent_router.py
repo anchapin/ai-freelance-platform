@@ -407,12 +407,12 @@ class PerformanceTracker:
         self.performance_data = defaultdict(list)
         self.handler_performance = defaultdict(lambda: defaultdict(list))
 
-        # Performance metrics
+        # Performance metrics (dict of dicts, not defaultdict of float)
         self.metrics = {
-            "success_rate": defaultdict(float),
-            "avg_execution_time": defaultdict(float),
-            "avg_complexity": defaultdict(float),
-            "task_volume": defaultdict(int),
+            "success_rate": {},
+            "avg_execution_time": {},
+            "avg_complexity": {},
+            "task_volume": {},
         }
 
     def record_execution(self, task_profile: TaskProfile, actual_success: bool):
@@ -658,12 +658,20 @@ class IntelligentRouter:
         )
 
         # Classify task
-        classification = self.classifier.classify(task_profile)
+        try:
+            classification = self.classifier.classify(task_profile)
+        except Exception as e:
+            logger.warning(f"Classification failed: {e}, using rule-based fallback")
+            classification = self.classifier._rule_based_classification(task_profile)
 
         # Get performance-based recommendations
-        performance_recommendations = (
-            self.performance_tracker.get_handler_recommendations(task_profile)
-        )
+        try:
+            performance_recommendations = (
+                self.performance_tracker.get_handler_recommendations(task_profile)
+            )
+        except Exception as e:
+            logger.warning(f"Performance recommendations failed: {e}, using empty list")
+            performance_recommendations = []
 
         # Make routing decision
         decision = self._make_routing_decision(
@@ -1182,6 +1190,7 @@ class IntelligentRouter:
     ) -> Dict[str, Any]:
         """Execute spreadsheet generation task."""
         llm_service = kwargs.get("llm_service", LLMService())
+        exec_kwargs = {k: v for k, v in kwargs.items() if k != "llm_service"}
 
         from src.agent_execution.executor import execute_task
 
@@ -1192,7 +1201,7 @@ class IntelligentRouter:
             task_type=TaskType.SPREADSHEET,
             output_format=OutputFormat.XLSX,
             llm_service=llm_service,
-            **kwargs,
+            **exec_kwargs,
         )
 
         result["model_used"] = llm_service.get_config().get("model", "unknown")

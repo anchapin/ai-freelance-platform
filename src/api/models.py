@@ -260,7 +260,7 @@ class Task(Base):
         "TaskOutput",
         cascade="all, delete-orphan",
         back_populates="task",
-        lazy="joined",
+        lazy="selectin",
     )
 
     # Hybrid properties for backward compatibility (Issue #5)
@@ -397,6 +397,16 @@ class Task(Base):
         self.review.escalation_reason = value
 
     @hybrid_property
+    def escalated_at(self):
+        return self.review.escalated_at if self.review else None
+
+    @escalated_at.setter
+    def escalated_at(self, value):
+        if not self.review:
+            self.review = TaskReview()
+        self.review.escalated_at = value
+
+    @hybrid_property
     def last_error(self):
         return (
             self.review.last_error if self.review else None
@@ -434,6 +444,98 @@ class Task(Base):
             self.planning = TaskPlanning()
         self.planning.extracted_context = value
 
+    @hybrid_property
+    def result_image_url(self):
+        if not hasattr(self, "outputs") or not self.outputs:
+            return None
+        try:
+            image_output = next(
+                (o for o in self.outputs if o.output_type == OutputType.IMAGE),
+                None,
+            )
+            return image_output.output_url if image_output else None
+        except Exception:
+            return None
+
+    @result_image_url.setter
+    def result_image_url(self, value):
+        if not hasattr(self, "outputs"):
+            object.__setattr__(self, "outputs", [])
+        existing = next(
+            (o for o in self.outputs if o.output_type == OutputType.IMAGE),
+            None,
+        )
+        if existing:
+            existing.output_url = value
+        elif value:
+            self.outputs.append(
+                TaskOutput(output_type=OutputType.IMAGE, output_url=value)
+            )
+
+    @hybrid_property
+    def result_document_url(self):
+        if not hasattr(self, "outputs") or not self.outputs:
+            return None
+        try:
+            doc_output = next(
+                (
+                    o
+                    for o in self.outputs
+                    if o.output_type in (OutputType.DOCUMENT, OutputType.PDF)
+                ),
+                None,
+            )
+            return doc_output.output_url if doc_output else None
+        except Exception:
+            return None
+
+    @result_document_url.setter
+    def result_document_url(self, value):
+        if not hasattr(self, "outputs"):
+            object.__setattr__(self, "outputs", [])
+        existing = next(
+            (
+                o
+                for o in self.outputs
+                if o.output_type in (OutputType.DOCUMENT, OutputType.PDF)
+            ),
+            None,
+        )
+        if existing:
+            existing.output_url = value
+        elif value:
+            self.outputs.append(
+                TaskOutput(output_type=OutputType.DOCUMENT, output_url=value)
+            )
+
+    @hybrid_property
+    def result_spreadsheet_url(self):
+        if not hasattr(self, "outputs") or not self.outputs:
+            return None
+        try:
+            sheet_output = next(
+                (o for o in self.outputs if o.output_type == OutputType.SPREADSHEET),
+                None,
+            )
+            return sheet_output.output_url if sheet_output else None
+        except Exception:
+            return None
+
+    @result_spreadsheet_url.setter
+    def result_spreadsheet_url(self, value):
+        if not hasattr(self, "outputs"):
+            object.__setattr__(self, "outputs", [])
+        existing = next(
+            (o for o in self.outputs if o.output_type == OutputType.SPREADSHEET),
+            None,
+        )
+        if existing:
+            existing.output_url = value
+        elif value:
+            self.outputs.append(
+                TaskOutput(output_type=OutputType.SPREADSHEET, output_url=value)
+            )
+
     def __init__(self, **kwargs):
         # List of hybrid properties that should be handled manually
         hybrid_fields = [
@@ -449,9 +551,13 @@ class Task(Base):
             "review_approved",
             "review_attempts",
             "escalation_reason",
+            "escalated_at",
             "last_error",
             "review_status",
             "extracted_context",
+            "result_image_url",
+            "result_document_url",
+            "result_spreadsheet_url",
         ]
         hybrids = {k: kwargs.pop(k) for k in hybrid_fields if k in kwargs}
         super().__init__(**kwargs)
@@ -1072,7 +1178,7 @@ class UserQuota(Base):
 
     # Billing cycle tracking
     billing_cycle_start = Column(DateTime, nullable=False, default=datetime.utcnow)
-    billing_cycle_end = Column(DateTime, nullable=False)
+    billing_cycle_end = Column(DateTime, nullable=True)
 
     # Quota thresholds for alerts
     alert_threshold_percentage = Column(Integer, default=80)  # Alert at 80% usage
@@ -1609,28 +1715,29 @@ class VirtualWallet(Base):
 
     def to_dict(self):
         """Convert wallet to dictionary."""
+        balance_cents = self.balance_cents or 0
+        total_spent_cents = self.total_spent_cents or 0
+        total_earned_cents = self.total_earned_cents or 0
+        budget_cap_cents = self.budget_cap_cents or 0
+        budget_spent_cents = self.budget_spent_cents or 0
+
         return {
             "id": self.id,
-            "balance_dollars": self.balance_cents / 100,
-            "balance_cents": self.balance_cents,
-            "total_spent_dollars": self.total_spent_cents / 100,
-            "total_spent_cents": self.total_spent_cents,
-            "total_earned_dollars": self.total_earned_cents / 100,
-            "total_earned_cents": self.total_earned_cents,
-            "budget_cap_dollars": self.budget_cap_cents / 100,
-            "budget_cap_cents": self.budget_cap_cents,
+            "balance_dollars": balance_cents / 100,
+            "balance_cents": balance_cents,
+            "total_spent_dollars": total_spent_cents / 100,
+            "total_spent_cents": total_spent_cents,
+            "total_earned_dollars": total_earned_cents / 100,
+            "total_earned_cents": total_earned_cents,
+            "budget_cap_dollars": budget_cap_cents / 100,
+            "budget_cap_cents": budget_cap_cents,
             "budget_reset_period": self.budget_reset_period,
-            "budget_spent_dollars": self.budget_spent_cents / 100,
-            "budget_spent_cents": self.budget_spent_cents,
-            "budget_remaining_dollars": (
-                self.budget_cap_cents - self.budget_spent_cents
-            )
-            / 100,
-            "budget_remaining_cents": self.budget_cap_cents - self.budget_spent_cents,
-            "budget_percentage_used": (
-                self.budget_spent_cents / self.budget_cap_cents * 100
-            )
-            if self.budget_cap_cents > 0
+            "budget_spent_dollars": budget_spent_cents / 100,
+            "budget_spent_cents": budget_spent_cents,
+            "budget_remaining_dollars": (budget_cap_cents - budget_spent_cents) / 100,
+            "budget_remaining_cents": budget_cap_cents - budget_spent_cents,
+            "budget_percentage_used": (budget_spent_cents / budget_cap_cents * 100)
+            if budget_cap_cents > 0
             else 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

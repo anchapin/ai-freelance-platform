@@ -19,6 +19,24 @@ import os
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+# =============================================================================
+# DATABASE CONFIGURATION FOR TESTS
+# =============================================================================
+
+# Use file-based SQLite database for testing (shared between sync and async)
+# In-memory databases are connection-isolated, so sync and async engines would have separate tables
+import tempfile
+
+_test_db_dir = tempfile.mkdtemp()
+_test_db_path = os.path.join(_test_db_dir, "test_tasks.db")
+os.environ.setdefault("DATABASE_URL", f"sqlite:///{_test_db_path}")
+
+# Disable rate limiting for tests
+os.environ.setdefault("DISABLE_RATE_LIMITING", "true")
+
+# Track whether tables have been created to avoid duplicate creation
+_tables_created = False
+
 
 # =============================================================================
 # PYTEST CONFIGURATION
@@ -178,19 +196,94 @@ def mock_openai_client(mock_openai_response):
 # =============================================================================
 
 
-@pytest.fixture(scope="function", autouse=True)
-def setup_database():
-    """Create all database tables before tests and drop them after."""
+@pytest.fixture(scope="session")
+def setup_database_tables():
+    """Create all database tables once per test session."""
     from src.api.models import Base
     from src.api.database import engine
 
-    # Create all tables
-    Base.metadata.create_all(bind=engine)
+    global _tables_created
+
+    # Create all tables only once
+    if not _tables_created:
+        Base.metadata.create_all(bind=engine)
+        _tables_created = True
 
     yield
 
-    # Drop all tables after tests
+    # Drop all tables after test session
     Base.metadata.drop_all(bind=engine)
+    _tables_created = False
+
+
+@pytest.fixture(scope="function", autouse=True)
+def setup_database(setup_database_tables):
+    """Provide access to database for sync tests."""
+
+    # Tables are created by session-scoped fixture
+    yield
+
+    # Clean up data between tests to ensure isolation
+    from src.api.models import Base
+    from src.api.database import SessionLocal
+
+    # Optimized cleanup: Bulk delete in single transaction instead of iterating
+    with SessionLocal() as session:
+        for table in reversed(Base.metadata.sorted_tables):
+            session.execute(table.delete())
+        session.commit()
+
+
+@pytest.fixture(scope="function")
+async def setup_async_database(setup_database_tables):
+    """Create all database tables for async tests if not already created."""
+    from src.api.models import Base
+    from src.api.database import async_engine, AsyncSessionLocal
+
+    global _tables_created
+
+    # Create tables only if not already created by sync engine
+    if not _tables_created:
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        _tables_created = True
+
+    yield
+
+    # Clean up data between tests to ensure isolation
+    async with AsyncSessionLocal() as session:
+        for table in reversed(Base.metadata.sorted_tables):
+            await session.execute(table.delete())
+        await session.commit()
+
+
+@pytest.fixture
+async def db_session(setup_async_database):
+    """Provide an async database session for tests."""
+    from src.api.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        yield session
+
+
+@pytest.fixture
+def client(setup_async_database):
+    """Provide a TestClient for API endpoint testing."""
+    from fastapi.testclient import TestClient
+    from src.api.main import app
+
+    return TestClient(app)
+
+
+@pytest.fixture
+def mock_config():
+    """Create a mock config for WebSocket tests."""
+    from unittest.mock import Mock
+    from src.config import Config
+
+    config = Mock(spec=Config)
+    config.JWT_SECRET_KEY = "test_secret"
+    return config
 
 
 @pytest.fixture

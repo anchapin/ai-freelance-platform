@@ -89,6 +89,7 @@ from ..agent_execution.arena import (
 # Import Scheduler modules
 from .scheduler_endpoints import register_scheduler_routes
 from .analytics import register_analytics_routes
+from .disaster_recovery import router as disaster_recovery_router
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -309,9 +310,8 @@ def _record_delivery_failure(task_id: str, ip: str = None) -> None:
     Record a failed delivery attempt for rate limiting (Issue #18).
 
     Increments failure counts for the specific task_id.
-    Note: IP-level counter is already incremented at the start of the request.
+    Note: IP-level counter is tracked separately by _record_ip_delivery_attempt.
     """
-    # 1. Record task-level failure
     entry = _delivery_rate_limits.get(task_id)
     if entry is None:
         _delivery_rate_limits[task_id] = (1, _time.time())
@@ -1783,6 +1783,7 @@ async def get_secure_delivery(
         validated_token = validated.token
     except Exception as e:
         logger.warning(f"[DELIVERY] Validation failed: {str(e)} ip={client_ip}")
+        _record_ip_delivery_attempt(client_ip)
         _record_delivery_failure(task_id, client_ip)
         raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
 
@@ -1793,7 +1794,6 @@ async def get_secure_delivery(
             status_code=429,
             detail="Too many delivery requests from your IP. Try again later.",
         )
-    _record_ip_delivery_attempt(client_ip)
 
     # 3. Task-level rate limiting
     if not _check_delivery_rate_limit(validated_task_id):
@@ -1809,6 +1809,7 @@ async def get_secure_delivery(
     task = db.query(Task).filter(Task.id == validated_task_id).first()
 
     if not task:
+        _record_ip_delivery_attempt(client_ip)
         _record_delivery_failure(validated_task_id, client_ip)
         logger.warning(f"[DELIVERY] Not found: task={validated_task_id} ip={client_ip}")
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1817,6 +1818,7 @@ async def get_secure_delivery(
     if not task.delivery_token or not secrets.compare_digest(
         task.delivery_token, validated_token
     ):
+        _record_ip_delivery_attempt(client_ip)
         _record_delivery_failure(validated_task_id, client_ip)
         logger.warning(
             f"[DELIVERY] Invalid token: task={validated_task_id} ip={client_ip}"
@@ -1829,6 +1831,7 @@ async def get_secure_delivery(
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) > expires_at:
+            _record_ip_delivery_attempt(client_ip)
             _record_delivery_failure(validated_task_id, client_ip)
             logger.warning(
                 f"[DELIVERY] Expired token: task={validated_task_id} ip={client_ip}"
@@ -1837,6 +1840,7 @@ async def get_secure_delivery(
 
     # 6. One-time use check
     if task.delivery_token_used:
+        _record_ip_delivery_attempt(client_ip)
         _record_delivery_failure(validated_task_id, client_ip)
         logger.warning(
             f"[DELIVERY] Already used token: task={validated_task_id} ip={client_ip}"
@@ -3490,6 +3494,9 @@ async def get_auto_threshold_status():
 # Register scheduler routes
 register_scheduler_routes(app)
 register_analytics_routes(app)
+
+# Register disaster recovery routes
+app.include_router(disaster_recovery_router)
 
 
 if __name__ == "__main__":
