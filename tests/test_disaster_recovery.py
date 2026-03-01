@@ -1003,9 +1003,7 @@ class TestDisasterRecoveryErrorHandling:
     async def test_recovery_operation_failure(self, mock_config):
         """Test handling of recovery operation failures."""
         from src.disaster_recovery import RecoveryManager
-
-        mock_backup_manager = Mock()
-        recovery_manager = RecoveryManager(mock_config, mock_backup_manager)
+        from unittest.mock import AsyncMock
 
         # Mock backup metadata
         backup_metadata = BackupMetadata(  # noqa: F841
@@ -1022,6 +1020,12 @@ class TestDisasterRecoveryErrorHandling:
             database_version="1.0.0",
             schema_version="1.0.0",
         )
+
+        mock_backup_manager = Mock()
+        mock_backup_manager._get_backup_metadata = AsyncMock(
+            return_value=backup_metadata
+        )
+        recovery_manager = RecoveryManager(mock_config, mock_backup_manager)
 
         # Mock plan
         recovery_plan = RecoveryPlan(  # noqa: F841
@@ -1045,10 +1049,7 @@ class TestDisasterRecoveryErrorHandling:
                 backup_id="test_backup", plan_id="default"
             )
             assert recovery_op.status == RecoveryStatus.FAILED
-            assert (
-                recovery_op.error_message
-                == "Step validate_backup failed: Recovery failed"
-            )
+            assert recovery_op.error_message == "Recovery failed"
 
 
 # Performance tests

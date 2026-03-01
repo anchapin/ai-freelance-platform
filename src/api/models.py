@@ -454,7 +454,7 @@ class Task(Base):
                 None,
             )
             return image_output.output_url if image_output else None
-        except (TypeError, AttributeError):
+        except Exception:
             return None
 
     @result_image_url.setter
@@ -486,7 +486,7 @@ class Task(Base):
                 None,
             )
             return doc_output.output_url if doc_output else None
-        except (TypeError, AttributeError):
+        except Exception:
             return None
 
     @result_document_url.setter
@@ -518,7 +518,7 @@ class Task(Base):
                 None,
             )
             return sheet_output.output_url if sheet_output else None
-        except (TypeError, AttributeError):
+        except Exception:
             return None
 
     @result_spreadsheet_url.setter
