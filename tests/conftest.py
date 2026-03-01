@@ -34,34 +34,6 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{_test_db_path}")
 # Disable rate limiting for tests
 os.environ.setdefault("DISABLE_RATE_LIMITING", "true")
 
-
-# =============================================================================
-# RATE LIMIT CLEANUP
-# =============================================================================
-
-
-@pytest.fixture(autouse=True)
-def clear_rate_limits():
-    """Clear all rate limiters before each test to prevent test interference."""
-    try:
-        from src.api.main import _delivery_rate_limits, _delivery_ip_rate_limits
-
-        _delivery_rate_limits.clear()
-        _delivery_ip_rate_limits.clear()
-    except ImportError:
-        pass
-
-    # Reset the rate limiter to pick up DISABLE_RATE_LIMITING env var
-    try:
-        from src.api import rate_limit_middleware
-
-        rate_limit_middleware._rate_limiter = None
-        rate_limit_middleware._quota_manager = None
-    except ImportError:
-        pass
-    yield
-
-
 # Track whether tables have been created to avoid duplicate creation
 _tables_created = False
 
