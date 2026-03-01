@@ -109,36 +109,41 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 db.refresh(quota)
 
             # Check rate limit
-            rate_limiter = get_rate_limiter()
-            allowed, rate_details = rate_limiter.is_allowed(
-                user_id,
-                quota,
-            )
-
-            if not allowed:
-                response_time_ms = (time.time() - start_time) * 1000
-                quota_manager = get_quota_manager()
-                quota_manager.log_rate_limit(
-                    db,
-                    user_id=user_id,
-                    endpoint=request.url.path,
-                    method=request.method,
-                    requests_in_window=rate_details.get("requests_in_window", 0),
-                    rate_limit_rps=quota.rate_limit_rps,
-                    exceeded=True,
-                    status_code=429,
-                    response_time_ms=response_time_ms,
+            if os.getenv("DISABLE_RATE_LIMITING") == "true":
+                pass  # Skip rate limiting
+            else:
+                rate_limiter = get_rate_limiter()
+                allowed, rate_details = rate_limiter.is_allowed(
+                    user_id,
+                    quota,
                 )
 
-                return JSONResponse(
-                    status_code=429,
-                    content={
-                        "detail": "Too Many Requests",
-                        "rate_limit_rps": quota.rate_limit_rps,
-                        "requests_in_window": rate_details.get("requests_in_window", 0),
-                        "retry_after": 1,
-                    },
-                )
+                if not allowed:
+                    response_time_ms = (time.time() - start_time) * 1000
+                    quota_manager = get_quota_manager()
+                    quota_manager.log_rate_limit(
+                        db,
+                        user_id=user_id,
+                        endpoint=request.url.path,
+                        method=request.method,
+                        requests_in_window=rate_details.get("requests_in_window", 0),
+                        rate_limit_rps=quota.rate_limit_rps,
+                        exceeded=True,
+                        status_code=429,
+                        response_time_ms=response_time_ms,
+                    )
+
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "detail": "Too Many Requests",
+                            "rate_limit_rps": quota.rate_limit_rps,
+                            "requests_in_window": rate_details.get(
+                                "requests_in_window", 0
+                            ),
+                            "retry_after": 1,
+                        },
+                    )
 
             # Check quota for relevant endpoints
             quota_exceeded = False
